@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'auth_screen.dart';
 import '../services/zone_id_service.dart';
 import '../services/permissions_service.dart';
 import 'package:image_picker/image_picker.dart';
@@ -170,6 +171,81 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     }
   }
 
+  Future<void> _confirmDeleteAccount() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
+            SizedBox(width: 8),
+            Text('¡ATENCIÓN!', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Estás a punto de eliminar tu perfil definitivamente de toda la base de datos, tanto de la nube como de esta aplicación.',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: 12),
+            Text(
+              'Esta acción borrará tus mensajes, fotos, encuentros y tu cuenta de acceso de forma IRREVERSIBLE.',
+              style: TextStyle(color: Colors.white70),
+            ),
+            SizedBox(height: 12),
+            Text(
+              '¿Deseas proceder con el borrado total?',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('ELIMINAR TODO', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      _showLoadingOverlay();
+      try {
+        await _zoneIdService.deleteAccount();
+        if (mounted) {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => AuthScreen()),
+            (route) => false,
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          Navigator.pop(context); // Close loading overlay
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error al eliminar cuenta: $e'), backgroundColor: Colors.redAccent),
+          );
+        }
+      }
+    }
+  }
+
+  void _showLoadingOverlay() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(color: Color(0xFF00D2FF)),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -253,7 +329,17 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
               ),
               onPressed: _saveProfile,
               child: const Text('Guardar Cambios', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 16)),
-            )
+            ),
+            
+            const SizedBox(height: 16),
+            TextButton.icon(
+              onPressed: _confirmDeleteAccount,
+              icon: const Icon(Icons.delete_forever, color: Colors.redAccent),
+              label: const Text('Eliminar Perfil Definitivamente', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
           ],
         ),
       ),

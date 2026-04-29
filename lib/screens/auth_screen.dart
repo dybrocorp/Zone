@@ -110,7 +110,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
         mainAxisAlignment: MainAxisAlignment.center,
         key: const ValueKey('splash'),
         children: [
-          _buildLogo(size: 250),
+          _buildLogo(size: 300),
           const SizedBox(height: 20),
           const CircularProgressIndicator(
             color: Color(0xFF00D2FF),
@@ -122,17 +122,14 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
   }
 
   Widget _buildLogo({double size = 150}) {
-    return ColorFiltered(
-      colorFilter: const ColorFilter.mode(Color(0xFF0F172A), BlendMode.lighten),
-      child: Image.asset(
-        'assets/logo.jpg',
-        width: size,
-        height: size,
-        fit: BoxFit.contain,
-        errorBuilder: (context, error, stackTrace) {
-          return Icon(Icons.wifi_tethering, size: size, color: const Color(0xFF00D2FF));
-        },
-      ),
+    return Image.asset(
+      'assets/logo.png',
+      width: size,
+      height: size,
+      fit: BoxFit.contain,
+      errorBuilder: (context, error, stackTrace) {
+        return Icon(Icons.wifi_tethering, size: size, color: const Color(0xFF00D2FF));
+      },
     );
   }
 
@@ -141,16 +138,32 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
       key: const ValueKey('auth_menu'),
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        _buildLogo(size: 150),
+        _buildLogo(size: 200),
         const SizedBox(height: 30),
-        const Text(
-          'ZONE',
-          style: TextStyle(
-            fontSize: 32,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 4,
-            color: Colors.white,
-          ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text(
+              'ZON',
+              style: TextStyle(
+                fontSize: 40,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 4,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(width: 4),
+            // La "E" estilizada con 3 líneas
+            Column(
+              children: [
+                Container(width: 25, height: 4, decoration: BoxDecoration(color: const Color(0xFF00D2FF), borderRadius: BorderRadius.circular(2))),
+                const SizedBox(height: 5),
+                Container(width: 25, height: 4, decoration: BoxDecoration(color: const Color(0xFF00D2FF), borderRadius: BorderRadius.circular(2))),
+                const SizedBox(height: 5),
+                Container(width: 25, height: 4, decoration: BoxDecoration(color: const Color(0xFF00D2FF), borderRadius: BorderRadius.circular(2))),
+              ],
+            ),
+          ],
         ),
         const SizedBox(height: 10),
         const Text(
@@ -191,7 +204,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
             onPressed: _login,
-            child: const Text('Ya tengo un ZONE-ID', style: TextStyle(color: Color(0xFF00D2FF), fontSize: 16)),
+            child: const Text('Ya tengo un ID', style: TextStyle(color: Color(0xFF00D2FF), fontSize: 16)),
           )
         ]
       ],

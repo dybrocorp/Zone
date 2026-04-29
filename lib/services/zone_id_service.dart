@@ -136,22 +136,35 @@ class ZoneIdService {
     await _storage.write(key: 'public_key', value: publicKeyBase64);
   }
 
+  /// Asegura que el UID y la sesión de Auth estén listos.
+  Future<void> _ensureAuth() async {
+    // 1. Si no hay UID en memoria, intentar restaurar desde almacenamiento
+    if (_uid == null) {
+      final storedUid = await _storage.read(key: _keySupabaseSession);
+      _uid = storedUid;
+    }
+
+    // 2. Verificar sesión de Supabase Auth
+    final session = _supabase.auth.currentSession;
+    if (session == null) {
+      // Intentar reconexión anónima (esto mantiene el mismo UID si ya existía uno en Auth)
+      final response = await _supabase.auth.signInAnonymously();
+      if (response.user != null) {
+        _uid = response.user!.id;
+        await _storage.write(key: _keySupabaseSession, value: _uid);
+      }
+    } else {
+      _uid = session.user.id;
+    }
+
+    if (_uid == null) {
+      throw Exception('No se pudo establecer una sesión válida. Por favor, reinicia la app.');
+    }
+  }
+
   Future<void> _restoreSession() async {
     try {
-      // Si ya hay una sesión activa de Supabase, re-usarla
-      final session = _supabase.auth.currentSession;
-      if (session != null) {
-        _uid = session.user.id;
-        return;
-      }
-
-      // Si no, intentar recuperar usando el uid guardado
-      final storedUid = await _storage.read(key: _keySupabaseSession);
-      if (storedUid != null) {
-        _uid = storedUid;
-        // Reconectar llamando a signInAnonymously crea una nueva sesión
-        // pero mantenemos el mismo zone_id en DB, no duplicamos usuario
-      }
+      await _ensureAuth();
     } catch (e) {
       print('[ZoneIdService] Error al restaurar sesión: $e');
     }
@@ -171,7 +184,7 @@ class ZoneIdService {
     bool tiktokVisible = true,
     String? avatarUrl,
   }) async {
-    if (_uid == null) throw Exception('Sesión no válida');
+    await _ensureAuth();
     
     await _supabase.from('users').update({
       'display_name': displayName,
@@ -187,7 +200,7 @@ class ZoneIdService {
 
   /// Sube una imagen al bucket 'profiles' y devuelve la URL pública.
   Future<String> uploadProfilePicture(File file) async {
-    if (_uid == null) throw Exception('Sesión no válida para subir imagen');
+    await _ensureAuth();
     
     final extension = p.extension(file.path);
     final fileName = '$_uid/avatar${DateTime.now().millisecondsSinceEpoch}$extension';
@@ -215,9 +228,7 @@ class ZoneIdService {
 
   Future<Map<String, dynamic>?> getMyProfile() async {
     try {
-      if (_uid == null) {
-        await _restoreSession();
-      }
+      await _ensureAuth();
       if (_uid == null) return null;
       
       final res = await _supabase.from('users').select().eq('id', _uid!).single();
@@ -262,6 +273,18 @@ class ZoneIdService {
       result += '=';
     }
     return result;
+  }
+
+  Future<void> deleteAccount() async {
+    await _ensureAuth();
+    if (_uid == null) return;
+    
+    // 1. Llamar a la función de borrado total en Supabase (RPC)
+    // Esto borra datos en public, storage y auth.
+    await _supabase.rpc('delete_own_account');
+    
+    // 2. Limpiar todo el estado local
+    await clearAuth();
   }
 
   Future<void> clearAuth() async {

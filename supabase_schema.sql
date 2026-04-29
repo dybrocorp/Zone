@@ -137,6 +137,33 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 -- Revocar ejecución pública por seguridad
 REVOKE EXECUTE ON FUNCTION public.cleanup_expired_tokens() FROM PUBLIC;
 
+-- Función: eliminar propia cuenta (Borrado total)
+CREATE OR REPLACE FUNCTION public.delete_own_account()
+RETURNS void AS $$
+DECLARE
+    current_uid UUID;
+BEGIN
+    current_uid := auth.uid();
+    IF current_uid IS NULL THEN
+        RAISE EXCEPTION 'No autenticado';
+    END IF;
+
+    -- 1. Eliminar archivos de almacenamiento (Storage)
+    -- Nota: Eliminamos los objetos vinculados al folder del usuario
+    DELETE FROM storage.objects WHERE bucket_id = 'profiles' AND (storage.foldername(name))[1] = current_uid::text;
+
+    -- 2. Eliminar de public.users
+    -- Las cascadas configuradas (ON DELETE CASCADE) se encargarán de encounters, matches, tokens, etc.
+    DELETE FROM public.users WHERE id = current_uid;
+
+    -- 3. Eliminar de auth.users (Requiere SECURITY DEFINER ya que auth es protegido)
+    DELETE FROM auth.users WHERE id = current_uid;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth, storage;
+
+-- Revocar ejecución pública por seguridad
+REVOKE EXECUTE ON FUNCTION public.delete_own_account() FROM PUBLIC;
+
 -- [Ajuste de Terceros] Si rls_auto_enable existe, asegurarlo también
 DO $$ 
 BEGIN 

@@ -1,17 +1,25 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/widgets.dart';
 import 'package:nearby_connections/nearby_connections.dart';
+import 'supabase_service.dart';
 
 /// Modelo de usuario descubierto por Nearby Connections.
 class NearbyUser {
   final String endpointId;
-  final String userName;
+  final String token; // Token efímero recibido
+  String userName; // Resuelto desde Supabase
+  String zoneId; // ZONE-ID real resuelto
   bool isConnected;
+  Map<String, dynamic>? profile; // Perfil completo de Supabase
 
   NearbyUser({
     required this.endpointId,
-    required this.userName,
+    required this.token,
+    this.userName = '...',
+    this.zoneId = '',
     this.isConnected = false,
+    this.profile,
   });
 }
 
@@ -19,89 +27,141 @@ class NearbyUser {
 class NearbyMessage {
   final String fromEndpointId;
   final String text;
-
   NearbyMessage({required this.fromEndpointId, required this.text});
 }
 
-/// Servicio Singleton que maneja el descubrimiento de usuarios
-/// y la comunicación P2P usando Google Nearby Connections.
-class NearbyService {
+/// Servicio Singleton que usa Google Nearby Connections + tokens efímeros de Supabase.
+/// El token BT se comparte en lugar del user_id real, protegiendo la identidad.
+class NearbyService with WidgetsBindingObserver {
   static final NearbyService _instance = NearbyService._internal();
   factory NearbyService() => _instance;
   NearbyService._internal();
 
   final Nearby _nearby = Nearby();
+  final _supabaseService = SupabaseService();
 
-  /// Constantes de configuración
   static const Strategy _strategy = Strategy.P2P_CLUSTER;
   static const String _serviceId = 'com.dybrocorp.zone';
 
-  /// Nombre de usuario local (se configura en initialize)
-  String _userName = '';
-  String get userName => _userName;
+  /// Token efímero actual (se renueva cada ~4 min)
+  String _currentToken = 'ZONE-INIT';
+  String _userId = '';
 
-  /// Estado del radar
   bool _isAdvertising = false;
   bool _isDiscovering = false;
   bool get isRadarActive => _isAdvertising || _isDiscovering;
 
-  /// Lista reactiva de usuarios descubiertos
+  /// Smart scan timers
+  Timer? _scanCycleTimer;
+  Timer? _tokenRefreshTimer;
+
   final Map<String, NearbyUser> _discoveredUsers = {};
-  final _discoveredUsersController =
-      StreamController<List<NearbyUser>>.broadcast();
-  Stream<List<NearbyUser>> get discoveredUsersStream =>
-      _discoveredUsersController.stream;
+  final _discoveredUsersController = StreamController<List<NearbyUser>>.broadcast();
+  Stream<List<NearbyUser>> get discoveredUsersStream => _discoveredUsersController.stream;
   List<NearbyUser> get discoveredUsers => _discoveredUsers.values.toList();
 
-  /// Stream de mensajes entrantes
-  final _incomingMessagesController =
-      StreamController<NearbyMessage>.broadcast();
-  Stream<NearbyMessage> get incomingMessagesStream =>
-      _incomingMessagesController.stream;
+  final _incomingMessagesController = StreamController<NearbyMessage>.broadcast();
+  Stream<NearbyMessage> get incomingMessagesStream => _incomingMessagesController.stream;
 
-  /// Stream de solicitudes de conexión entrantes
-  final _connectionRequestController =
-      StreamController<ConnectionInfo>.broadcast();
-  Stream<ConnectionInfo> get connectionRequestStream =>
-      _connectionRequestController.stream;
-
-  /// Mapa de conexiones activas (endpointId -> info)
-  final Map<String, ConnectionInfo> _pendingConnections = {};
+  final Map<String, dynamic> _pendingConnections = {};
   final Set<String> _connectedEndpoints = {};
 
   // ──────────────────────────────────────────────────────────────
   //  Inicialización
   // ──────────────────────────────────────────────────────────────
 
-  /// Inicializa el servicio con el nombre de usuario local.
-  void initialize(String userName) {
-    _userName = userName;
-    print('[NearbyService] Inicializado con usuario: $_userName');
+  /// Inicializa con el userId de Supabase y obtiene el primer token BT.
+  Future<void> initialize(String userId) async {
+    _userId = userId;
+    WidgetsBinding.instance.addObserver(this);
+    await _refreshToken();
+  }
+
+  /// Renueva el token BT efímero cada 4 minutos.
+  Future<void> _refreshToken() async {
+    if (_userId.isEmpty) return;
+    final token = await _supabaseService.generateBtToken(_userId);
+    if (token != null && token.isNotEmpty) {
+      _currentToken = token;
+    }
   }
 
   // ──────────────────────────────────────────────────────────────
-  //  Radar (Advertising + Discovery simultáneo)
+  //  AppLifecycle — pausa en background (ahorra batería)
   // ──────────────────────────────────────────────────────────────
 
-  /// Inicia el radar: advertising + discovery al mismo tiempo.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
+      _pauseScanning();
+    } else if (state == AppLifecycleState.resumed) {
+      _resumeScanning();
+    }
+  }
+
+  void _pauseScanning() {
+    _scanCycleTimer?.cancel();
+    _nearby.stopAdvertising();
+    _nearby.stopDiscovery();
+    _isAdvertising = false;
+    _isDiscovering = false;
+  }
+
+  void _resumeScanning() {
+    if (!isRadarActive) return;
+    _startSmartScanCycle();
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  //  Radar con escaneo inteligente (15s ciclo)
+  // ──────────────────────────────────────────────────────────────
+
+  /// Inicia el radar con ciclo inteligente de 15s y renovación de token.
   Future<void> startRadar() async {
     await _startAdvertising();
     await _startDiscovery();
+    _startSmartScanCycle();
+    // Renovar token cada 4 minutos
+    _tokenRefreshTimer = Timer.periodic(const Duration(minutes: 4), (_) async {
+      await _refreshToken();
+      // Reiniciar advertising con el nuevo token
+      if (_isAdvertising) {
+        await _nearby.stopAdvertising();
+        _isAdvertising = false;
+        await _startAdvertising();
+      }
+    });
+  }
+
+  /// Ciclo inteligente: escanea 12s, pausa 3s (reduce consumo de batería).
+  void _startSmartScanCycle() {
+    _scanCycleTimer?.cancel();
+    _scanCycleTimer = Timer.periodic(const Duration(seconds: 15), (_) async {
+      if (!_isDiscovering) return;
+      // Breve pausa para que el stack BT/WiFi respire
+      await _nearby.stopDiscovery();
+      _isDiscovering = false;
+      await Future.delayed(const Duration(seconds: 3));
+      await _startDiscovery();
+    });
   }
 
   /// Detiene el radar completamente.
   Future<void> stopRadar() async {
+    _scanCycleTimer?.cancel();
+    _tokenRefreshTimer?.cancel();
     await _stopAdvertising();
     await _stopDiscovery();
     _discoveredUsers.clear();
     _emitDiscoveredUsers();
+    WidgetsBinding.instance.removeObserver(this);
   }
 
   Future<void> _startAdvertising() async {
     if (_isAdvertising) return;
     try {
       await _nearby.startAdvertising(
-        _userName,
+        _currentToken, // ← Token efímero, NO el zone_id real
         _strategy,
         onConnectionInitiated: _onConnectionInitiated,
         onConnectionResult: _onConnectionResult,
@@ -109,7 +169,6 @@ class NearbyService {
         serviceId: _serviceId,
       );
       _isAdvertising = true;
-      print('[NearbyService] Advertising iniciado.');
     } catch (e) {
       print('[NearbyService] Error al iniciar advertising: $e');
     }
@@ -119,14 +178,13 @@ class NearbyService {
     if (_isDiscovering) return;
     try {
       await _nearby.startDiscovery(
-        _userName,
+        _currentToken,
         _strategy,
         onEndpointFound: _onEndpointFound,
         onEndpointLost: _onEndpointLost,
         serviceId: _serviceId,
       );
       _isDiscovering = true;
-      print('[NearbyService] Discovery iniciado.');
     } catch (e) {
       print('[NearbyService] Error al iniciar discovery: $e');
     }
@@ -136,32 +194,53 @@ class NearbyService {
     if (!_isAdvertising) return;
     await _nearby.stopAdvertising();
     _isAdvertising = false;
-    print('[NearbyService] Advertising detenido.');
   }
 
   Future<void> _stopDiscovery() async {
     if (!_isDiscovering) return;
     await _nearby.stopDiscovery();
     _isDiscovering = false;
-    print('[NearbyService] Discovery detenido.');
   }
 
   // ──────────────────────────────────────────────────────────────
-  //  Callbacks de Discovery
+  //  Callbacks de Discovery — resuelve token → zone_id via Supabase
   // ──────────────────────────────────────────────────────────────
 
-  void _onEndpointFound(String id, String userName, String serviceId) {
-    print('[NearbyService] Endpoint encontrado: $userName ($id)');
+  void _onEndpointFound(String id, String receivedToken, String serviceId) {
+    // Agregar con display temporal mientras se resuelve
     _discoveredUsers[id] = NearbyUser(
       endpointId: id,
-      userName: userName,
+      token: receivedToken,
+      userName: 'Cargando...',
     );
     _emitDiscoveredUsers();
+
+    // Resolver token en Supabase de forma asíncrona
+    _resolveTokenAsync(id, receivedToken);
+  }
+
+  Future<void> _resolveTokenAsync(String endpointId, String token) async {
+    try {
+      final profile = await _supabaseService.resolveToken(token);
+      if (profile != null && _discoveredUsers.containsKey(endpointId)) {
+        _discoveredUsers[endpointId]!
+          ..userName = profile['display_name'] ?? profile['zone_id'] ?? 'ZONE-???'
+          ..zoneId = profile['zone_id'] ?? ''
+          ..profile = profile;
+        _emitDiscoveredUsers();
+
+        // Registrar encuentro en Supabase ("Nos cruzamos")
+        if (_userId.isNotEmpty && profile['zone_id'] != null) {
+          await _supabaseService.registerEncounter(_userId, profile['zone_id']);
+        }
+      }
+    } catch (e) {
+      print('[NearbyService] Error al resolver token: $e');
+    }
   }
 
   void _onEndpointLost(String? id) {
     if (id == null) return;
-    print('[NearbyService] Endpoint perdido: $id');
     _discoveredUsers.remove(id);
     _emitDiscoveredUsers();
   }
@@ -171,31 +250,23 @@ class NearbyService {
   // ──────────────────────────────────────────────────────────────
 
   void _onConnectionInitiated(String id, ConnectionInfo info) {
-    print('[NearbyService] Conexión iniciada con ${info.endpointName} ($id)');
     _pendingConnections[id] = info;
-    _connectionRequestController.add(info);
-
-    // Auto-aceptar para facilitar el descubrimiento del radar.
-    // En producción se podría mostrar un diálogo de confirmación.
-    acceptConnection(id);
+    acceptConnection(id); // Auto-aceptar para radar; el match real va por Supabase
   }
 
   void _onConnectionResult(String id, Status status) {
     if (status == Status.CONNECTED) {
-      print('[NearbyService] ¡Conectado con $id!');
       _connectedEndpoints.add(id);
       if (_discoveredUsers.containsKey(id)) {
         _discoveredUsers[id]!.isConnected = true;
         _emitDiscoveredUsers();
       }
     } else {
-      print('[NearbyService] Conexión fallida con $id: $status');
       _pendingConnections.remove(id);
     }
   }
 
   void _onDisconnected(String id) {
-    print('[NearbyService] Desconectado de $id');
     _connectedEndpoints.remove(id);
     _pendingConnections.remove(id);
     if (_discoveredUsers.containsKey(id)) {
@@ -208,23 +279,20 @@ class NearbyService {
   //  Acciones de conexión
   // ──────────────────────────────────────────────────────────────
 
-  /// Solicita conexión a un endpoint descubierto.
   Future<void> requestConnection(String endpointId) async {
     try {
       await _nearby.requestConnection(
-        _userName,
+        _currentToken,
         endpointId,
         onConnectionInitiated: _onConnectionInitiated,
         onConnectionResult: _onConnectionResult,
         onDisconnected: _onDisconnected,
       );
-      print('[NearbyService] Solicitud de conexión enviada a $endpointId');
     } catch (e) {
       print('[NearbyService] Error al solicitar conexión: $e');
     }
   }
 
-  /// Acepta una conexión pendiente.
   Future<void> acceptConnection(String endpointId) async {
     try {
       await _nearby.acceptConnection(
@@ -232,24 +300,20 @@ class NearbyService {
         onPayLoadRecieved: _onPayloadReceived,
         onPayloadTransferUpdate: _onPayloadTransferUpdate,
       );
-      print('[NearbyService] Conexión aceptada con $endpointId');
     } catch (e) {
       print('[NearbyService] Error al aceptar conexión: $e');
     }
   }
 
-  /// Rechaza una conexión pendiente.
   Future<void> rejectConnection(String endpointId) async {
     try {
       await _nearby.rejectConnection(endpointId);
       _pendingConnections.remove(endpointId);
-      print('[NearbyService] Conexión rechazada con $endpointId');
     } catch (e) {
       print('[NearbyService] Error al rechazar conexión: $e');
     }
   }
 
-  /// Desconecta de un endpoint.
   void disconnectFrom(String endpointId) {
     _nearby.disconnectFromEndpoint(endpointId);
     _connectedEndpoints.remove(endpointId);
@@ -257,54 +321,31 @@ class NearbyService {
       _discoveredUsers[endpointId]!.isConnected = false;
       _emitDiscoveredUsers();
     }
-    print('[NearbyService] Desconectado de $endpointId');
   }
 
   // ──────────────────────────────────────────────────────────────
   //  Envío y recepción de datos (Payloads)
   // ──────────────────────────────────────────────────────────────
 
-  /// Envía un mensaje de texto a un endpoint conectado.
   Future<void> sendMessage(String endpointId, String message) async {
-    if (!_connectedEndpoints.contains(endpointId)) {
-      print('[NearbyService] No conectado a $endpointId, no se puede enviar.');
-      return;
-    }
+    if (!_connectedEndpoints.contains(endpointId)) return;
     try {
-      await _nearby.sendBytesPayload(
-        endpointId,
-        utf8.encode(message),
-      );
-      print('[NearbyService] Mensaje enviado a $endpointId');
+      await _nearby.sendBytesPayload(endpointId, utf8.encode(message));
     } catch (e) {
       print('[NearbyService] Error al enviar mensaje: $e');
-    }
-  }
-
-  /// Envía un mensaje a todos los endpoints conectados.
-  Future<void> broadcastMessage(String message) async {
-    for (final endpointId in _connectedEndpoints) {
-      await sendMessage(endpointId, message);
     }
   }
 
   void _onPayloadReceived(String endpointId, Payload payload) {
     if (payload.type == PayloadType.BYTES && payload.bytes != null) {
       final text = utf8.decode(payload.bytes!);
-      print('[NearbyService] Mensaje de $endpointId: $text');
       _incomingMessagesController.add(
         NearbyMessage(fromEndpointId: endpointId, text: text),
       );
     }
   }
 
-  void _onPayloadTransferUpdate(
-      String endpointId, PayloadTransferUpdate update) {
-    // Se puede usar para mostrar el progreso de transferencias de archivos.
-    if (update.status == PayloadStatus.SUCCESS) {
-      print('[NearbyService] Payload transferido exitosamente con $endpointId');
-    }
-  }
+  void _onPayloadTransferUpdate(String endpointId, PayloadTransferUpdate update) {}
 
   // ──────────────────────────────────────────────────────────────
   //  Utilidades
@@ -314,19 +355,12 @@ class NearbyService {
     _discoveredUsersController.add(discoveredUsers);
   }
 
-  /// Solicita todos los permisos necesarios usando PermissionsService.
-  Future<void> requestPermissions() async {
-    // Se importa dinámicamente para evitar dependencia circular.
-    // En la práctica, se llama desde PermissionsService antes de iniciar el radar.
-    // Este es un wrapper de conveniencia.
-    // Los permisos los maneja PermissionsService.requestAllPermissions().
-  }
+  Future<void> requestPermissions() async {}
 
-  /// Limpia todos los recursos al cerrar.
   void dispose() {
     stopRadar();
+    WidgetsBinding.instance.removeObserver(this);
     _discoveredUsersController.close();
     _incomingMessagesController.close();
-    _connectionRequestController.close();
   }
 }

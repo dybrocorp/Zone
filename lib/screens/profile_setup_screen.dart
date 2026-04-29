@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'radar_screen.dart';
+import '../services/zone_id_service.dart';
 
 class ProfileSetupScreen extends StatefulWidget {
   final String generatedId;
@@ -15,14 +16,39 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
   final TextEditingController _fbController = TextEditingController();
   final TextEditingController _tiktokController = TextEditingController();
 
-  // Controladores de privacidad
   bool _isIgVisible = true;
   bool _isFbVisible = true;
   bool _isTiktokVisible = true;
+  bool _isSaving = false;
 
-  void _finishSetup() {
-    // Almacenar todos estos datos (Perfil y Configuración de Privacidad) en Supabase 
-    // y en almacenamiento local antes de pasar al Radar.
+  final _zoneIdService = ZoneIdService();
+
+  void _finishSetup() async {
+    if (_nameController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Pon un nombre o apodo para continuar')),
+      );
+      return;
+    }
+
+    setState(() => _isSaving = true);
+
+    try {
+      // Guardar perfil en Supabase
+      await _zoneIdService.updateProfile(
+        displayName: _nameController.text.trim(),
+        instagram: _igController.text.trim().isNotEmpty ? _igController.text.trim() : null,
+        igVisible: _isIgVisible,
+        facebook: _fbController.text.trim().isNotEmpty ? _fbController.text.trim() : null,
+        fbVisible: _isFbVisible,
+        tiktok: _tiktokController.text.trim().isNotEmpty ? _tiktokController.text.trim() : null,
+        tiktokVisible: _isTiktokVisible,
+      );
+    } catch (e) {
+      // Log y continuar aunque falle
+    }
+
+    if (!mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const RadarScreen()),
     );
@@ -65,8 +91,19 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                       ],
                     ),
                     const SizedBox(height: 12),
-                    Text('Tu ID Único: ${widget.generatedId}',
-                      style: const TextStyle(color: Colors.white54, fontSize: 13),
+                    Text(
+                      widget.generatedId,
+                      style: const TextStyle(
+                        color: Color(0xFF00D2FF),
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 2,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Tu ID único y privado — nunca cambia',
+                      style: TextStyle(color: Colors.white38, fontSize: 12),
                     ),
                   ],
                 ),
@@ -76,7 +113,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                 controller: _nameController,
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
-                  labelText: 'Nombre / Apodo',
+                  labelText: 'Nombre / Apodo *',
                   labelStyle: const TextStyle(color: Colors.white54),
                   enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.grey.shade700)),
                   focusedBorder: const OutlineInputBorder(borderSide: BorderSide(color: Color(0xFF00D2FF))),
@@ -84,15 +121,15 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                 ),
               ),
               const SizedBox(height: 30),
-              const Text('Integraciones Opcionales', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+              const Text('Redes Sociales (Opcional)', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 4),
-              const Text('Controla tu privacidad. Tú decides qué redes se pueden ver cuando entran a tu perfil.', style: TextStyle(color: Colors.white54, fontSize: 13)),
+              const Text('Tú controlas qué se muestra cuando alguien te escanea.', style: TextStyle(color: Colors.white54, fontSize: 13)),
               const SizedBox(height: 20),
-              
+
               _buildSocialField('Instagram', _igController, _isIgVisible, (val) => setState(() => _isIgVisible = val)),
               _buildSocialField('Facebook', _fbController, _isFbVisible, (val) => setState(() => _isFbVisible = val)),
               _buildSocialField('TikTok', _tiktokController, _isTiktokVisible, (val) => setState(() => _isTiktokVisible = val)),
-              
+
               const SizedBox(height: 40),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
@@ -100,8 +137,10 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                   minimumSize: const Size(double.infinity, 55),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
-                onPressed: _finishSetup,
-                child: const Text('Entrar a Zone', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 16)),
+                onPressed: _isSaving ? null : _finishSetup,
+                child: _isSaving
+                    ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                    : const Text('Entrar a Zone', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 16)),
               )
             ],
           ),
@@ -119,7 +158,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
             controller: controller,
             style: const TextStyle(color: Colors.white),
             decoration: InputDecoration(
-              labelText: 'Nombre de usuario en $name',
+              labelText: 'Usuario en $name',
               labelStyle: const TextStyle(color: Colors.white54),
               enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.grey.shade700)),
               focusedBorder: const OutlineInputBorder(borderSide: BorderSide(color: Color(0xFF00D2FF))),
@@ -127,7 +166,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
             ),
           ),
           SwitchListTile(
-            title: Text('Visible cuando te escanean', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+            title: const Text('Visible en tu perfil público', style: TextStyle(color: Colors.white70, fontSize: 13)),
             value: isVisible,
             activeThumbColor: const Color(0xFF00D2FF),
             onChanged: onToggle,

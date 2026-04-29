@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'profile_setup_screen.dart';
+import 'radar_screen.dart';
 import 'dart:math';
 import 'login_screen.dart';
+import '../services/zone_id_service.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({Key? key}) : super(key: key);
@@ -13,11 +15,12 @@ class AuthScreen extends StatefulWidget {
 class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateMixin {
   bool _isLoading = false;
   String? _generatedId;
-  
-  // Controladores del "Splash Screen" (Bienvenida animada)
+
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
   bool _showSplash = true;
+
+  final _zoneIdService = ZoneIdService();
 
   @override
   void initState() {
@@ -27,21 +30,26 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
       duration: const Duration(milliseconds: 1500),
     );
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(_fadeController);
-
     _startSplash();
   }
 
   void _startSplash() async {
-    // 1. Aparece suavemente el logo
     await _fadeController.forward();
-    // 2. Se mantiene brillante un par de segundos
     await Future.delayed(const Duration(seconds: 2));
-    // 3. Pasa al menú de login/registro
-    if (mounted) {
-      setState(() {
-        _showSplash = false;
-      });
+
+    // Verificar si ya existe un ZONE-ID local → ir directo al Radar
+    final existingId = await _zoneIdService.getOrCreate();
+    if (!mounted) return;
+
+    // Si el uid ya está configurado → usuario ya registrado
+    if (_zoneIdService.uid != null) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const RadarScreen()),
+      );
+      return;
     }
+
+    setState(() { _showSplash = false; });
   }
 
   @override
@@ -50,27 +58,19 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
     super.dispose();
   }
 
-  String _generateZoneId() {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    final rnd = Random();
-    String code = String.fromCharCodes(Iterable.generate(
-        8, (_) => chars.codeUnitAt(rnd.nextInt(chars.length))));
-    return 'ZONE-$code';
-  }
-
   Future<void> _startRegistration() async {
-    setState(() {
-      _isLoading = true;
-      _generatedId = _generateZoneId();
-    });
+    setState(() { _isLoading = true; });
 
-    await Future.delayed(const Duration(seconds: 3));
+    // Generar/obtener ZONE-ID y registrar en Supabase
+    final zoneId = await _zoneIdService.getOrCreate();
+    setState(() { _generatedId = zoneId; });
 
+    await Future.delayed(const Duration(seconds: 2));
     if (!mounted) return;
-    
+
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
-        builder: (_) => ProfileSetupScreen(generatedId: _generatedId!),
+        builder: (_) => ProfileSetupScreen(generatedId: zoneId),
       ),
     );
   }
@@ -106,7 +106,6 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
         children: [
           _buildLogo(size: 250),
           const SizedBox(height: 20),
-          // Indicador de carga sutil para la bienvenida
           const CircularProgressIndicator(
             color: Color(0xFF00D2FF),
             strokeWidth: 2,
@@ -118,8 +117,6 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
 
   Widget _buildLogo({double size = 150}) {
     return ColorFiltered(
-      // Este BlendMode toma tu imagen de fondo negro y hace que el negro se
-      // vuelva transparente dejando que se amolde al color azul oscuro (Scaffold)
       colorFilter: const ColorFilter.mode(Color(0xFF0F172A), BlendMode.lighten),
       child: Image.asset(
         'assets/logo.jpg',
@@ -127,7 +124,6 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
         height: size,
         fit: BoxFit.contain,
         errorBuilder: (context, error, stackTrace) {
-          // Si no encuentra la imagen (porque no la hemos guardado en disco), usa el icono
           return Icon(Icons.wifi_tethering, size: size, color: const Color(0xFF00D2FF));
         },
       ),
@@ -139,7 +135,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
       key: const ValueKey('auth_menu'),
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        _buildLogo(size: 150), // Logo más pequeño en la pantalla de opciones
+        _buildLogo(size: 150),
         const SizedBox(height: 30),
         const Text(
           'ZONE',
@@ -160,15 +156,15 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
         if (_isLoading) ...[
           const CircularProgressIndicator(color: Color(0xFF00D2FF)),
           const SizedBox(height: 20),
-          const Text('Asignando ID de Perfil...', style: TextStyle(color: Colors.white70)),
+          const Text('Generando tu ID seguro...', style: TextStyle(color: Colors.white70)),
           const SizedBox(height: 12),
           Text(
             _generatedId ?? '',
             style: const TextStyle(
-              color: Color(0xFF00D2FF), 
-              fontSize: 24, 
-              fontWeight: FontWeight.bold, 
-              letterSpacing: 2
+              color: Color(0xFF00D2FF),
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 2,
             ),
           ),
         ] else ...[
@@ -176,24 +172,20 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF00D2FF),
               minimumSize: const Size(double.infinity, 50),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
             onPressed: _startRegistration,
-            child: const Text('Comenzar Registro', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 16)),
+            child: const Text('Comenzar', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 16)),
           ),
           const SizedBox(height: 20),
           OutlinedButton(
             style: OutlinedButton.styleFrom(
               minimumSize: const Size(double.infinity, 50),
               side: const BorderSide(color: Color(0xFF00D2FF)),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
             onPressed: _login,
-            child: const Text('Ya tengo una cuenta', style: TextStyle(color: Color(0xFF00D2FF), fontSize: 16)),
+            child: const Text('Ya tengo un ZONE-ID', style: TextStyle(color: Color(0xFF00D2FF), fontSize: 16)),
           )
         ]
       ],

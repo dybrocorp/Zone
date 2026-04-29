@@ -27,6 +27,14 @@ class ChatE2EEService {
     );
   }
 
+  /// Helper para convertir un string base64 de Supabase en un objeto SimplePublicKey.
+  SimplePublicKey importPublicKeyFromBase64(String base64) {
+    return SimplePublicKey(
+      base64Decode(base64),
+      type: KeyPairType.x25519,
+    );
+  }
+
   /// Encripta un mensaje usando el secreto compartido generado, garantizando Forward Secrecy.
   Future<Map<String, dynamic>> encryptMessage(String text, SecretKey sharedSecret) async {
     final clearTextBytes = utf8.encode(text);

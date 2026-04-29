@@ -1,13 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'screens/auth_screen.dart';
 import 'services/permissions_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // Solicitamos permisos al arranque temporalmente para asegurar el BLE
-  await PermissionsService.requestBlePermissions();
-  
+
+  // Inicializar Supabase
+  await Supabase.initialize(
+    url: 'https://leejpxwctnubihacudik.supabase.co',
+    anonKey: 'sb_publishable_vl-aeN4Ior-GZ5YB45MFyA_KGxgfZjV',
+  );
+
+  // Solicitar permisos al arranque
+  await PermissionsService.requestAllPermissions();
+
   runApp(const ZoneApp());
 }
 

@@ -22,6 +22,17 @@ class PermissionsService {
     return allGranted;
   }
 
+  /// Solicita los permisos para la cámara y galería de fotos.
+  static Future<bool> requestCameraAndGalleryPermissions() async {
+    Map<Permission, PermissionStatus> statuses = await [
+      Permission.camera,
+      Permission.photos, // Se encarga de READ_MEDIA_IMAGES en Android 13+
+    ].request();
+
+    return statuses[Permission.camera]!.isGranted && 
+           statuses[Permission.photos]!.isGranted;
+  }
+
   /// Método legacy de compatibilidad
   static Future<bool> requestBlePermissions() => requestAllPermissions();
 }

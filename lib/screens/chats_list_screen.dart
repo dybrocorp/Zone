@@ -25,18 +25,36 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
   }
 
   Future<void> _loadData() async {
-    final uid = _zoneIdService.uid;
-    if (uid == null) return;
+    try {
+      final uid = _zoneIdService.uid;
+      if (uid == null) {
+        // Si no hay UID, intentamos restaurar sesión
+        await _zoneIdService.getOrCreate();
+      }
+      
+      final currentUid = _zoneIdService.uid;
+      if (currentUid == null) return;
 
-    final matches = await _supabaseService.getAcceptedMatches(uid);
-    final pending = await _supabaseService.getPendingRequests(uid);
+      final matches = await _supabaseService.getAcceptedMatches(currentUid);
+      final pending = await _supabaseService.getPendingRequests(currentUid);
 
-    if (mounted) {
-      setState(() {
-        _matches = matches;
-        _pendingRequests = pending;
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _matches = matches;
+          _pendingRequests = pending;
+        });
+      }
+    } catch (e) {
+      print('[ChatsListScreen] Error cargando chats: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al cargar mensajes: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 

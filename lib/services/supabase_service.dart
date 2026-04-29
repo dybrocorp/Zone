@@ -128,22 +128,32 @@ class SupabaseService {
 
   /// Obtiene todos los matches aceptados del usuario actual.
   Future<List<Map<String, dynamic>>> getAcceptedMatches(String userId) async {
-    final result = await _supabase
-        .from('matches')
-        .select('*, users!matches_requester_id_fkey(zone_id, display_name), users!matches_receiver_id_fkey(zone_id, display_name)')
-        .eq('status', 'accepted')
-        .or('requester_id.eq.$userId,receiver_id.eq.$userId');
-    return List<Map<String, dynamic>>.from(result);
+    try {
+      final result = await _supabase
+          .from('matches')
+          .select('*, users!matches_requester_id_fkey(zone_id, display_name), users!matches_receiver_id_fkey(zone_id, display_name)')
+          .eq('status', 'accepted')
+          .or('requester_id.eq.$userId,receiver_id.eq.$userId');
+      return List<Map<String, dynamic>>.from(result);
+    } catch (e) {
+      print('[SupabaseService] Error obteniendo matches: $e');
+      return [];
+    }
   }
 
   /// Obtiene solicitudes de match pendientes dirigidas al usuario.
   Future<List<Map<String, dynamic>>> getPendingRequests(String userId) async {
-    final result = await _supabase
-        .from('matches')
-        .select('*, users!matches_requester_id_fkey(zone_id, display_name)')
-        .eq('receiver_id', userId)
-        .eq('status', 'pending');
-    return List<Map<String, dynamic>>.from(result);
+    try {
+      final result = await _supabase
+          .from('matches')
+          .select('*, users!matches_requester_id_fkey(zone_id, display_name)')
+          .eq('receiver_id', userId)
+          .eq('status', 'pending');
+      return List<Map<String, dynamic>>.from(result);
+    } catch (e) {
+      print('[SupabaseService] Error obteniendo solicitudes match: $e');
+      return [];
+    }
   }
 
   // ──────────────────────────────────────────────────────────
@@ -226,6 +236,19 @@ class SupabaseService {
       });
     } catch (e) {
       // Ignorar duplicados
+    }
+  }
+  /// Obtiene la lista de usuarios bloqueados por el usuario.
+  Future<List<Map<String, dynamic>>> getBlockedUsers(String userId) async {
+    try {
+      final result = await _supabase
+          .from('blocked_users')
+          .select('*, users!blocked_users_blocked_id_fkey(zone_id, display_name)')
+          .eq('blocker_id', userId);
+      return List<Map<String, dynamic>>.from(result);
+    } catch (e) {
+      print('[SupabaseService] Error obteniendo usuarios bloqueados: $e');
+      return [];
     }
   }
 

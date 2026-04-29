@@ -10,7 +10,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 -- ============================================================
 -- 1. USUARIOS (sin email, autenticación anónima por ZONE-ID)
 -- ============================================================
-CREATE TABLE public.users (
+CREATE TABLE IF NOT EXISTS public.users (
     id UUID REFERENCES auth.users NOT NULL PRIMARY KEY,
     zone_id TEXT UNIQUE NOT NULL,           -- ZONE-XXXXXXXX visible públicamente
     display_name TEXT,                      -- Apodo opcional
@@ -25,6 +25,7 @@ CREATE TABLE public.users (
     tiktok_visible BOOLEAN DEFAULT TRUE,
     reports_count INT DEFAULT 0,
     is_shadowbanned BOOLEAN DEFAULT FALSE,
+    avatar_url TEXT,                        -- URL pública de la foto de perfil
     created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
@@ -32,7 +33,7 @@ CREATE TABLE public.users (
 -- 2. TOKENS BLUETOOTH TEMPORALES (seguridad del radar)
 -- El token efímero se comparte via Nearby Connections, NO el zone_id
 -- ============================================================
-CREATE TABLE public.bt_tokens (
+CREATE TABLE IF NOT EXISTS public.bt_tokens (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     user_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
     token TEXT UNIQUE NOT NULL,             -- UUID aleatorio efímero
@@ -45,18 +46,17 @@ CREATE TABLE public.bt_tokens (
 -- 3. ENCUENTROS ("Nos cruzamos") — Feature diferencial CLAVE
 -- Cada vez que dos usuarios se detectan por BT/Nearby, se guarda
 -- ============================================================
-CREATE TABLE public.encounters (
+CREATE TABLE IF NOT EXISTS public.encounters (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     user_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
     other_zone_id TEXT NOT NULL,            -- ZONE-ID de la persona encontrada
-    seen_at TIMESTAMPTZ DEFAULT now() NOT NULL,
-    UNIQUE(user_id, other_zone_id, (date_trunc('hour', seen_at))) -- 1 entrada por hora max
+    seen_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
 -- ============================================================
 -- 4. MATCHES (solicitudes de conexión para chatear)
 -- ============================================================
-CREATE TABLE public.matches (
+CREATE TABLE IF NOT EXISTS public.matches (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     requester_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
     receiver_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
@@ -68,7 +68,7 @@ CREATE TABLE public.matches (
 -- ============================================================
 -- 5. MENSAJES E2EE (solo si hay match aceptado)
 -- ============================================================
-CREATE TABLE public.messages (
+CREATE TABLE IF NOT EXISTS public.messages (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     match_id UUID REFERENCES public.matches(id) ON DELETE CASCADE NOT NULL,
     sender_id UUID REFERENCES public.users(id) NOT NULL,
@@ -81,7 +81,7 @@ CREATE TABLE public.messages (
 -- ============================================================
 -- 6. REPORTES DE USUARIOS
 -- ============================================================
-CREATE TABLE public.reports (
+CREATE TABLE IF NOT EXISTS public.reports (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     reporter_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
     reported_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
@@ -93,7 +93,7 @@ CREATE TABLE public.reports (
 -- ============================================================
 -- 7. USUARIOS BLOQUEADOS
 -- ============================================================
-CREATE TABLE public.blocked_users (
+CREATE TABLE IF NOT EXISTS public.blocked_users (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     blocker_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
     blocked_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
@@ -115,8 +115,12 @@ BEGIN
     WHERE id = NEW.reported_id;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
+-- Revocar ejecución pública por seguridad (evitar acceso via REST API)
+REVOKE EXECUTE ON FUNCTION public.handle_new_report() FROM PUBLIC;
+
+DROP TRIGGER IF EXISTS on_new_report ON public.reports;
 CREATE TRIGGER on_new_report
     AFTER INSERT ON public.reports
     FOR EACH ROW EXECUTE FUNCTION public.handle_new_report();
@@ -128,7 +132,19 @@ BEGIN
     DELETE FROM public.bt_tokens
     WHERE expires_at < now() OR used = TRUE;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- Revocar ejecución pública por seguridad
+REVOKE EXECUTE ON FUNCTION public.cleanup_expired_tokens() FROM PUBLIC;
+
+-- [Ajuste de Terceros] Si rls_auto_enable existe, asegurarlo también
+DO $$ 
+BEGIN 
+    IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'rls_auto_enable') THEN
+        EXECUTE 'REVOKE EXECUTE ON FUNCTION public.rls_auto_enable() FROM PUBLIC';
+        EXECUTE 'ALTER FUNCTION public.rls_auto_enable() SET search_path = public';
+    END IF;
+END $$;
 
 -- ============================================================
 -- ROW LEVEL SECURITY (RLS) — PRIORIDAD MÁXIMA
@@ -144,54 +160,66 @@ ALTER TABLE public.blocked_users ENABLE ROW LEVEL SECURITY;
 
 -- ─── USERS ───────────────────────────────────────────────────
 -- Ver perfiles no shadowbanned (para el radar)
+DROP POLICY IF EXISTS "Ver perfiles públicos" ON public.users;
 CREATE POLICY "Ver perfiles públicos" ON public.users
     FOR SELECT USING (is_shadowbanned = FALSE);
 
 -- Solo el dueño puede actualizar su propio perfil
+DROP POLICY IF EXISTS "Actualizar propio perfil" ON public.users;
 CREATE POLICY "Actualizar propio perfil" ON public.users
     FOR UPDATE USING (auth.uid() = id);
 
 -- Insertar solo con tu propio uid
+DROP POLICY IF EXISTS "Registrar propio usuario" ON public.users;
 CREATE POLICY "Registrar propio usuario" ON public.users
     FOR INSERT WITH CHECK (auth.uid() = id);
 
 -- ─── BT_TOKENS ───────────────────────────────────────────────
 -- Solo tu propio token
+DROP POLICY IF EXISTS "Ver propio token" ON public.bt_tokens;
 CREATE POLICY "Ver propio token" ON public.bt_tokens
     FOR SELECT USING (auth.uid() = user_id);
 
 -- Insertar solo tu propio token
+DROP POLICY IF EXISTS "Crear propio token" ON public.bt_tokens;
 CREATE POLICY "Crear propio token" ON public.bt_tokens
     FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 -- Cualquier usuario autenticado puede resolver un token (para el radar)
+DROP POLICY IF EXISTS "Resolver token BT" ON public.bt_tokens;
 CREATE POLICY "Resolver token BT" ON public.bt_tokens
     FOR SELECT USING (auth.role() = 'authenticated' AND expires_at > now() AND used = FALSE);
 
 -- ─── ENCOUNTERS ──────────────────────────────────────────────
 -- Solo ver tus propios encuentros
+DROP POLICY IF EXISTS "Ver propios encuentros" ON public.encounters;
 CREATE POLICY "Ver propios encuentros" ON public.encounters
     FOR SELECT USING (auth.uid() = user_id);
 
 -- Insertar tus propios encuentros
+DROP POLICY IF EXISTS "Registrar encuentro" ON public.encounters;
 CREATE POLICY "Registrar encuentro" ON public.encounters
     FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 -- ─── MATCHES ─────────────────────────────────────────────────
 -- Ver matches donde participas
+DROP POLICY IF EXISTS "Ver propios matches" ON public.matches;
 CREATE POLICY "Ver propios matches" ON public.matches
     FOR SELECT USING (auth.uid() = requester_id OR auth.uid() = receiver_id);
 
 -- Insertar solicitud de match como requester
+DROP POLICY IF EXISTS "Solicitar match" ON public.matches;
 CREATE POLICY "Solicitar match" ON public.matches
     FOR INSERT WITH CHECK (auth.uid() = requester_id);
 
 -- Solo el receiver puede actualizar el status
+DROP POLICY IF EXISTS "Aceptar o rechazar match" ON public.matches;
 CREATE POLICY "Aceptar o rechazar match" ON public.matches
     FOR UPDATE USING (auth.uid() = receiver_id);
 
 -- ─── MESSAGES ────────────────────────────────────────────────
 -- Solo si hay match ACEPTADO entre los dos
+DROP POLICY IF EXISTS "Ver mensajes con match aceptado" ON public.messages;
 CREATE POLICY "Ver mensajes con match aceptado" ON public.messages
     FOR SELECT USING (
         EXISTS (
@@ -203,6 +231,7 @@ CREATE POLICY "Ver mensajes con match aceptado" ON public.messages
     );
 
 -- Solo el sender puede insertar, y debe haber match aceptado
+DROP POLICY IF EXISTS "Enviar mensaje con match aceptado" ON public.messages;
 CREATE POLICY "Enviar mensaje con match aceptado" ON public.messages
     FOR INSERT WITH CHECK (
         auth.uid() = sender_id
@@ -215,13 +244,16 @@ CREATE POLICY "Enviar mensaje con match aceptado" ON public.messages
     );
 
 -- ─── REPORTS ─────────────────────────────────────────────────
+DROP POLICY IF EXISTS "Reportar usuario" ON public.reports;
 CREATE POLICY "Reportar usuario" ON public.reports
     FOR INSERT WITH CHECK (auth.uid() = reporter_id);
 
+DROP POLICY IF EXISTS "Ver propios reportes" ON public.reports;
 CREATE POLICY "Ver propios reportes" ON public.reports
     FOR SELECT USING (auth.uid() = reporter_id);
 
 -- ─── BLOCKED_USERS ───────────────────────────────────────────
+DROP POLICY IF EXISTS "Gestionar bloqueos propios" ON public.blocked_users;
 CREATE POLICY "Gestionar bloqueos propios" ON public.blocked_users
     FOR ALL USING (auth.uid() = blocker_id);
 
@@ -235,9 +267,39 @@ CREATE POLICY "Gestionar bloqueos propios" ON public.blocked_users
 -- ============================================================
 -- ÍNDICES para rendimiento
 -- ============================================================
-CREATE INDEX idx_bt_tokens_token ON public.bt_tokens(token);
-CREATE INDEX idx_bt_tokens_expires ON public.bt_tokens(expires_at);
-CREATE INDEX idx_encounters_user ON public.encounters(user_id, seen_at DESC);
-CREATE INDEX idx_matches_users ON public.matches(requester_id, receiver_id);
-CREATE INDEX idx_messages_match ON public.messages(match_id, created_at ASC);
-CREATE INDEX idx_users_zone_id ON public.users(zone_id);
+CREATE INDEX IF NOT EXISTS idx_bt_tokens_token ON public.bt_tokens(token);
+CREATE INDEX IF NOT EXISTS idx_bt_tokens_expires ON public.bt_tokens(expires_at);
+CREATE INDEX IF NOT EXISTS idx_encounters_user ON public.encounters(user_id, seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_matches_users ON public.matches(requester_id, receiver_id);
+CREATE INDEX IF NOT EXISTS idx_messages_match ON public.messages(match_id, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_users_zone_id ON public.users(zone_id);
+
+-- Índices ÚNICOS funcionales
+CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_encounter_hourly ON public.encounters(user_id, other_zone_id, (date_trunc('hour', seen_at AT TIME ZONE 'UTC')));
+
+-- ============================================================
+-- 8. STORAGE (Foto de Perfil)
+-- ============================================================
+-- Crear bucket si no existe (Requiere permisos de administrador o superuser)
+-- Nota: En Supabase esto suele hacerse via panel, pero incluimos política
+INSERT INTO storage.buckets (id, name, public) 
+VALUES ('profiles', 'profiles', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- Política: Cualquiera puede ver los avatars
+DROP POLICY IF EXISTS "Avatar publico" ON storage.objects;
+CREATE POLICY "Avatar publico" ON storage.objects 
+    FOR SELECT USING (bucket_id = 'profiles');
+
+-- Política: El dueño puede subir/borrar su propis foto
+DROP POLICY IF EXISTS "Avatar propio upload" ON storage.objects;
+CREATE POLICY "Avatar propio upload" ON storage.objects 
+    FOR INSERT WITH CHECK (bucket_id = 'profiles' AND auth.uid()::text = (storage.foldername(name))[1]);
+
+DROP POLICY IF EXISTS "Avatar propio update" ON storage.objects;
+CREATE POLICY "Avatar propio update" ON storage.objects 
+    FOR UPDATE USING (bucket_id = 'profiles' AND auth.uid()::text = (storage.foldername(name))[1]);
+
+DROP POLICY IF EXISTS "Avatar propio delete" ON storage.objects;
+CREATE POLICY "Avatar propio delete" ON storage.objects 
+    FOR DELETE USING (bucket_id = 'profiles' AND auth.uid()::text = (storage.foldername(name))[1]);

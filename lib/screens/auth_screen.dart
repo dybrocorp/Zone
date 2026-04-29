@@ -37,18 +37,24 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
     await _fadeController.forward();
     await Future.delayed(const Duration(seconds: 2));
 
-    // Verificar si ya existe un ZONE-ID local → ir directo al Radar
-    final existingId = await _zoneIdService.getOrCreate();
-    if (!mounted) return;
+    // 1. Verificar si ya existe un ID guardado localmente
+    final hasLocal = await _zoneIdService.hasLocalID();
+    
+    if (hasLocal) {
+      // 2. Intentar restaurar sesión y verificar perfil
+      final profile = await _zoneIdService.getMyProfile();
+      if (!mounted) return;
 
-    // Si el uid ya está configurado → usuario ya registrado
-    if (_zoneIdService.uid != null) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const RadarScreen()),
-      );
-      return;
+      if (profile != null) {
+        // ID válido y cuenta cargada -> Radar directo
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const RadarScreen()),
+        );
+        return;
+      }
     }
 
+    // Si no hay ID o el perfil no carga -> Mostrar menú de inicio
     setState(() { _showSplash = false; });
   }
 
@@ -148,7 +154,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
         ),
         const SizedBox(height: 10),
         const Text(
-          'Conecta localmente. Habla seguro.',
+          'Conoce Personas Que Están Cerca De Ti, Sin La Presión De Hablar En Persona',
           style: TextStyle(color: Colors.white70),
           textAlign: TextAlign.center,
         ),

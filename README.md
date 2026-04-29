@@ -1,27 +1,26 @@
-# Zone
+# Zone - Proximity Social Network
 
-**Conoce Personas Que Están Cerca De Ti, Sin La Presión De Hablar En Persona**
+**Descubre a quienes te rodean, sin perder tu privacidad.**
 
-Zone es una red social basada en la proximidad (vía Bluetooth) y en la privacidad. Diseñada al estilo de un radar, te permite descubrir personas a tu alrededor, chatear de forma segura a través de mensajería con cifrado de extremo a extremo (E2EE con X25519/ChaCha20-Poly1305) y compartir tus redes sociales (Instagram, Facebook, TikTok) sólo con quienes tú decidas.
+Zone es una plataforma de red social revolucionaria basada en la proximidad física (vía Bluetooth Low Energy) y el anonimato total. Diseñada con una estética moderna "ShareIt style", Zone te permite detectar personas en tu "radar" local, establecer conexiones seguras y chatear mediante un protocolo de cifrado de extremo a extremo (E2EE) de grado industrial.
 
-## Características Principales
+## 🚀 Características Principales
 
-- **Descubrimiento por Radar (Bluetooth)**: Encuentra personas cercanas de forma pasiva y privada utilizando tecnología Bluetooth Low Energy (BLE).
-- **Privacidad Primero**: No recopilamos datos innecesarios. Se te asigna un ID único sin necesidad de vincular cuentas de correo o números de teléfono.
-- **Mensajería E2EE**: Todos los mensajes están protegidos mediante cifrado de extremo a extremo, asegurando que nadie más pueda leer tus conversaciones.
-- **Intercambio Seguro de Redes Sociales**: Controla la visibilidad de tus perfiles mediante permisos configurables. 
-- **Diseño Moderno**: Interfaz oscura (dark-themed), moderna y fácil de usar, diseñada para la generación actual.
+- **Radar de Proximidad (BLE)**: Descubrimiento pasivo de usuarios cercanos sin necesidad de GPS, protegiendo tu ubicación exacta.
+- **Privacidad Radical**: Sin correos, sin números de teléfono. Todo se basa en tu **ZONE-ID** único y claves criptográficas locales.
+- **Mensajería E2EE**: Comunicación protegida por **X25519** (intercambio de claves) y **ChaCha20-Poly1305** (cifrado de mensajes).
+- **Social Connect**: Comparte tus perfiles de Instagram, Facebook o TikTok de forma selectiva. Tú decides quién ve qué.
+- **Modo Timidez (Stealth)**: Mira quién está cerca sin ser detectado en el radar de los demás.
+- **Hardened Backend**: Servidores Supabase con auditoría de seguridad, políticas RLS estrictas y funciones protegidas.
 
-## Tecnologías Utilizadas
+## 🛠️ Stack Tecnológico
 
-- **Frontend**: Flutter (Dart)
-- **Backend / DB**: Supabase (Tiempo Real, Auth y Base de Datos)
-- **Seguridad**: X25519, ChaCha20-Poly1305 para E2EE
-- **Conectividad Local**: Integración con APIs nativas de Bluetooth
+- **Framework**: Flutter (Dart)
+- **Backend**: Supabase (PostgreSQL, Realtime, Storage)
+- **Seguridad**: Ed25519 para firmas, X25519 para E2EE, PBKDF2 para derivación de claves locales.
+- **Diseño**: Vanilla CSS/Flutter con estética premium de modo oscuro y micro-animaciones.
 
-## Configuración del Proyecto
-
-Si deseas clonar y ejecutar el proyecto localmente, asegúrate de tener instalado Flutter.
+## ⚙️ Configuración
 
 ```bash
 git clone https://github.com/dybrocorp/Zone.git
@@ -30,11 +29,8 @@ flutter pub get
 flutter run
 ```
 
-## Estructura del Proyecto
+## 📜 Licencia y Desarrollador
 
-El código fuente principal se encuentra en `lib/`:
-- `/screens` Las vistas principales de la aplicación (radar, chat, perfil).
-- `/services` Lógica de negocio, conexión Bluetooth, y servicios de cifrado.
-
-## Contacto
-Desarrollado por [Dybro Corp](https://github.com/dybrocorp).
+Desarrollado con pasión por **Team Dybro** de **Dybro Corp**.
+Todos los derechos reservados © 2026.
+Para soporte, contactar a `support@dybrocorp.com`.

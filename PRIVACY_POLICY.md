@@ -9,7 +9,7 @@ En **Zone** (operado por Dybro Corp), nos tomamos su privacidad muy en serio. Es
 - **Información Generada Localmente:** No requerimos correos, números de teléfono ni nombres reales para funcionar. Su cuenta se basa en claves generadas de forma segura y un ID anónimo en su dispositivo.
 - **Datos de Proximidad (Bluetooth):** Usamos tecnologías Bluetooth Low Energy (BLE) para detectar usuarios cercanos. Estos datos se procesan localmente y no almacenamos su ubicación GPS.
 - **Redes Sociales Enlazadas:** Los usuarios pueden optar por agregar sus perfiles de Instagram, Facebook o TikTok. Esta información sólo es visible para las personas que usted apruebe.
-- **Mensajes:** Los mensajes están cifrados de extremo a extremo (E2EE). Los servidores de Zone solo actúan como intermediarios por un corto tiempo para la retransmisión de mensajes cifrados si el usuario no está conectado y no tienen acceso al contenido plano.
+- **Mensajes:** Los mensajes están cifrados de extremo a extremo (E2EE) utilizando protocolos industriales de alta seguridad (**X25519** y **ChaCha20-Poly1305**). Las claves privadas nunca salen de su dispositivo. Los servidores de Zone solo actúan como intermediarios por un corto tiempo para la retransmisión de paquetes cifrados y no tienen capacidad técnica para leer su contenido.
 
 ### 2. Uso de la Información
 

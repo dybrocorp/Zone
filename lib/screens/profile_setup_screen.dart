@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'radar_screen.dart';
 import '../services/zone_id_service.dart';
+import '../services/permissions_service.dart';
+import 'package:image_picker/image_picker.dart';
+import 'dart:io';
 
 class ProfileSetupScreen extends StatefulWidget {
   final String generatedId;
@@ -20,6 +23,8 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
   bool _isFbVisible = true;
   bool _isTiktokVisible = true;
   bool _isSaving = false;
+  File? _imageFile;
+  final ImagePicker _picker = ImagePicker();
 
   final _zoneIdService = ZoneIdService();
 
@@ -34,7 +39,14 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
     setState(() => _isSaving = true);
 
     try {
-      // Guardar perfil en Supabase
+      String? avatarUrl;
+      
+      // 1. Subir imagen si seleccionó una
+      if (_imageFile != null) {
+        avatarUrl = await _zoneIdService.uploadProfilePicture(_imageFile!);
+      }
+
+      // 2. Guardar perfil en Supabase
       await _zoneIdService.updateProfile(
         displayName: _nameController.text.trim(),
         instagram: _igController.text.trim().isNotEmpty ? _igController.text.trim() : null,
@@ -43,14 +55,79 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
         fbVisible: _isFbVisible,
         tiktok: _tiktokController.text.trim().isNotEmpty ? _tiktokController.text.trim() : null,
         tiktokVisible: _isTiktokVisible,
+        avatarUrl: avatarUrl,
+      );
+
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const RadarScreen()),
       );
     } catch (e) {
-      // Log y continuar aunque falle
+      if (mounted) {
+        setState(() => _isSaving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al guardar perfil: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
     }
+  }
 
-    if (!mounted) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const RadarScreen()),
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      // Solicitar permisos antes de intentar abrir cámara/galería
+      await PermissionsService.requestCameraAndGalleryPermissions();
+
+      final XFile? pickedFile = await _picker.pickImage(
+        source: source,
+        maxWidth: 1000,
+        maxHeight: 1000,
+        imageQuality: 85,
+      );
+      if (pickedFile != null) {
+        setState(() {
+          _imageFile = File(pickedFile.path);
+        });
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al seleccionar imagen: $e')),
+      );
+    }
+  }
+
+  void _showImageSourceActionSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E293B),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt, color: Color(0xFF00D2FF)),
+              title: const Text('Cámara', style: TextStyle(color: Colors.white)),
+              onTap: () {
+                Navigator.pop(context);
+                _pickImage(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library, color: Color(0xFF00D2FF)),
+              title: const Text('Galería', style: TextStyle(color: Colors.white)),
+              onTap: () {
+                Navigator.pop(context);
+                _pickImage(ImageSource.gallery);
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -72,23 +149,29 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
               Center(
                 child: Column(
                   children: [
-                    Stack(
-                      alignment: Alignment.bottomRight,
-                      children: [
-                        CircleAvatar(
-                          radius: 55,
-                          backgroundColor: Colors.grey.shade800,
-                          child: const Icon(Icons.person, size: 60, color: Colors.white54),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Color(0xFF00D2FF),
+                    GestureDetector(
+                      onTap: _showImageSourceActionSheet,
+                      child: Stack(
+                        alignment: Alignment.bottomRight,
+                        children: [
+                          CircleAvatar(
+                            radius: 55,
+                            backgroundColor: Colors.grey.shade800,
+                            backgroundImage: _imageFile != null ? FileImage(_imageFile!) : null,
+                            child: _imageFile == null
+                                ? const Icon(Icons.person, size: 60, color: Colors.white54)
+                                : null,
                           ),
-                          child: const Icon(Icons.camera_alt, color: Colors.black, size: 22),
-                        )
-                      ],
+                          Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: const BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Color(0xFF00D2FF),
+                            ),
+                            child: const Icon(Icons.camera_alt, color: Colors.black, size: 22),
+                          )
+                        ],
+                      ),
                     ),
                     const SizedBox(height: 12),
                     Text(
@@ -140,7 +223,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                 onPressed: _isSaving ? null : _finishSetup,
                 child: _isSaving
                     ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
-                    : const Text('Entrar a Zone', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 16)),
+                    : const Text('Comenzar tu registro', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 16)),
               )
             ],
           ),

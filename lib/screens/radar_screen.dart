@@ -8,6 +8,7 @@ import '../services/permissions_service.dart';
 import 'chats_list_screen.dart';
 import 'profile_edit_screen.dart';
 import 'public_profile_sheet.dart';
+import 'settings_screen.dart';
 
 class RadarScreen extends StatefulWidget {
   const RadarScreen({super.key});
@@ -95,10 +96,13 @@ class _RadarScreenState extends State<RadarScreen> with SingleTickerProviderStat
               CircleAvatar(
                 radius: 36,
                 backgroundColor: const Color(0xFF00D2FF),
-                child: Text(
-                  user.userName.isNotEmpty ? user.userName[0].toUpperCase() : '?',
-                  style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.black),
-                ),
+                backgroundImage: profile?['avatar_url'] != null ? NetworkImage(profile!['avatar_url']) : null,
+                child: profile?['avatar_url'] == null
+                    ? Text(
+                        user.userName.isNotEmpty ? user.userName[0].toUpperCase() : '?',
+                        style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.black),
+                      )
+                    : null,
               ),
               const SizedBox(height: 12),
               Text(
@@ -235,13 +239,26 @@ class _RadarScreenState extends State<RadarScreen> with SingleTickerProviderStat
                       ),
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.person_outline, color: Colors.white70, size: 32),
-                    onPressed: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const ProfileEditScreen()),
-                      );
-                    },
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.settings_outlined, color: Colors.white70, size: 28),
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                          );
+                        },
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.person_outline, color: Colors.white70, size: 32),
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => const ProfileEditScreen()),
+                          );
+                        },
+                      ),
+                    ],
                   ),
                 ],
               ),

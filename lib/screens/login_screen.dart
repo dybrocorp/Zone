@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/zone_id_service.dart';
 import 'radar_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -10,6 +11,7 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _idController = TextEditingController();
+  final _zoneIdService = ZoneIdService();
   bool _isLoading = false;
 
   void _doLogin() async {
@@ -18,13 +20,29 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _isLoading = true);
     
-    // TODO: Comprobación en Supabase usando el ZONE ID
-    await Future.delayed(const Duration(seconds: 2));
-    
-    if (!mounted) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const RadarScreen()),
-    );
+    try {
+      final success = await _zoneIdService.loginWithExistingID(id);
+      
+      if (!mounted) return;
+      
+      if (success) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const RadarScreen()),
+        );
+      } else {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ID de Zona no encontrado o inválido')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al ingresar: $e')),
+        );
+      }
+    }
   }
 
   @override

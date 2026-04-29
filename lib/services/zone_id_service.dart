@@ -1,8 +1,10 @@
+import 'dart:io';
 import 'dart:math';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 import 'chat_e2ee_service.dart';
+import 'package:path/path.dart' as p;
 
 /// Servicio que gestiona el ID único ZONE- del usuario.
 /// Lo genera, persiste localmente y lo registra en Supabase.
@@ -31,15 +33,19 @@ class ZoneIdService {
   //  Inicialización principal (llamar en main o AuthScreen)
   // ──────────────────────────────────────────────────────────
 
+  /// Verifica si ya existe un ID guardado localmente
+  Future<bool> hasLocalID() async {
+    final storedId = await _storage.read(key: _keyZoneId);
+    return storedId != null && storedId.isNotEmpty;
+  }
+
   /// Obtiene o crea el ID ZONE- del usuario.
-  /// Si ya existe en local, lo restaura. Si no, genera uno nuevo
-  /// y lo registra en Supabase de forma anónima.
+  /// Se llama solo cuando estamos seguros de que queremos iniciar/restaurar.
   Future<String> getOrCreate() async {
     // 1. Intentar restaurar desde almacenamiento seguro local
     final storedId = await _storage.read(key: _keyZoneId);
     if (storedId != null && storedId.isNotEmpty) {
       _zoneId = storedId;
-      // Restaurar sesión en Supabase si existe
       await _restoreSession();
       return _zoneId!;
     }
@@ -49,9 +55,51 @@ class ZoneIdService {
     await _storage.write(key: _keyZoneId, value: _zoneId);
 
     // 3. Registrar en Supabase anónimamente
-    await _registerInSupabase();
+    try {
+      await _registerInSupabase();
+    } catch (e) {
+      print('[ZoneIdService] Error crítico en registro: $e');
+      rethrow;
+    }
 
     return _zoneId!;
+  }
+
+  /// Permite a un usuario con un ID existente (ej: en otro dispositivo)
+  /// "iniciar sesión" y recuperar su perfil.
+  Future<bool> loginWithExistingID(String zoneId) async {
+    try {
+      // 1. Verificar que el ID existe en Supabase
+      final profile = await _supabase.from('users').select().eq('zone_id', zoneId).maybeSingle();
+      if (profile == null) return false;
+
+      // 2. Guardar localmente
+      _zoneId = zoneId;
+      _uid = profile['id'];
+      await _storage.write(key: _keyZoneId, value: _zoneId);
+      await _storage.write(key: _keySupabaseSession, value: _uid);
+      
+      // 3. Iniciar sesión anónima en Supabase para obtener JWT fresco
+      // Nota: Dado que es anónimo, el nuevo UID podría diferir si no lo forzamos.
+      // Sin embargo, para este modelo de ZONE-, el UID de Auth suele estar ligado al dispositivo.
+      // Si el usuario cambia de dispositivo, se le asigna un nuevo UID de Auth.
+      // Pero el `users.id` (PK) debe coincidir con el `auth.uid()`.
+      
+      final response = await _supabase.auth.signInAnonymously();
+      if (response.user != null) {
+         // Si el UID cambió, actualizamos la tabla users para que este dispositivo sea el nuevo "dueño"
+         // (O podrías usar un sistema de tokens compartido, pero simplificamos para el demo)
+         final newUid = response.user!.id;
+         await _supabase.from('users').update({'id': newUid}).eq('zone_id', zoneId);
+         _uid = newUid;
+         await _storage.write(key: _keySupabaseSession, value: _uid);
+      }
+      
+      return true;
+    } catch (e) {
+      print('[ZoneIdService] Error en loginWithExistingID: $e');
+      return false;
+    }
   }
 
   // ──────────────────────────────────────────────────────────
@@ -59,33 +107,33 @@ class ZoneIdService {
   // ──────────────────────────────────────────────────────────
 
   Future<void> _registerInSupabase() async {
-    try {
-      // Auth anónimo (Supabase genera JWT sin email ni teléfono)
-      final response = await _supabase.auth.signInAnonymously();
-      final user = response.user;
-      if (user == null) return;
+    // Auth anónimo (Supabase genera JWT sin email ni teléfono)
+    final response = await _supabase.auth.signInAnonymously();
+    final user = response.user;
+    if (user == null) throw Exception('No se pudo iniciar sesión anónima');
 
-      _uid = user.id;
-      await _storage.write(key: _keySupabaseSession, value: _uid);
+    _uid = user.id;
+    await _storage.write(key: _keySupabaseSession, value: _uid);
 
-      // Generar par de claves E2EE
-      final keyPair = await _e2ee.generateKeyPair();
-      final publicKey = await keyPair.extractPublicKey();
-      final publicKeyBase64 = _bytesToBase64(publicKey.bytes);
+    // Generar par de claves E2EE
+    final keyPair = await _e2ee.generateKeyPair();
+    final publicKey = await keyPair.extractPublicKey();
+    final publicKeyBase64 = _bytesToBase64(publicKey.bytes);
 
-      // Guardar en Supabase
-      await _supabase.from('users').insert({
-        'id': _uid,
-        'zone_id': _zoneId,
-        'public_key': publicKeyBase64,
-        'stealth_mode': false,
-      });
+    // Guardar en Supabase (usamos upsert para evitar errores si ya existe)
+    await _supabase.from('users').upsert({
+      'id': _uid,
+      'zone_id': _zoneId,
+      'public_key': publicKeyBase64,
+      'stealth_mode': false,
+    });
 
-      // Persistir clave pública localmente
-      await _storage.write(key: 'public_key', value: publicKeyBase64);
-    } catch (e) {
-      print('[ZoneIdService] Error al registrar en Supabase: $e');
-    }
+    // Verificar que realmente se insertó (opcional pero seguro)
+    final check = await _supabase.from('users').select().eq('id', _uid!).maybeSingle();
+    if (check == null) throw Exception('No se pudo crear el registro de usuario en la base de datos');
+
+    // Persistir clave pública localmente
+    await _storage.write(key: 'public_key', value: publicKeyBase64);
   }
 
   Future<void> _restoreSession() async {
@@ -121,21 +169,39 @@ class ZoneIdService {
     bool fbVisible = true,
     String? tiktok,
     bool tiktokVisible = true,
+    String? avatarUrl,
   }) async {
-    if (_uid == null) return;
-    try {
-      await _supabase.from('users').update({
-        'display_name': displayName,
-        'instagram_handle': instagram,
-        'ig_visible': igVisible,
-        'facebook_handle': facebook,
-        'fb_visible': fbVisible,
-        'tiktok_handle': tiktok,
-        'tiktok_visible': tiktokVisible,
-      }).eq('id', _uid!);
-    } catch (e) {
-      print('[ZoneIdService] Error al actualizar perfil: $e');
-    }
+    if (_uid == null) throw Exception('Sesión no válida');
+    
+    await _supabase.from('users').update({
+      'display_name': displayName,
+      'instagram_handle': instagram,
+      'ig_visible': igVisible,
+      'facebook_handle': facebook,
+      'fb_visible': fbVisible,
+      'tiktok_handle': tiktok,
+      'tiktok_visible': tiktokVisible,
+      'avatar_url': avatarUrl,
+    }).eq('id', _uid!);
+  }
+
+  /// Sube una imagen al bucket 'profiles' y devuelve la URL pública.
+  Future<String> uploadProfilePicture(File file) async {
+    if (_uid == null) throw Exception('Sesión no válida para subir imagen');
+    
+    final extension = p.extension(file.path);
+    final fileName = '$_uid/avatar${DateTime.now().millisecondsSinceEpoch}$extension';
+    
+    // Subir archivo (sobrescribe si existe en la misma ruta, pero usamos timestamp para evitar cache)
+    await _supabase.storage.from('profiles').upload(
+      fileName,
+      file,
+      fileOptions: const FileOptions(cacheControl: '3600', upsert: true),
+    );
+    
+    // Obtener URL pública
+    final String publicUrl = _supabase.storage.from('profiles').getPublicUrl(fileName);
+    return publicUrl;
   }
 
   Future<void> setStealthMode(bool enabled) async {
@@ -148,9 +214,18 @@ class ZoneIdService {
   // ──────────────────────────────────────────────────────────
 
   Future<Map<String, dynamic>?> getMyProfile() async {
-    if (_uid == null) return null;
-    final res = await _supabase.from('users').select().eq('id', _uid!).single();
-    return res;
+    try {
+      if (_uid == null) {
+        await _restoreSession();
+      }
+      if (_uid == null) return null;
+      
+      final res = await _supabase.from('users').select().eq('id', _uid!).single();
+      return res;
+    } catch (e) {
+      print('[ZoneIdService] Error en getMyProfile: $e');
+      return null;
+    }
   }
 
   // ──────────────────────────────────────────────────────────
@@ -189,7 +264,7 @@ class ZoneIdService {
     return result;
   }
 
-  Future<void> clearLocalData() async {
+  Future<void> clearAuth() async {
     await _storage.deleteAll();
     await _supabase.auth.signOut();
     _zoneId = null;

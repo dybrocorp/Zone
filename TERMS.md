@@ -22,7 +22,7 @@ Zone proporciona cifrado de extremo a extremo para las conversaciones, imposibil
 Todos los derechos de propiedad intelectual, marcas registradas, código, bases de datos y la interfaz gráfica de Zone son propiedad de Dybro Corp. Ninguna parte de la App puede ser usada comercialmente sin el consentimiento previo por escrito.
 
 ### 6. Limitación de Responsabilidad
-Dybro Corp no se hace responsable por ninguna pérdida directa, indirecta o cualquier altercado ocurrido a raíz del descubrimiento de personas generado en la plataforma. Los encuentros en la vida real quedan bajo estricta responsabilidad de los usuarios.
+Dybro Corp no se hace responsable por ninguna pérdida directa, indirecta o cualquier altercado ocurrido a raíz del descubrimiento de personas generado en la plataforma. Los encuentros en la vida real quedan bajo estricta responsabilidad de los usuarios. Al ser una red descentralizada y anónima, Zone no garantiza la identidad verídica de los perfiles encontrados.
 
 ### 7. Cambios a los Términos
 Nos reservamos el derecho de modificar estos términos en cualquier momento. Modificaciones sustanciales serán notificadas mediante una actualización de la aplicación.

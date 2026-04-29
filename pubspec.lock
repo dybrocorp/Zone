@@ -57,14 +57,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.13.1"
-  ble_peripheral:
-    dependency: "direct main"
-    description:
-      name: ble_peripheral
-      sha256: "858d370709507155bbf69e6160e9cb81d802e664f133a649a38b9ca04439884c"
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.4.0"
   boolean_selector:
     dependency: transitive
     description:
@@ -416,6 +408,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.17.6"
+  nearby_connections:
+    dependency: "direct main"
+    description:
+      name: nearby_connections
+      sha256: "94d500bdb11f9a3db3b1cb2949ab438107e581f0142380efc17ecc8038e99369"
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.3.0"
   nested:
     dependency: transitive
     description:

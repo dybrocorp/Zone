@@ -1,23 +1,37 @@
+import '../services/nearby_service.dart';
+
 class ConnectionService {
   static final ConnectionService _instance = ConnectionService._internal();
   factory ConnectionService() => _instance;
   ConnectionService._internal();
 
+  final NearbyService _nearbyService = NearbyService();
+
   /// Solicita conectarse con un usuario encontrado en el Radar.
-  Future<void> sendConnectionRequest(String senderId, String receiverId) async {
-    print('INFO: Solicitud de Supabase enviada de $senderId a $receiverId');
-    // TODO: Implementar Supabase.instance.client.from('connection_requests').insert(...)
+  Future<void> sendConnectionRequest(String endpointId) async {
+    print('INFO: Enviando solicitud de conexión a $endpointId');
+    await _nearbyService.requestConnection(endpointId);
   }
 
-  /// Acepta el chat con alguien.
-  Future<void> acceptRequest(String requestId) async {
-    print('INFO: Aceptando solicitud $requestId. Preparando entorno de llaves E2EE.');
-    // TODO: Actualizar status a 'accepted' y forjar canal
+  /// Acepta la conexión con alguien.
+  Future<void> acceptRequest(String endpointId) async {
+    print('INFO: Aceptando conexión de $endpointId. Preparando entorno E2EE.');
+    await _nearbyService.acceptConnection(endpointId);
   }
 
-  /// Rechaza el chat con alguien.
-  Future<void> rejectRequest(String requestId) async {
-    print('INFO: Rechazando solicitud $requestId');
-    // TODO: Actualizar status a 'rejected'
+  /// Rechaza la conexión con alguien.
+  Future<void> rejectRequest(String endpointId) async {
+    print('INFO: Rechazando conexión de $endpointId');
+    await _nearbyService.rejectConnection(endpointId);
+  }
+
+  /// Desconecta de un usuario.
+  void disconnect(String endpointId) {
+    _nearbyService.disconnectFrom(endpointId);
+  }
+
+  /// Envía un mensaje de texto a un usuario conectado.
+  Future<void> sendMessage(String endpointId, String message) async {
+    await _nearbyService.sendMessage(endpointId, message);
   }
 }

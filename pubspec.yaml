@@ -1,5 +1,5 @@
 name: zone
-description: "A new Flutter project."
+description: "Conoce Personas Que Están Cerca De Ti, Sin La Presión De Hablar En Persona"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -41,7 +41,7 @@ dependencies:
   cryptography: ^2.9.0
   permission_handler: ^12.0.1
   uuid: ^4.5.3
-  ble_peripheral: ^2.4.0
+  nearby_connections: ^4.3.0
 
 dev_dependencies:
   flutter_test:

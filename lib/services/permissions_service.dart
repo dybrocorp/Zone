@@ -1,13 +1,15 @@
 import 'package:permission_handler/permission_handler.dart';
 
 class PermissionsService {
-  /// Solicita los permisos necesarios para que el radar y el BLE funcionen correctamente en iOS y Android.
-  static Future<bool> requestBlePermissions() async {
+  /// Solicita los permisos necesarios para Nearby Connections y BLE.
+  static Future<bool> requestAllPermissions() async {
     Map<Permission, PermissionStatus> statuses = await [
       Permission.location,
       Permission.bluetoothScan,
       Permission.bluetoothAdvertise,
       Permission.bluetoothConnect,
+      Permission.nearbyWifiDevices,
+      Permission.storage,
     ].request();
 
     bool allGranted = true;
@@ -16,6 +18,10 @@ class PermissionsService {
         allGranted = false;
       }
     }
+
     return allGranted;
   }
+
+  /// Método legacy de compatibilidad
+  static Future<bool> requestBlePermissions() => requestAllPermissions();
 }

@@ -279,8 +279,21 @@ class ZoneIdService {
     await _ensureAuth();
     if (_uid == null) return;
     
-    // 1. Llamar a la función de borrado total en Supabase (RPC)
-    // Esto borra datos en public, storage y auth.
+    // 1. Eliminar archivos de almacenamiento (Storage API oficial)
+    try {
+      final userFolder = _uid!;
+      // Listamos los archivos del usuario para borrarlos
+      final files = await _supabase.storage.from('profiles').list(path: userFolder);
+      if (files.isNotEmpty) {
+        final pathsToDelete = files.map((f) => '$userFolder/${f.name}').toList();
+        await _supabase.storage.from('profiles').remove(pathsToDelete);
+      }
+    } catch (e) {
+      print('Aviso: Fallo borrando storage, continuando con el perfil... \$e');
+    }
+
+    // 2. Llamar a la función de borrado total en Supabase (RPC)
+    // Esto borra datos en public (usuarios, chats, tokens) y auth.
     await _supabase.rpc('delete_own_account');
     
     // 2. Limpiar todo el estado local

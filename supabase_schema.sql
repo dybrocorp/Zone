@@ -149,9 +149,8 @@ BEGIN
     END IF;
 
     -- 1. Eliminar archivos de almacenamiento (Storage)
-    -- Nota: Eliminamos los objetos vinculados al folder del usuario
-    DELETE FROM storage.objects WHERE bucket_id = 'profiles' AND (storage.foldername(name))[1] = current_uid::text;
-
+    -- Los objetos de Storage se borran mediante la API de Supabase en Flutter.
+    
     -- 2. Eliminar de public.users
     -- Las cascadas configuradas (ON DELETE CASCADE) se encargarán de encounters, matches, tokens, etc.
     DELETE FROM public.users WHERE id = current_uid;
@@ -159,7 +158,7 @@ BEGIN
     -- 3. Eliminar de auth.users (Requiere SECURITY DEFINER ya que auth es protegido)
     DELETE FROM auth.users WHERE id = current_uid;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth, storage;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth;
 
 -- Revocar ejecución pública por seguridad
 REVOKE EXECUTE ON FUNCTION public.delete_own_account() FROM PUBLIC;

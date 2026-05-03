@@ -4,7 +4,6 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 import 'chat_e2ee_service.dart';
-import 'mock_chat_service.dart';
 import 'package:path/path.dart' as p;
 
 /// Servicio que gestiona el ID único ZONE- del usuario.
@@ -240,14 +239,27 @@ class ZoneIdService {
     bool tiktokVisible = true,
     String? avatarUrl,
   }) async {
+    // Entrar a asegurar la sesión
     await _ensureAuth();
     
+    // Obtener la clave pública guardada localmente
+    String? publicKey = await _storage.read(key: 'public_key');
+    
+    // Si no hay clave (caso extremo de pérdida local), generamos una nueva para no violar el NOT NULL
+    if (publicKey == null) {
+      final keyPair = await _e2ee.generateKeyPair();
+      final pubKeyBytes = await keyPair.extractPublicKey();
+      publicKey = _bytesToBase64(pubKeyBytes.bytes);
+      await _storage.write(key: 'public_key', value: publicKey);
+    }
+    
     // Usamos UPSERT de forma defensiva por si el registro inicial en public.users falló.
-    // Esto asegura que si el usuario completa el perfil, al menos la fila se cree aquí.
+    // Incluir public_key es obligatorio porque tiene restricción NOT NULL en la DB.
     await _supabase.from('users').upsert({
       'id': _uid,
       'zone_id': _zoneId,
       'display_name': displayName,
+      'public_key': publicKey,
       'instagram_handle': instagram,
       'ig_visible': igVisible,
       'facebook_handle': facebook,
@@ -364,7 +376,6 @@ class ZoneIdService {
   Future<void> clearAuth() async {
     await _storage.delete(key: _keyZoneId);
     await _storage.delete(key: _keySupabaseSession);
-    await MockChatService().clearAll();
     await _supabase.auth.signOut();
     _zoneId = null;
     _uid = null;

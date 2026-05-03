@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'chat_screen.dart';
-import 'mock_chat_screen.dart';
 import '../services/supabase_service.dart';
 import '../services/zone_id_service.dart';
-import '../services/mock_chat_service.dart';
 
 class ChatsListScreen extends StatefulWidget {
   const ChatsListScreen({Key? key}) : super(key: key);
@@ -16,10 +14,8 @@ class ChatsListScreen extends StatefulWidget {
 class _ChatsListScreenState extends State<ChatsListScreen> {
   final _supabaseService = SupabaseService();
   final _zoneIdService = ZoneIdService();
-  final _mockChatService = MockChatService();
   
   List<Map<String, dynamic>> _matches = [];
-  List<Map<String, dynamic>> _mockChats = [];
   List<Map<String, dynamic>> _pendingRequests = [];
   Set<String> _mutedMatchIds = {};
   bool _isLoading = true;
@@ -34,7 +30,6 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     try {
       final uid = _zoneIdService.uid;
       if (uid == null) {
-        // Si no hay UID, intentamos restaurar sesión
         await _zoneIdService.getOrCreate();
       }
       
@@ -43,26 +38,19 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
 
       final matches = await _supabaseService.getAcceptedMatches(currentUid);
       final pending = await _supabaseService.getPendingRequests(currentUid);
-      final mockChats = await _mockChatService.getActiveMockChats();
       
-      // Cargar bloqueados para filtrar
       final blocked = await _supabaseService.getBlockedUsers(currentUid);
       final blockedIds = blocked.map((b) => b['blocked_id'] as String).toSet();
 
-      // Cargar silenciados localmente
       final prefs = await SharedPreferences.getInstance();
       final mutedList = prefs.getStringList('muted_chats') ?? [];
 
       if (mounted) {
         setState(() {
-          // Filtrar matches que involucren a alguien bloqueado
           _matches = matches.where((m) {
             final otherId = m['requester_id'] == currentUid ? m['receiver_id'] : m['requester_id'];
             return !blockedIds.contains(otherId);
           }).toList();
-          
-          // También filtrar bots bloqueados (si aplicara)
-          _mockChats = mockChats.where((c) => !blockedIds.contains(c['zoneId'])).toList();
           
           _pendingRequests = pending;
           _mutedMatchIds = mutedList.toSet();
@@ -116,42 +104,9 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                     )
                   else
                     ..._matches.map((match) => _buildMatchItem(match)),
-                  
-                  if (_mockChats.isNotEmpty) ...[
-                    const Divider(color: Colors.white10, height: 40),
-                    const Text('Simulaciones (Bots)', style: TextStyle(color: Colors.white38, fontWeight: FontWeight.bold, fontSize: 14)),
-                    const SizedBox(height: 12),
-                    ..._mockChats.map((chat) => _buildMockChatItem(chat)),
-                  ],
                 ],
               ),
             ),
-    );
-  }
-
-  Widget _buildMockChatItem(Map<String, dynamic> chat) {
-    return ListTile(
-      leading: CircleAvatar(
-        backgroundColor: Colors.white12,
-        backgroundImage: chat['avatarUrl'] != null ? NetworkImage(chat['avatarUrl']) : null,
-        child: chat['avatarUrl'] == null ? const Icon(Icons.smart_toy_outlined, color: Colors.white70) : null,
-      ),
-      title: Text(chat['name'] ?? 'Bot', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-      subtitle: Text(chat['lastMessage'] ?? 'E2EE Simulado', style: const TextStyle(color: Colors.greenAccent, fontSize: 11)),
-      trailing: const Icon(Icons.chevron_right, color: Colors.white24),
-      onTap: () async {
-        await Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => MockChatScreen(
-              botName: chat['name'],
-              zoneId: chat['zoneId'],
-              avatarUrl: chat['avatarUrl'],
-            ),
-          ),
-        );
-        _loadData(); // Refrescar último mensaje al volver
-      },
-      onLongPress: () => _showChatOptions(chat['zoneId'], chat['zoneId'], chat['name'], isBot: true),
     );
   }
 
@@ -191,7 +146,6 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
 
   Widget _buildMatchItem(Map<String, dynamic> match) {
     final uid = _zoneIdService.uid;
-    // Identificar cuál de los dos es el "otro"
     final bool isRequesterMe = match['requester_id'] == uid;
     final otherUser = isRequesterMe ? match['users!matches_receiver_id_fkey'] : match['users!matches_requester_id_fkey'];
     final name = otherUser['display_name'] ?? otherUser['zone_id'];
@@ -219,11 +173,11 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
           ),
         );
       },
-      onLongPress: () => _showChatOptions(match['id'], otherUser['id'] ?? otherUser['zone_id'], name, isBot: false),
+      onLongPress: () => _showChatOptions(match['id'], otherUser['id'] ?? otherUser['zone_id'], name),
     );
   }
 
-  void _showChatOptions(String id, String otherUserId, String name, {required bool isBot}) {
+  void _showChatOptions(String id, String otherUserId, String name) {
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1E293B),
@@ -260,11 +214,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                 Navigator.pop(context);
                 final confirm = await _showConfirmDialog('¿Eliminar Chat?', 'Se borrará toda la conversación.');
                 if (confirm == true) {
-                  if (isBot) {
-                    // Implementar limpieza local si es bot?
-                  } else {
-                    await _supabaseService.deleteMatch(id);
-                  }
+                  await _supabaseService.deleteMatch(id);
                   _loadData();
                 }
               },

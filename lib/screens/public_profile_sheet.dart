@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'mock_chat_screen.dart';
-import '../services/mock_chat_service.dart';
+import '../services/supabase_service.dart';
+import '../services/zone_id_service.dart';
 
 class PublicProfileSheet extends StatefulWidget {
-  final String userId;
+  final String userId; // El zone_id público
+  final String? realUid; // El UID interno de Supabase
   final String userName;
   final String? instagramHandle;
   final String? facebookHandle;
@@ -23,6 +24,7 @@ class PublicProfileSheet extends StatefulWidget {
 
   static void show(BuildContext context, {
     required String userId,
+    String? realUid,
     required String userName,
     String? instagramHandle,
     String? facebookHandle,
@@ -35,6 +37,7 @@ class PublicProfileSheet extends StatefulWidget {
       backgroundColor: Colors.transparent,
       builder: (context) => PublicProfileSheet(
         userId: userId,
+        realUid: realUid,
         userName: userName,
         instagramHandle: instagramHandle,
         facebookHandle: facebookHandle,
@@ -49,7 +52,10 @@ class PublicProfileSheet extends StatefulWidget {
 }
 
 class _PublicProfileSheetState extends State<PublicProfileSheet> {
-  // 0: Initial, 1: Requesting, 2: Approved
+  final _supabaseService = SupabaseService();
+  final _zoneIdService = ZoneIdService();
+  
+  // 0: Initial, 1: Requesting, 2: Sent
   int _connectionState = 0;
 
   Future<void> _launchUrl(String platform, String? handle) async {
@@ -78,34 +84,34 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
 
   void _handleConnectPressed() async {
     if (_connectionState == 0) {
+      final myId = _zoneIdService.uid;
+      final theirId = widget.realUid;
+      
+      if (myId == null || theirId == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Error: No se pudo identificar al usuario.')),
+        );
+        return;
+      }
+
       setState(() => _connectionState = 1);
       
-      // Simular retraso de red
-      await Future.delayed(const Duration(milliseconds: 1500));
-      
-      if (!mounted) return;
-      
-      // Auto aprueba siempre para facilitar las pruebas
-      setState(() => _connectionState = 2);
-    } else if (_connectionState == 2) {
-      // Activar chat mock para que aparezca en la bandeja
-      await MockChatService().activateMockChat(
-        widget.userId, 
-        widget.userName, 
-        widget.avatarUrl
-      );
-
-      if (!mounted) return;
-      Navigator.pop(context); // Cierra el bottom sheet
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => MockChatScreen(
-            botName: widget.userName,
-            zoneId: widget.userId,
-            avatarUrl: widget.avatarUrl,
-          ),
-        ),
-      );
+      try {
+        await _supabaseService.requestMatch(myId, theirId);
+        if (mounted) {
+          setState(() => _connectionState = 2);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Solicitud enviada a ${widget.userName}')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() => _connectionState = 0);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error al enviar solicitud: $e')),
+          );
+        }
+      }
     }
   }
 
@@ -200,7 +206,7 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
             label: Text(
               _connectionState == 0 
                 ? 'Solicitar Chat Privado E2EE' 
-                : (_connectionState == 1 ? 'Esperando aprobación...' : '¡Chat Aprobado! (Entrar)'),
+                : (_connectionState == 1 ? 'Enviando...' : 'Solicitud Enviada'),
               style: TextStyle(
                 color: _connectionState == 1 ? Colors.white : Colors.black, 
                 fontWeight: FontWeight.bold, 

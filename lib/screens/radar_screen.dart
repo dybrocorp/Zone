@@ -5,13 +5,11 @@ import '../services/nearby_service.dart';
 import '../services/supabase_service.dart';
 import '../services/zone_id_service.dart';
 import '../services/permissions_service.dart';
-import '../services/mock_chat_service.dart';
 import '../services/notification_service.dart';
 import 'chats_list_screen.dart';
 import 'profile_edit_screen.dart';
 import 'public_profile_sheet.dart';
 import 'settings_screen.dart';
-import 'mock_chat_screen.dart';
 
 class RadarScreen extends StatefulWidget {
   const RadarScreen({Key? key}) : super(key: key);
@@ -25,7 +23,6 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
   final NearbyService _nearbyService = NearbyService();
   final SupabaseService _supabaseService = SupabaseService();
   final ZoneIdService _zoneIdService = ZoneIdService();
-  final MockChatService _mockChatService = MockChatService();
   
   bool _isScanning = false;
   List<NearbyUser> _nearbyUsers = [];
@@ -82,8 +79,6 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
       }
     });
 
-    _addDebugBots();
-
     // Iniciar escuchas globales de notificaciones (mensajes/solicitudes)
     final uid = _zoneIdService.uid;
     if (uid != null) {
@@ -91,32 +86,6 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
     }
   }
 
-  void _addDebugBots() {
-    // Solo añadimos bots si no están ya en la lista
-    if (!_nearbyUsers.any((u) => u.zoneId == 'ZONE-DEBUG-1')) {
-      _nearbyUsers.add(NearbyUser(
-        endpointId: 'debug_bot_1',
-        token: 'TOKEN1',
-        userName: 'Ana (Bot)',
-        zoneId: 'ZONE-DEBUG-1',
-        profile: {
-          'id': 'debug-uuid-1',
-          'avatar_url': 'https://i.pravatar.cc/150?img=5',
-        }
-      ));
-    }
-    if (!_nearbyUsers.any((u) => u.zoneId == 'ZONE-DEBUG-2')) {
-      _nearbyUsers.add(NearbyUser(
-        endpointId: 'debug_bot_2',
-        token: 'TOKEN2',
-        userName: 'Carlos (Bot)',
-        zoneId: 'ZONE-DEBUG-2',
-        profile: {
-          'id': 'debug-uuid-2',
-          'avatar_url': 'https://i.pravatar.cc/150?img=11',
-        }
-      ));
-    }
   }
 
   void _toggleRadar() async {
@@ -208,6 +177,7 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
                         PublicProfileSheet.show(
                           context,
                           userId: user.zoneId,
+                          realUid: profile?['id'],
                           userName: user.userName,
                           instagramHandle: profile?['instagram_handle'],
                           facebookHandle: profile?['facebook_handle'],
@@ -229,33 +199,6 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
                     child: OutlinedButton.icon(
                       onPressed: () async {
                         Navigator.pop(context);
-                        
-                        if (user.zoneId.startsWith('ZONE-DEBUG-')) {
-                          // Persistir localmente para que aparezca en la bandeja
-                          await _mockChatService.activateMockChat(
-                            user.zoneId, 
-                            user.userName, 
-                            profile?['avatar_url']
-                          );
-
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('¡${user.userName} aceptó de inmediato!'),
-                              backgroundColor: const Color(0xFF00D2FF),
-                              duration: const Duration(milliseconds: 1500),
-                            ),
-                          );
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => MockChatScreen(
-                                botName: user.userName,
-                                zoneId: user.zoneId,
-                                avatarUrl: profile?['avatar_url'],
-                              ),
-                            ),
-                          );
-                          return;
-                        }
 
                         final myId = _zoneIdService.uid;
                         final theirId = profile?['id'];
@@ -441,20 +384,6 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
             }),
             GestureDetector(
               onTap: _toggleRadar,
-              onLongPress: () {
-                // MODO DEBUG: Al dejar pulsado, inyectamos burbujas falsas para testear diseño y chats
-                setState(() {
-                  _addDebugBots();
-                  
-                  // Notificar descubrimiento si es modo debug y bajamos la app
-                  if (_lastLifecycleState != AppLifecycleState.resumed) {
-                    NotificationService().showDiscoveryNotification('Ana (Bot)');
-                  }
-                });
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Bots de prueba añadidos al mapa'), duration: Duration(milliseconds: 1000)),
-                );
-              },
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 300),
                 width: _isScanning ? 120 : 100,

@@ -14,7 +14,7 @@ class PublicProfileSheet extends StatefulWidget {
 
   const PublicProfileSheet({
     super.key,
-    required this.userId,
+    this.realUid,
     required this.userName,
     this.instagramHandle,
     this.facebookHandle,

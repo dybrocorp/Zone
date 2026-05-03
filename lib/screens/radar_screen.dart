@@ -86,8 +86,6 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
     }
   }
 
-  }
-
   void _toggleRadar() async {
     if (!_isScanning) {
       bool granted = await PermissionsService.requestAllPermissions();

@@ -1,27 +1,33 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'mock_chat_screen.dart';
+import '../services/mock_chat_service.dart';
 
-class PublicProfileSheet extends StatelessWidget {
+class PublicProfileSheet extends StatefulWidget {
   final String userId;
   final String userName;
-  final bool hasInstagram;
-  final bool hasFacebook;
-  final bool hasTiktok;
+  final String? instagramHandle;
+  final String? facebookHandle;
+  final String? tiktokHandle;
+  final String? avatarUrl;
 
   const PublicProfileSheet({
     super.key,
     required this.userId,
     required this.userName,
-    this.hasInstagram = false,
-    this.hasFacebook = false,
-    this.hasTiktok = false,
+    this.instagramHandle,
+    this.facebookHandle,
+    this.tiktokHandle,
+    this.avatarUrl,
   });
 
   static void show(BuildContext context, {
     required String userId,
     required String userName,
-    bool hasInstagram = false,
-    bool hasFacebook = false,
-    bool hasTiktok = false,
+    String? instagramHandle,
+    String? facebookHandle,
+    String? tiktokHandle,
+    String? avatarUrl,
   }) {
     showModalBottomSheet(
       context: context,
@@ -30,15 +36,85 @@ class PublicProfileSheet extends StatelessWidget {
       builder: (context) => PublicProfileSheet(
         userId: userId,
         userName: userName,
-        hasInstagram: hasInstagram,
-        hasFacebook: hasFacebook,
-        hasTiktok: hasTiktok,
+        instagramHandle: instagramHandle,
+        facebookHandle: facebookHandle,
+        tiktokHandle: tiktokHandle,
+        avatarUrl: avatarUrl,
       ),
     );
   }
 
   @override
+  State<PublicProfileSheet> createState() => _PublicProfileSheetState();
+}
+
+class _PublicProfileSheetState extends State<PublicProfileSheet> {
+  // 0: Initial, 1: Requesting, 2: Approved
+  int _connectionState = 0;
+
+  Future<void> _launchUrl(String platform, String? handle) async {
+    if (handle == null || handle.isEmpty) return;
+    
+    String url = '';
+    String sanitizedHandle = handle.replaceAll('@', '');
+    
+    if (platform == 'Instagram') {
+      url = 'https://instagram.com/$sanitizedHandle';
+    } else if (platform == 'Facebook') {
+      url = 'https://facebook.com/$sanitizedHandle';
+    } else if (platform == 'TikTok') {
+      url = 'https://tiktok.com/@$sanitizedHandle';
+    }
+
+    final uri = Uri.parse(url);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No se pudo abrir $url')),
+        );
+      }
+    }
+  }
+
+  void _handleConnectPressed() async {
+    if (_connectionState == 0) {
+      setState(() => _connectionState = 1);
+      
+      // Simular retraso de red
+      await Future.delayed(const Duration(milliseconds: 1500));
+      
+      if (!mounted) return;
+      
+      // Auto aprueba siempre para facilitar las pruebas
+      setState(() => _connectionState = 2);
+    } else if (_connectionState == 2) {
+      // Activar chat mock para que aparezca en la bandeja
+      await MockChatService().activateMockChat(
+        widget.userId, 
+        widget.userName, 
+        widget.avatarUrl
+      );
+
+      if (!mounted) return;
+      Navigator.pop(context); // Cierra el bottom sheet
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => MockChatScreen(
+            botName: widget.userName,
+            zoneId: widget.userId,
+            avatarUrl: widget.avatarUrl,
+          ),
+        ),
+      );
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final hasIg = widget.instagramHandle != null && widget.instagramHandle!.isNotEmpty;
+    final hasFb = widget.facebookHandle != null && widget.facebookHandle!.isNotEmpty;
+    final hasTiktok = widget.tiktokHandle != null && widget.tiktokHandle!.isNotEmpty;
+
     return Container(
       decoration: const BoxDecoration(
         color: Color(0xFF1E293B),
@@ -48,7 +124,6 @@ class PublicProfileSheet extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Handle superior para cerrar
           Container(
             width: 40,
             height: 4,
@@ -59,13 +134,18 @@ class PublicProfileSheet extends StatelessWidget {
           ),
           const SizedBox(height: 30),
           
-          // Avatar y Nombre del Usuario
           Row(
             children: [
               CircleAvatar(
                 radius: 40,
                 backgroundColor: Colors.grey.shade800,
-                child: const Icon(Icons.person, size: 40, color: Colors.white54),
+                backgroundImage: widget.avatarUrl != null ? NetworkImage(widget.avatarUrl!) : null,
+                child: widget.avatarUrl == null
+                    ? Text(
+                        widget.userName.isNotEmpty ? widget.userName[0].toUpperCase() : '?',
+                        style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white54),
+                      )
+                    : null,
               ),
               const SizedBox(width: 20),
               Expanded(
@@ -73,12 +153,12 @@ class PublicProfileSheet extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      userName,
+                      widget.userName,
                       style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'ID: ${userId.substring(0, 8)}...',
+                      'ID: ${widget.userId.substring(0, 8)}...',
                       style: const TextStyle(color: Colors.white54, fontSize: 13),
                     ),
                   ],
@@ -88,8 +168,7 @@ class PublicProfileSheet extends StatelessWidget {
           ),
           const SizedBox(height: 30),
           
-          // Redes Sociales (solo se dibujan si el usuario dio el permiso de visibilidad)
-          if (hasInstagram || hasFacebook || hasTiktok) ...[
+          if (hasIg || hasFb || hasTiktok) ...[
             const Align(
               alignment: Alignment.centerLeft,
               child: Text('Redes Públicas', style: TextStyle(color: Colors.white70, fontSize: 16)),
@@ -98,9 +177,9 @@ class PublicProfileSheet extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                _buildSocialIcon(Icons.camera_alt, 'Instagram', hasInstagram),
-                _buildSocialIcon(Icons.facebook, 'Facebook', hasFacebook),
-                _buildSocialIcon(Icons.music_note, 'TikTok', hasTiktok),
+                _buildSocialIcon(Icons.camera_alt, 'Instagram', hasIg, () => _launchUrl('Instagram', widget.instagramHandle)),
+                _buildSocialIcon(Icons.facebook, 'Facebook', hasFb, () => _launchUrl('Facebook', widget.facebookHandle)),
+                _buildSocialIcon(Icons.music_note, 'TikTok', hasTiktok, () => _launchUrl('TikTok', widget.tiktokHandle)),
               ],
             ),
             const SizedBox(height: 40),
@@ -109,28 +188,26 @@ class PublicProfileSheet extends StatelessWidget {
             const SizedBox(height: 30),
           ],
           
-          // Botón de Conectar / Solicitar Chat E2EE
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF00D2FF),
+              backgroundColor: _connectionState == 0 ? const Color(0xFF00D2FF) : (_connectionState == 1 ? Colors.grey.shade600 : Colors.greenAccent),
               minimumSize: const Size(double.infinity, 55),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
-            icon: const Icon(Icons.lock, color: Colors.black, size: 20),
-            label: const Text(
-              'Solicitar Chat Privado E2EE',
-              style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 16),
+            icon: _connectionState == 1 
+              ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+              : Icon(Icons.lock, color: _connectionState == 1 ? Colors.white : Colors.black, size: 20),
+            label: Text(
+              _connectionState == 0 
+                ? 'Solicitar Chat Privado E2EE' 
+                : (_connectionState == 1 ? 'Esperando aprobación...' : '¡Chat Aprobado! (Entrar)'),
+              style: TextStyle(
+                color: _connectionState == 1 ? Colors.white : Colors.black, 
+                fontWeight: FontWeight.bold, 
+                fontSize: 16
+              ),
             ),
-            onPressed: () {
-              Navigator.pop(context);
-              // TODO: Lógica para insertar en latabla 'connection_requests' de Supabase
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Solicitud de conexión enviada. Esperando aceptación de la otra persona.'),
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
-            },
+            onPressed: (_connectionState == 1) ? null : _handleConnectPressed,
           ),
           const SizedBox(height: 20),
         ],
@@ -138,18 +215,21 @@ class PublicProfileSheet extends StatelessWidget {
     );
   }
 
-  Widget _buildSocialIcon(IconData icon, String name, bool isVisible) {
+  Widget _buildSocialIcon(IconData icon, String name, bool isVisible, VoidCallback onTap) {
     if (!isVisible) return const SizedBox.shrink();
-    return Column(
-      children: [
-        CircleAvatar(
-          radius: 25,
-          backgroundColor: const Color(0xFF0F172A),
-          child: Icon(icon, color: const Color(0xFF00D2FF)),
-        ),
-        const SizedBox(height: 8),
-        Text(name, style: const TextStyle(color: Colors.white54, fontSize: 12)),
-      ],
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        children: [
+          CircleAvatar(
+            radius: 25,
+            backgroundColor: const Color(0xFF0F172A),
+            child: Icon(icon, color: const Color(0xFF00D2FF)),
+          ),
+          const SizedBox(height: 8),
+          Text(name, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+        ],
+      ),
     );
   }
 }

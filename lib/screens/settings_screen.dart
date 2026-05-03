@@ -193,12 +193,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           
           const SizedBox(height: 60),
+          Center(
+            child: Opacity(
+              opacity: 0.5,
+              child: Image.asset(
+                'assets/dybrocorp_banner.png',
+                width: 250,
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) {
+                  return const SizedBox.shrink();
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
           const Center(
             child: Text(
               'DYBRO CORP • 2026',
               style: TextStyle(color: Colors.white24, letterSpacing: 2, fontSize: 10),
             ),
           ),
+          const SizedBox(height: 40),
         ],
       ),
     );

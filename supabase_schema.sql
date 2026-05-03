@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS public.users (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.bt_tokens (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE ON UPDATE CASCADE NOT NULL,
     token TEXT UNIQUE NOT NULL,             -- UUID aleatorio efímero
     expires_at TIMESTAMPTZ NOT NULL,        -- Expira en 5 minutos
     used BOOLEAN DEFAULT FALSE,
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS public.bt_tokens (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.encounters (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE ON UPDATE CASCADE NOT NULL,
     other_zone_id TEXT NOT NULL,            -- ZONE-ID de la persona encontrada
     seen_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
@@ -58,8 +58,8 @@ CREATE TABLE IF NOT EXISTS public.encounters (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.matches (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    requester_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
-    receiver_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
+    requester_id UUID REFERENCES public.users(id) ON DELETE CASCADE ON UPDATE CASCADE NOT NULL,
+    receiver_id UUID REFERENCES public.users(id) ON DELETE CASCADE ON UPDATE CASCADE NOT NULL,
     status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected')),
     created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
     UNIQUE(requester_id, receiver_id)
@@ -70,8 +70,8 @@ CREATE TABLE IF NOT EXISTS public.matches (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.messages (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    match_id UUID REFERENCES public.matches(id) ON DELETE CASCADE NOT NULL,
-    sender_id UUID REFERENCES public.users(id) NOT NULL,
+    match_id UUID REFERENCES public.matches(id) ON DELETE CASCADE ON UPDATE CASCADE NOT NULL,
+    sender_id UUID REFERENCES public.users(id) ON UPDATE CASCADE NOT NULL,
     encrypted_content TEXT NOT NULL,        -- Texto cifrado con ChaCha20-Poly1305
     nonce TEXT NOT NULL,                    -- Nonce de cifrado (base64)
     mac TEXT NOT NULL,                      -- MAC de autenticación (base64)
@@ -83,8 +83,8 @@ CREATE TABLE IF NOT EXISTS public.messages (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.reports (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    reporter_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
-    reported_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
+    reporter_id UUID REFERENCES public.users(id) ON DELETE CASCADE ON UPDATE CASCADE NOT NULL,
+    reported_id UUID REFERENCES public.users(id) ON DELETE CASCADE ON UPDATE CASCADE NOT NULL,
     reason TEXT,
     created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
     UNIQUE(reporter_id, reported_id)
@@ -95,8 +95,8 @@ CREATE TABLE IF NOT EXISTS public.reports (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.blocked_users (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    blocker_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
-    blocked_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
+    blocker_id UUID REFERENCES public.users(id) ON DELETE CASCADE ON UPDATE CASCADE NOT NULL,
+    blocked_id UUID REFERENCES public.users(id) ON DELETE CASCADE ON UPDATE CASCADE NOT NULL,
     created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
     UNIQUE(blocker_id, blocked_id)
 );
@@ -118,7 +118,7 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 -- Revocar ejecución pública por seguridad (evitar acceso via REST API)
-REVOKE EXECUTE ON FUNCTION public.handle_new_report() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.handle_new_report() FROM PUBLIC, anon, authenticated;
 
 DROP TRIGGER IF EXISTS on_new_report ON public.reports;
 CREATE TRIGGER on_new_report
@@ -135,7 +135,7 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 -- Revocar ejecución pública por seguridad
-REVOKE EXECUTE ON FUNCTION public.cleanup_expired_tokens() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.cleanup_expired_tokens() FROM PUBLIC, anon, authenticated;
 
 -- Función: eliminar propia cuenta (Borrado total)
 CREATE OR REPLACE FUNCTION public.delete_own_account()
@@ -161,13 +161,13 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth;
 
 -- Revocar ejecución pública por seguridad
-REVOKE EXECUTE ON FUNCTION public.delete_own_account() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.delete_own_account() FROM PUBLIC, anon;
 
 -- [Ajuste de Terceros] Si rls_auto_enable existe, asegurarlo también
 DO $$ 
 BEGIN 
     IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'rls_auto_enable') THEN
-        EXECUTE 'REVOKE EXECUTE ON FUNCTION public.rls_auto_enable() FROM PUBLIC';
+        EXECUTE 'REVOKE EXECUTE ON FUNCTION public.rls_auto_enable() FROM PUBLIC, anon, authenticated';
         EXECUTE 'ALTER FUNCTION public.rls_auto_enable() SET search_path = public';
     END IF;
 END $$;
@@ -188,66 +188,66 @@ ALTER TABLE public.blocked_users ENABLE ROW LEVEL SECURITY;
 -- Ver perfiles no shadowbanned (para el radar)
 DROP POLICY IF EXISTS "Ver perfiles públicos" ON public.users;
 CREATE POLICY "Ver perfiles públicos" ON public.users
-    FOR SELECT USING (is_shadowbanned = FALSE);
+    FOR SELECT TO authenticated USING (is_shadowbanned = FALSE);
 
 -- Solo el dueño puede actualizar su propio perfil
 DROP POLICY IF EXISTS "Actualizar propio perfil" ON public.users;
 CREATE POLICY "Actualizar propio perfil" ON public.users
-    FOR UPDATE USING (auth.uid() = id);
+    FOR UPDATE TO authenticated USING (auth.uid() = id);
 
 -- Insertar solo con tu propio uid
 DROP POLICY IF EXISTS "Registrar propio usuario" ON public.users;
 CREATE POLICY "Registrar propio usuario" ON public.users
-    FOR INSERT WITH CHECK (auth.uid() = id);
+    FOR INSERT TO authenticated WITH CHECK (auth.uid() = id);
 
 -- ─── BT_TOKENS ───────────────────────────────────────────────
 -- Solo tu propio token
 DROP POLICY IF EXISTS "Ver propio token" ON public.bt_tokens;
 CREATE POLICY "Ver propio token" ON public.bt_tokens
-    FOR SELECT USING (auth.uid() = user_id);
+    FOR SELECT TO authenticated USING (auth.uid() = user_id);
 
 -- Insertar solo tu propio token
 DROP POLICY IF EXISTS "Crear propio token" ON public.bt_tokens;
 CREATE POLICY "Crear propio token" ON public.bt_tokens
-    FOR INSERT WITH CHECK (auth.uid() = user_id);
+    FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
 
 -- Cualquier usuario autenticado puede resolver un token (para el radar)
 DROP POLICY IF EXISTS "Resolver token BT" ON public.bt_tokens;
 CREATE POLICY "Resolver token BT" ON public.bt_tokens
-    FOR SELECT USING (auth.role() = 'authenticated' AND expires_at > now() AND used = FALSE);
+    FOR SELECT TO authenticated USING (auth.role() = 'authenticated' AND expires_at > now() AND used = FALSE);
 
 -- ─── ENCOUNTERS ──────────────────────────────────────────────
 -- Solo ver tus propios encuentros
 DROP POLICY IF EXISTS "Ver propios encuentros" ON public.encounters;
 CREATE POLICY "Ver propios encuentros" ON public.encounters
-    FOR SELECT USING (auth.uid() = user_id);
+    FOR SELECT TO authenticated USING (auth.uid() = user_id);
 
 -- Insertar tus propios encuentros
 DROP POLICY IF EXISTS "Registrar encuentro" ON public.encounters;
 CREATE POLICY "Registrar encuentro" ON public.encounters
-    FOR INSERT WITH CHECK (auth.uid() = user_id);
+    FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
 
 -- ─── MATCHES ─────────────────────────────────────────────────
 -- Ver matches donde participas
 DROP POLICY IF EXISTS "Ver propios matches" ON public.matches;
 CREATE POLICY "Ver propios matches" ON public.matches
-    FOR SELECT USING (auth.uid() = requester_id OR auth.uid() = receiver_id);
+    FOR SELECT TO authenticated USING (auth.uid() = requester_id OR auth.uid() = receiver_id);
 
 -- Insertar solicitud de match como requester
 DROP POLICY IF EXISTS "Solicitar match" ON public.matches;
 CREATE POLICY "Solicitar match" ON public.matches
-    FOR INSERT WITH CHECK (auth.uid() = requester_id);
+    FOR INSERT TO authenticated WITH CHECK (auth.uid() = requester_id);
 
 -- Solo el receiver puede actualizar el status
 DROP POLICY IF EXISTS "Aceptar o rechazar match" ON public.matches;
 CREATE POLICY "Aceptar o rechazar match" ON public.matches
-    FOR UPDATE USING (auth.uid() = receiver_id);
+    FOR UPDATE TO authenticated USING (auth.uid() = receiver_id);
 
 -- ─── MESSAGES ────────────────────────────────────────────────
 -- Solo si hay match ACEPTADO entre los dos
 DROP POLICY IF EXISTS "Ver mensajes con match aceptado" ON public.messages;
 CREATE POLICY "Ver mensajes con match aceptado" ON public.messages
-    FOR SELECT USING (
+    FOR SELECT TO authenticated USING (
         EXISTS (
             SELECT 1 FROM public.matches m
             WHERE m.id = match_id
@@ -259,7 +259,7 @@ CREATE POLICY "Ver mensajes con match aceptado" ON public.messages
 -- Solo el sender puede insertar, y debe haber match aceptado
 DROP POLICY IF EXISTS "Enviar mensaje con match aceptado" ON public.messages;
 CREATE POLICY "Enviar mensaje con match aceptado" ON public.messages
-    FOR INSERT WITH CHECK (
+    FOR INSERT TO authenticated WITH CHECK (
         auth.uid() = sender_id
         AND EXISTS (
             SELECT 1 FROM public.matches m
@@ -272,16 +272,16 @@ CREATE POLICY "Enviar mensaje con match aceptado" ON public.messages
 -- ─── REPORTS ─────────────────────────────────────────────────
 DROP POLICY IF EXISTS "Reportar usuario" ON public.reports;
 CREATE POLICY "Reportar usuario" ON public.reports
-    FOR INSERT WITH CHECK (auth.uid() = reporter_id);
+    FOR INSERT TO authenticated WITH CHECK (auth.uid() = reporter_id);
 
 DROP POLICY IF EXISTS "Ver propios reportes" ON public.reports;
 CREATE POLICY "Ver propios reportes" ON public.reports
-    FOR SELECT USING (auth.uid() = reporter_id);
+    FOR SELECT TO authenticated USING (auth.uid() = reporter_id);
 
 -- ─── BLOCKED_USERS ───────────────────────────────────────────
 DROP POLICY IF EXISTS "Gestionar bloqueos propios" ON public.blocked_users;
 CREATE POLICY "Gestionar bloqueos propios" ON public.blocked_users
-    FOR ALL USING (auth.uid() = blocker_id);
+    FOR ALL TO authenticated USING (auth.uid() = blocker_id);
 
 -- ============================================================
 -- REALTIME (SOLO MENSAJES — no exponer radar en tiempo real)
@@ -312,20 +312,71 @@ INSERT INTO storage.buckets (id, name, public)
 VALUES ('profiles', 'profiles', true)
 ON CONFLICT (id) DO NOTHING;
 
--- Política: Cualquiera puede ver los avatars
+-- Política: Avatar publico eliminada (los buckets públicos no necesitan política SELECT global)
 DROP POLICY IF EXISTS "Avatar publico" ON storage.objects;
-CREATE POLICY "Avatar publico" ON storage.objects 
-    FOR SELECT USING (bucket_id = 'profiles');
+
+-- Política: El dueño puede ver sus propios archivos (Requisito para que funcione el upload con Upsert)
+DROP POLICY IF EXISTS "Avatar propio select" ON storage.objects;
+CREATE POLICY "Avatar propio select" ON storage.objects 
+    FOR SELECT TO authenticated USING (bucket_id = 'profiles' AND auth.uid()::text = (storage.foldername(name))[1]);
 
 -- Política: El dueño puede subir/borrar su propis foto
 DROP POLICY IF EXISTS "Avatar propio upload" ON storage.objects;
 CREATE POLICY "Avatar propio upload" ON storage.objects 
-    FOR INSERT WITH CHECK (bucket_id = 'profiles' AND auth.uid()::text = (storage.foldername(name))[1]);
+    FOR INSERT TO authenticated WITH CHECK (bucket_id = 'profiles' AND auth.uid()::text = (storage.foldername(name))[1]);
 
 DROP POLICY IF EXISTS "Avatar propio update" ON storage.objects;
 CREATE POLICY "Avatar propio update" ON storage.objects 
-    FOR UPDATE USING (bucket_id = 'profiles' AND auth.uid()::text = (storage.foldername(name))[1]);
+    FOR UPDATE TO authenticated USING (bucket_id = 'profiles' AND auth.uid()::text = (storage.foldername(name))[1]);
 
 DROP POLICY IF EXISTS "Avatar propio delete" ON storage.objects;
 CREATE POLICY "Avatar propio delete" ON storage.objects 
-    FOR DELETE USING (bucket_id = 'profiles' AND auth.uid()::text = (storage.foldername(name))[1]);
+    FOR DELETE TO authenticated USING (bucket_id = 'profiles' AND auth.uid()::text = (storage.foldername(name))[1]);
+
+-- 7. Función para reclamar/migrar un ZONE-ID a una nueva sesión auth (anónima o real)
+-- Esto permite que si el UID cambia pero el usuario conoce su ZONE-ID, pueda recuperar el control.
+CREATE OR REPLACE FUNCTION public.claim_zone_id(p_zone_id text)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER -- Permite bypass de RLS para el handover
+AS $$
+BEGIN
+  -- Actualizar el dueño de la fila
+  UPDATE public.users
+  SET id = auth.uid()
+  WHERE zone_id = p_zone_id;
+  
+  -- Nota: Si hay políticas de RLS restrictivas en UPDATE, SECURITY DEFINER las ignora aquí.
+END;
+$$;
+
+-- Otorgar permiso de ejecución a usuarios autenticados
+GRANT EXECUTE ON FUNCTION public.claim_zone_id(text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.claim_zone_id(text) TO anon;
+
+-- 8. Función para verificar si un ZONE-ID existe (para login)
+-- Bypassea RLS para que podamos confirmar la existencia del ID antes de migrarlo.
+CREATE OR REPLACE FUNCTION public.verify_zone_id(p_zone_id text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_user_data jsonb;
+BEGIN
+  SELECT jsonb_build_object(
+    'id', id,
+    'zone_id', zone_id,
+    'display_name', display_name
+  ) INTO v_user_data
+  FROM public.users
+  WHERE zone_id = p_zone_id;
+  
+  RETURN v_user_data;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.verify_zone_id(text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.verify_zone_id(text) TO anon;
+
+

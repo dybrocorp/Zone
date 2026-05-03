@@ -1,23 +1,26 @@
 import 'package:permission_handler/permission_handler.dart';
+import 'package:nearby_connections/nearby_connections.dart';
 
 class PermissionsService {
   /// Solicita los permisos necesarios para Nearby Connections y BLE.
   static Future<bool> requestAllPermissions() async {
-    Map<Permission, PermissionStatus> statuses = await [
+    final corePermissions = [
       Permission.location,
       Permission.bluetoothScan,
       Permission.bluetoothAdvertise,
       Permission.bluetoothConnect,
       Permission.nearbyWifiDevices,
-      Permission.storage,
-    ].request();
+    ];
+
+    Map<Permission, PermissionStatus> statuses = await corePermissions.request();
 
     bool allGranted = true;
-    for (var status in statuses.values) {
+    statuses.forEach((permission, status) {
       if (!status.isGranted) {
+        print('Permiso fuertemente denegado en SO: $permission');
         allGranted = false;
       }
-    }
+    });
 
     return allGranted;
   }

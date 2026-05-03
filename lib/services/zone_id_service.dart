@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 import 'chat_e2ee_service.dart';
+import 'mock_chat_service.dart';
 import 'package:path/path.dart' as p;
 
 /// Servicio que gestiona el ID único ZONE- del usuario.
@@ -69,31 +70,33 @@ class ZoneIdService {
   /// "iniciar sesión" y recuperar su perfil.
   Future<bool> loginWithExistingID(String zoneId) async {
     try {
-      // 1. Verificar que el ID existe en Supabase
-      final profile = await _supabase.from('users').select().eq('zone_id', zoneId).maybeSingle();
-      if (profile == null) return false;
+      // 1. Iniciar sesión anónima PRIMERO para obtener el rol "authenticated"
+      // Esto es OBLIGATORIO porque configuramos RLS: TO authenticated en Supabase
+      final response = await _supabase.auth.signInAnonymously();
+      if (response.user == null) return false;
 
-      // 2. Guardar localmente
+      // 2. Verificar que el ID existe en Supabase usando RPC (Bypass RLS)
+      print('[ZoneIdService] Verificando ID: $zoneId');
+      final result = await _supabase.rpc('verify_zone_id', params: {'p_zone_id': zoneId});
+      
+      if (result == null) {
+        print('[ZoneIdService] ID no encontrado en DB: $zoneId');
+        await _supabase.auth.signOut(); 
+        return false;
+      }
+
+      print('[ZoneIdService] ID verificado con éxito: $zoneId');
+
+      // 3. Guardar localmente y adueñarse de la row
       _zoneId = zoneId;
-      _uid = profile['id'];
+      _uid = response.user!.id; // El nuevo UID anónimo
+
       await _storage.write(key: _keyZoneId, value: _zoneId);
       await _storage.write(key: _keySupabaseSession, value: _uid);
       
-      // 3. Iniciar sesión anónima en Supabase para obtener JWT fresco
-      // Nota: Dado que es anónimo, el nuevo UID podría diferir si no lo forzamos.
-      // Sin embargo, para este modelo de ZONE-, el UID de Auth suele estar ligado al dispositivo.
-      // Si el usuario cambia de dispositivo, se le asigna un nuevo UID de Auth.
-      // Pero el `users.id` (PK) debe coincidir con el `auth.uid()`.
-      
-      final response = await _supabase.auth.signInAnonymously();
-      if (response.user != null) {
-         // Si el UID cambió, actualizamos la tabla users para que este dispositivo sea el nuevo "dueño"
-         // (O podrías usar un sistema de tokens compartido, pero simplificamos para el demo)
-         final newUid = response.user!.id;
-         await _supabase.from('users').update({'id': newUid}).eq('zone_id', zoneId);
-         _uid = newUid;
-         await _storage.write(key: _keySupabaseSession, value: _uid);
-      }
+      // 4. Actualizar la base de datos para que este dispositivo sea el nuevo "dueño" del ZONE-ID
+      // Usamos RPC para saltarnos el bloqueo de RLS en el handover de ID
+      await _supabase.rpc('claim_zone_id', params: {'p_zone_id': zoneId});
       
       return true;
     } catch (e) {
@@ -138,27 +141,37 @@ class ZoneIdService {
 
   /// Asegura que el UID y la sesión de Auth estén listos.
   Future<void> _ensureAuth() async {
-    // 1. Si no hay UID en memoria, intentar restaurar desde almacenamiento
-    if (_uid == null) {
-      final storedUid = await _storage.read(key: _keySupabaseSession);
-      _uid = storedUid;
-    }
+    final oldUid = await _storage.read(key: _keySupabaseSession);
 
-    // 2. Verificar sesión de Supabase Auth
+    // 1. Verificar sesión de Supabase Auth
     final session = _supabase.auth.currentSession;
+    String newUid;
+
     if (session == null) {
-      // Intentar reconexión anónima (esto mantiene el mismo UID si ya existía uno en Auth)
+      // Intentar reconexión anónima
       final response = await _supabase.auth.signInAnonymously();
-      if (response.user != null) {
-        _uid = response.user!.id;
-        await _storage.write(key: _keySupabaseSession, value: _uid);
+      if (response.user == null) {
+        throw Exception('No se pudo establecer sesión anónima.');
       }
+      newUid = response.user!.id;
     } else {
-      _uid = session.user.id;
+      newUid = session.user.id;
     }
 
-    if (_uid == null) {
-      throw Exception('No se pudo establecer una sesión válida. Por favor, reinicia la app.');
+    _uid = newUid;
+    await _storage.write(key: _keySupabaseSession, value: _uid);
+
+    final currentZoneId = _zoneId ?? await _storage.read(key: _keyZoneId);
+    _zoneId = currentZoneId;
+
+    // 2. Si tenemos un ZONE-ID, nos aseguramos de que el UID actual sea el dueño en Supabase.
+    // Usamos el RPC claim_zone_id que es idempotente y seguro (Security Definer).
+    if (currentZoneId != null) {
+      try {
+        await _supabase.rpc('claim_zone_id', params: {'p_zone_id': currentZoneId});
+      } catch (e) {
+        print('[ZoneIdService] Aviso: Error al reclamar Zone ID en el inicio: $e');
+      }
     }
   }
 
@@ -300,8 +313,11 @@ class ZoneIdService {
     await clearAuth();
   }
 
+  /// Limpia la sesión local y los chats mock.
   Future<void> clearAuth() async {
-    await _storage.deleteAll();
+    await _storage.delete(key: _keyZoneId);
+    await _storage.delete(key: _keySupabaseSession);
+    await MockChatService().clearAll();
     await _supabase.auth.signOut();
     _zoneId = null;
     _uid = null;

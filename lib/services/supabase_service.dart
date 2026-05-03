@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'notification_service.dart';
 import 'package:uuid/uuid.dart';
 
 /// Servicio central para todas las operaciones de Supabase:
@@ -123,6 +124,14 @@ class SupabaseService {
     await _supabase
         .from('matches')
         .update({'status': 'rejected'})
+        .eq('id', matchId);
+  }
+
+  /// Elimina un match y sus mensajes (cascada).
+  Future<void> deleteMatch(String matchId) async {
+    await _supabase
+        .from('matches')
+        .delete()
         .eq('id', matchId);
   }
 
@@ -274,5 +283,50 @@ class SupabaseService {
         .eq('is_shadowbanned', false)
         .maybeSingle();
     return result;
+  }
+
+  /// Escucha notificaciones globales (mensajes y nuevos matches) para el usuario.
+  void startGlobalNotificationListener(String myUid) {
+    // 1. Escuchar Nuevos Mensajes en cualquier match
+    _supabase
+        .channel('global_messages')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'messages',
+          callback: (payload) async {
+            final msg = payload.newRecord;
+            final senderId = msg['sender_id'] as String;
+            final matchId = msg['match_id'] as String;
+
+            if (senderId != myUid) {
+              // Si no estamos en el chat abierto actualmente
+              if (NotificationService.currentActiveMatchId != matchId) {
+                // Obtener nombre del remitente (opcional, por ahora genérico por privacidad)
+                NotificationService().showMessageNotification('Alguien', 'Te ha enviado un mensaje seguro.');
+              }
+            }
+          },
+        )
+        .subscribe();
+
+    // 2. Escuchar Nuevos Matches (Solicitudes)
+    _supabase
+        .channel('global_matches')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'matches',
+          callback: (payload) {
+            final match = payload.newRecord;
+            final u1 = match['user1_id'] as String;
+            final u2 = match['user2_id'] as String;
+
+            if (u2 == myUid) {
+              NotificationService().showMatchRequestNotification('Un usuario cercano');
+            }
+          },
+        )
+        .subscribe();
   }
 }

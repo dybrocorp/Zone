@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/supabase_service.dart';
 import '../services/zone_id_service.dart';
 import '../services/chat_e2ee_service.dart';
+import '../services/notification_service.dart';
 
 class ChatScreen extends StatefulWidget {
   final String matchId;
@@ -30,12 +31,14 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final List<Map<String, dynamic>> _messages = [];
   bool _isLoading = true;
+  bool _isBlocked = false;
   SecretKey? _sharedSecret;
   RealtimeChannel? _subscription;
 
   @override
   void initState() {
     super.initState();
+    NotificationService.currentActiveMatchId = widget.matchId;
     _setupChat();
   }
 
@@ -43,14 +46,24 @@ class _ChatScreenState extends State<ChatScreen> {
     final uid = _zoneIdService.uid;
     if (uid == null) return;
 
-    // 1. Obtener la clave pública del otro usuario de Supabase
+    // 1. Verificar si está bloqueado
+    final blockedList = await _supabaseService.getBlockedUsers(uid);
+    final isBlockedByMe = blockedList.any((b) => b['blocked_id'] == widget.otherZoneId || b['users']['id'] == widget.otherZoneId);
+
+    // 2. Obtener la clave pública del otro usuario de Supabase
     final otherProfile = await _supabaseService.getProfileByZoneId(widget.otherZoneId);
     if (otherProfile != null) {
       final otherPubKeyBase64 = otherProfile['public_key'];
       final otherPubKey = _e2eeService.importPublicKeyFromBase64(otherPubKeyBase64);
       
-      // 2. Calcular el secreto compartido (Shared Secret) para esta sesión
+      // 3. Calcular el secreto compartido (Shared Secret) para esta sesión
       _sharedSecret = await _e2eeService.computeSharedSecret(otherPubKey);
+    }
+    
+    if (mounted) {
+      setState(() {
+        _isBlocked = isBlockedByMe;
+      });
     }
 
     // 3. Cargar historial de mensajes existentes
@@ -75,6 +88,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    if (NotificationService.currentActiveMatchId == widget.matchId) {
+      NotificationService.currentActiveMatchId = null;
+    }
     _subscription?.unsubscribe();
     _messageController.dispose();
     super.dispose();
@@ -129,6 +145,17 @@ class _ChatScreenState extends State<ChatScreen> {
               style: TextStyle(color: Colors.greenAccent, fontSize: 12),
             ),
           ),
+          if (_isBlocked)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              width: double.infinity,
+              color: Colors.redAccent.withOpacity(0.1),
+              child: const Text(
+                '🚫 HAS BLOQUEADO A ESTE USUARIO',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.redAccent, fontSize: 13, fontWeight: FontWeight.bold),
+              ),
+            ),
           Expanded(
             child: _isLoading 
               ? const Center(child: CircularProgressIndicator(color: Color(0xFF00D2FF)))
@@ -143,8 +170,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       future: _sharedSecret != null 
                         ? _e2eeService.decryptMessage(
                             msg['encrypted_content'], 
-                            msg['nonce'], 
-                            msg['mac'], 
+                            msg['nonce'] ?? '', 
+                            msg['mac'] ?? '',
                             _sharedSecret!
                           )
                         : Future.value('Cifrado...'),
@@ -180,34 +207,37 @@ class _ChatScreenState extends State<ChatScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             color: const Color(0xFF1E293B),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _messageController,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(
-                      hintText: 'Mensaje seguro...',
-                      hintStyle: const TextStyle(color: Colors.white54),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(24),
-                        borderSide: BorderSide.none,
+            child: SafeArea(
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _messageController,
+                      enabled: !_isBlocked,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        hintText: _isBlocked ? 'Usuario bloqueado' : 'Mensaje seguro...',
+                        hintStyle: const TextStyle(color: Colors.white54),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(24),
+                          borderSide: BorderSide.none,
+                        ),
+                        filled: true,
+                        fillColor: Colors.black26,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                       ),
-                      filled: true,
-                      fillColor: Colors.black26,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                CircleAvatar(
-                  backgroundColor: const Color(0xFF00D2FF),
-                  child: IconButton(
-                    icon: const Icon(Icons.send, color: Colors.black, size: 20),
-                    onPressed: _sendMessage,
-                  ),
-                )
-              ],
+                  const SizedBox(width: 8),
+                  CircleAvatar(
+                    backgroundColor: _isBlocked ? Colors.grey : const Color(0xFF00D2FF),
+                    child: IconButton(
+                      icon: const Icon(Icons.send, color: Colors.black, size: 20),
+                      onPressed: _isBlocked ? null : _sendMessage,
+                    ),
+                  )
+                ],
+              ),
             ),
           ),
         ],

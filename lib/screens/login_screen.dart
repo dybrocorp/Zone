@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../services/zone_id_service.dart';
 import 'radar_screen.dart';
 
@@ -14,9 +15,16 @@ class _LoginScreenState extends State<LoginScreen> {
   final _zoneIdService = ZoneIdService();
   bool _isLoading = false;
 
+  @override
+  void initState() {
+    super.initState();
+    // Pre-llenar el identificador para que no tengan que escribir 'ZONE-'
+    _idController.text = 'ZONE-';
+  }
+
   void _doLogin() async {
-    final id = _idController.text.trim();
-    if (id.isEmpty) return;
+    final id = _idController.text.trim().toUpperCase();
+    if (id.isEmpty || id == 'ZONE-') return;
 
     setState(() => _isLoading = true);
     
@@ -70,6 +78,22 @@ class _LoginScreenState extends State<LoginScreen> {
               controller: _idController,
               style: const TextStyle(color: Colors.white, fontSize: 18, letterSpacing: 2),
               textCapitalization: TextCapitalization.characters,
+              maxLength: 13,
+              inputFormatters: [
+                TextInputFormatter.withFunction((oldValue, newValue) {
+                  // Lógica para mantener "ZONE-" siempre al principio y forzar mayúsculas
+                  String text = newValue.text.toUpperCase();
+                  if (!text.startsWith('ZONE-')) {
+                    // Si el usuario intentó borrar "ZONE-", lo reconstruimos
+                    String remainder = text.replaceAll('ZONE-', '').replaceAll('ZONE', '').replaceAll('ZON', '').replaceAll('ZO', '').replaceAll('Z', '').replaceAll('-', '');
+                    text = 'ZONE-$remainder';
+                  }
+                  return TextEditingValue(
+                    text: text,
+                    selection: TextSelection.collapsed(offset: text.length),
+                  );
+                }),
+              ],
               decoration: InputDecoration(
                 hintText: 'ZONE-XXXXXXXX',
                 hintStyle: const TextStyle(color: Colors.white24),
@@ -78,6 +102,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.grey.shade700)),
                 focusedBorder: const OutlineInputBorder(borderSide: BorderSide(color: Color(0xFF00D2FF))),
                 prefixIcon: const Icon(Icons.qr_code, color: Colors.white54),
+                counterText: '',
               ),
             ),
             const SizedBox(height: 40),
@@ -90,7 +115,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
                     onPressed: _doLogin,
-                    child: const Text('Entrar a Mi Radar', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 16)),
+                    child: const Text('Entrar A Mi Zone', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 16)),
                   ),
           ],
         ),

@@ -110,33 +110,43 @@ class ZoneIdService {
   // ──────────────────────────────────────────────────────────
 
   Future<void> _registerInSupabase() async {
-    // Auth anónimo (Supabase genera JWT sin email ni teléfono)
-    final response = await _supabase.auth.signInAnonymously();
-    final user = response.user;
-    if (user == null) throw Exception('No se pudo iniciar sesión anónima');
+    try {
+      // Auth anónimo (Supabase genera JWT sin email ni teléfono)
+      final response = await _supabase.auth.signInAnonymously();
+      final user = response.user;
+      if (user == null) throw Exception('No se pudo iniciar sesión anónima en Supabase Auth');
 
-    _uid = user.id;
-    await _storage.write(key: _keySupabaseSession, value: _uid);
+      _uid = user.id;
+      await _storage.write(key: _keySupabaseSession, value: _uid);
 
-    // Generar par de claves E2EE
-    final keyPair = await _e2ee.generateKeyPair();
-    final publicKey = await keyPair.extractPublicKey();
-    final publicKeyBase64 = _bytesToBase64(publicKey.bytes);
+      // Generar par de claves E2EE
+      final keyPair = await _e2ee.generateKeyPair();
+      final publicKey = await keyPair.extractPublicKey();
+      final publicKeyBase64 = _bytesToBase64(publicKey.bytes);
 
-    // Guardar en Supabase (usamos upsert para evitar errores si ya existe)
-    await _supabase.from('users').upsert({
-      'id': _uid,
-      'zone_id': _zoneId,
-      'public_key': publicKeyBase64,
-      'stealth_mode': false,
-    });
+      print('[ZoneIdService] Registrando usuario en public.users: $_uid ($_zoneId)');
+      
+      // Guardar en Supabase (usamos upsert para evitar errores si ya existe)
+      await _supabase.from('users').upsert({
+        'id': _uid,
+        'zone_id': _zoneId,
+        'public_key': publicKeyBase64,
+        'stealth_mode': false,
+      });
 
-    // Verificar que realmente se insertó (opcional pero seguro)
-    final check = await _supabase.from('users').select().eq('id', _uid!).maybeSingle();
-    if (check == null) throw Exception('No se pudo crear el registro de usuario en la base de datos');
+      // Verificar que realmente se insertó
+      final check = await _supabase.from('users').select().eq('id', _uid!).maybeSingle();
+      if (check == null) {
+        throw Exception('El registro en public.users falló. Verifica las políticas RLS o conexión.');
+      }
 
-    // Persistir clave pública localmente
-    await _storage.write(key: 'public_key', value: publicKeyBase64);
+      // Persistir clave pública localmente
+      await _storage.write(key: 'public_key', value: publicKeyBase64);
+      print('[ZoneIdService] Registro exitoso para $_zoneId');
+    } catch (e) {
+      print('[ZoneIdService] ERROR CRÍTICO EN REGISTRO: $e');
+      rethrow;
+    }
   }
 
   /// Asegura que el UID y la sesión de Auth estén listos.
@@ -178,8 +188,41 @@ class ZoneIdService {
   Future<void> _restoreSession() async {
     try {
       await _ensureAuth();
+      await checkAndFixRegistration(); // Auto-sanación si falta la fila en DB
     } catch (e) {
       print('[ZoneIdService] Error al restaurar sesión: $e');
+    }
+  }
+
+  /// Verifica si el usuario actual tiene su fila en la tabla 'users'.
+  /// Si no existe (ej: borrado manual de DB o fallo previo), la intenta recrear.
+  Future<void> checkAndFixRegistration() async {
+    if (_uid == null || _zoneId == null) return;
+
+    try {
+      final res = await _supabase.from('users').select().eq('id', _uid!).maybeSingle();
+      if (res == null) {
+        print('[ZoneIdService] Alerta: Fila de usuario no encontrada. Recreando...');
+        
+        // Generar par de claves E2EE si no tenemos una guardada
+        String? publicKeyBase64 = await _storage.read(key: 'public_key');
+        if (publicKeyBase64 == null) {
+          final keyPair = await _e2ee.generateKeyPair();
+          final publicKey = await keyPair.extractPublicKey();
+          publicKeyBase64 = _bytesToBase64(publicKey.bytes);
+          await _storage.write(key: 'public_key', value: publicKeyBase64);
+        }
+
+        await _supabase.from('users').upsert({
+          'id': _uid,
+          'zone_id': _zoneId,
+          'public_key': publicKeyBase64,
+          'stealth_mode': false,
+        });
+        print('[ZoneIdService] Fila de usuario recreada con éxito.');
+      }
+    } catch (e) {
+      print('[ZoneIdService] Error en checkAndFixRegistration: $e');
     }
   }
 
@@ -199,7 +242,11 @@ class ZoneIdService {
   }) async {
     await _ensureAuth();
     
-    await _supabase.from('users').update({
+    // Usamos UPSERT de forma defensiva por si el registro inicial en public.users falló.
+    // Esto asegura que si el usuario completa el perfil, al menos la fila se cree aquí.
+    await _supabase.from('users').upsert({
+      'id': _uid,
+      'zone_id': _zoneId,
       'display_name': displayName,
       'instagram_handle': instagram,
       'ig_visible': igVisible,
@@ -208,7 +255,7 @@ class ZoneIdService {
       'tiktok_handle': tiktok,
       'tiktok_visible': tiktokVisible,
       'avatar_url': avatarUrl,
-    }).eq('id', _uid!);
+    });
   }
 
   /// Sube una imagen al bucket 'profiles' y devuelve la URL pública.

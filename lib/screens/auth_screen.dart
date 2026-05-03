@@ -71,18 +71,31 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
   Future<void> _startRegistration() async {
     setState(() { _isLoading = true; });
 
-    // Generar/obtener ZONE-ID y registrar en Supabase
-    final zoneId = await _zoneIdService.getOrCreate();
-    setState(() { _generatedId = zoneId; });
+    try {
+      // Generar/obtener ZONE-ID y registrar en Supabase
+      final zoneId = await _zoneIdService.getOrCreate();
+      setState(() { _generatedId = zoneId; });
 
-    await Future.delayed(const Duration(seconds: 2));
-    if (!mounted) return;
+      await Future.delayed(const Duration(seconds: 2));
+      if (!mounted) return;
 
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(
-        builder: (_) => ProfileSetupScreen(generatedId: zoneId),
-      ),
-    );
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => ProfileSetupScreen(generatedId: zoneId),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() { _isLoading = false; });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al registrar: $e'),
+            backgroundColor: Colors.redAccent,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
   }
 
   void _login() {

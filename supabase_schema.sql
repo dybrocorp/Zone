@@ -129,8 +129,7 @@ CREATE TRIGGER on_new_report
 CREATE OR REPLACE FUNCTION public.cleanup_expired_tokens()
 RETURNS void AS $$
 BEGIN
-    DELETE FROM public.bt_tokens
-    WHERE expires_at < now() OR used = TRUE;
+    DELETE FROM public.bt_tokens WHERE expires_at < now();
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
@@ -162,6 +161,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth;
 
 -- Revocar ejecución pública por seguridad
 REVOKE EXECUTE ON FUNCTION public.delete_own_account() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.delete_own_account() TO authenticated;
 
 -- [Ajuste de Terceros] Si rls_auto_enable existe, asegurarlo también
 DO $$ 
@@ -211,10 +211,10 @@ DROP POLICY IF EXISTS "Crear propio token" ON public.bt_tokens;
 CREATE POLICY "Crear propio token" ON public.bt_tokens
     FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
 
--- Cualquier usuario autenticado puede resolver un token (para el radar)
+-- Cualquier usuario autenticado puede resolver un token (para el radar bilateral)
 DROP POLICY IF EXISTS "Resolver token BT" ON public.bt_tokens;
 CREATE POLICY "Resolver token BT" ON public.bt_tokens
-    FOR SELECT TO authenticated USING (auth.role() = 'authenticated' AND expires_at > now() AND used = FALSE);
+    FOR SELECT TO authenticated USING (auth.role() = 'authenticated' AND expires_at > now());
 
 -- ─── ENCOUNTERS ──────────────────────────────────────────────
 -- Solo ver tus propios encuentros
@@ -379,4 +379,46 @@ $$;
 GRANT EXECUTE ON FUNCTION public.verify_zone_id(text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.verify_zone_id(text) TO anon;
 
+-- Resolución de token BT para radar (bypass RLS, soporta resolución bilateral)
+CREATE OR REPLACE FUNCTION public.resolve_bt_token(p_token text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_profile jsonb;
+BEGIN
+  IF p_token IS NULL OR length(trim(p_token)) = 0 THEN
+    RETURN NULL;
+  END IF;
+
+  SELECT jsonb_build_object(
+    'id', u.id,
+    'zone_id', u.zone_id,
+    'display_name', u.display_name,
+    'avatar_url', u.avatar_url,
+    'stealth_mode', u.stealth_mode,
+    'public_key', u.public_key,
+    'instagram_handle', u.instagram_handle,
+    'ig_visible', u.ig_visible,
+    'facebook_handle', u.facebook_handle,
+    'fb_visible', u.fb_visible,
+    'tiktok_handle', u.tiktok_handle,
+    'tiktok_visible', u.tiktok_visible
+  ) INTO v_profile
+  FROM public.bt_tokens t
+  INNER JOIN public.users u ON u.id = t.user_id
+  WHERE t.token = p_token
+    AND t.expires_at > now()
+    AND u.is_shadowbanned = FALSE
+    AND u.stealth_mode = FALSE;
+
+  RETURN v_profile;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.resolve_bt_token(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.resolve_bt_token(text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.resolve_bt_token(text) TO anon;
 

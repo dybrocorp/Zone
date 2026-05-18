@@ -111,8 +111,8 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
   }
 
   Widget _buildPendingItem(Map<String, dynamic> req) {
-    final sender = req['users'];
-    final name = sender['display_name'] ?? sender['zone_id'];
+    final sender = req['requester_user'] as Map<String, dynamic>?;
+    final name = sender?['display_name'] ?? sender?['zone_id'] ?? 'Usuario Zone';
 
     return Card(
       color: const Color(0xFF1E293B),
@@ -145,10 +145,8 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
   }
 
   Widget _buildMatchItem(Map<String, dynamic> match) {
-    final uid = _zoneIdService.uid;
-    final bool isRequesterMe = match['requester_id'] == uid;
-    final otherUser = isRequesterMe ? match['users!matches_receiver_id_fkey'] : match['users!matches_requester_id_fkey'];
-    final name = otherUser['display_name'] ?? otherUser['zone_id'];
+    final otherUser = match['other_user'] as Map<String, dynamic>?;
+    final name = otherUser?['display_name'] ?? otherUser?['zone_id'] ?? 'Usuario Zone';
 
     final isMuted = _mutedMatchIds.contains(match['id']);
 
@@ -168,12 +166,12 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
             builder: (_) => ChatScreen(
               matchId: match['id'],
               otherUserName: name,
-              otherZoneId: otherUser['zone_id'],
+              otherZoneId: otherUser?['zone_id'] ?? '',
             ),
           ),
         );
       },
-      onLongPress: () => _showChatOptions(match['id'], otherUser['id'] ?? otherUser['zone_id'], name),
+      onLongPress: () => _showChatOptions(match['id'], otherUser?['id'] ?? otherUser?['zone_id'] ?? '', name),
     );
   }
 

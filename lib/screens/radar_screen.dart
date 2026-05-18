@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'dart:math';
+import '../config/radar_config.dart';
 import '../services/nearby_service.dart';
 import '../services/supabase_service.dart';
 import '../services/zone_id_service.dart';
@@ -63,8 +64,25 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
       duration: const Duration(seconds: 3),
     );
 
+    // Asegurarse de que el ID esté cargado
+    String? uid = _zoneIdService.uid;
+    if (uid == null || uid.isEmpty) {
+      // Intentar restaurar sesión si por algún motivo se perdió el UID en memoria
+      await _zoneIdService.getOrCreate();
+      uid = _zoneIdService.uid;
+    }
+
     // Inicializar con el ID de Supabase
-    _nearbyService.initialize(_zoneIdService.uid ?? '');
+    if (uid != null && uid.isNotEmpty) {
+      await _nearbyService.initialize(uid);
+    } else {
+      print('[RadarScreen] Error: No se pudo obtener el UID del usuario.');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Error de perfil. Por favor, reinicia la app.')),
+        );
+      }
+    }
 
     // Escuchar usuarios descubiertos
     _usersSub = _nearbyService.discoveredUsersStream.listen((users) {
@@ -80,7 +98,6 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
     });
 
     // Iniciar escuchas globales de notificaciones (mensajes/solicitudes)
-    final uid = _zoneIdService.uid;
     if (uid != null) {
       _supabaseService.startGlobalNotificationListener(uid);
     }
@@ -101,10 +118,22 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
         return;
       }
 
+      final started = await _nearbyService.startRadar();
+      if (!started) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No se pudo activar el radar. Comprueba tu conexión e inténtalo de nuevo.'),
+              backgroundColor: Colors.redAccent,
+            ),
+          );
+        }
+        return;
+      }
+
       setState(() {
         _isScanning = true;
       });
-      await _nearbyService.startRadar();
       _animationController.repeat();
     } else {
       setState(() {
@@ -273,11 +302,13 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
                             _isScanning ? 'Buscando cercanos...' : 'Toca para iniciar',
                             style: const TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.w600),
                           ),
-                          if (_isScanning && _nearbyUsers.isNotEmpty)
+                          if (_isScanning)
                             Padding(
                               padding: const EdgeInsets.only(top: 4),
                               child: Text(
-                                '${_nearbyUsers.length} persona${_nearbyUsers.length > 1 ? 's' : ''} cerca',
+                                _nearbyUsers.isEmpty
+                                    ? 'Radio: ${_nearbyService.discoveryRadiusMeters.round()} m'
+                                    : '${_nearbyUsers.length} persona${_nearbyUsers.length > 1 ? 's' : ''} · ${_nearbyService.discoveryRadiusMeters.round()} m',
                                 style: const TextStyle(color: Color(0xFF00D2FF), fontSize: 13, fontWeight: FontWeight.w500),
                               ),
                             ),
@@ -369,9 +400,19 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(8)),
-                          child: Text(
-                            user.userName,
-                            style: const TextStyle(color: Colors.white70, fontSize: 10),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                user.userName,
+                                style: const TextStyle(color: Colors.white70, fontSize: 10),
+                              ),
+                              if (user.distanceMeters != null)
+                                Text(
+                                  RadarConfig.formatDistance(user.distanceMeters),
+                                  style: const TextStyle(color: Color(0xFF00D2FF), fontSize: 9),
+                                ),
+                            ],
                           ),
                         ),
                       ],

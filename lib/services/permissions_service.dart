@@ -1,5 +1,4 @@
 import 'package:permission_handler/permission_handler.dart';
-import 'package:nearby_connections/nearby_connections.dart';
 
 class PermissionsService {
   /// Solicita los permisos necesarios para Nearby Connections y BLE.

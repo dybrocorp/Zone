@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'blocked_users_screen.dart';
+import '../config/radar_config.dart';
+import '../services/nearby_service.dart';
 import '../services/zone_id_service.dart';
 import 'auth_screen.dart';
-import 'dart:io';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -14,12 +16,25 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _zoneIdService = ZoneIdService();
+  final _nearbyService = NearbyService();
   String _appVersion = '1.0.0';
+  double _discoveryRadius = RadarConfig.discoveryRadiusMeters;
 
   @override
   void initState() {
     super.initState();
     _loadAppInfo();
+    _loadRadarRadius();
+  }
+
+  Future<void> _loadRadarRadius() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getDouble(RadarConfig.prefsDiscoveryRadiusKey);
+    if (mounted) {
+      setState(() {
+        _discoveryRadius = RadarConfig.effectiveRadius(saved);
+      });
+    }
   }
 
   Future<void> _loadAppInfo() async {
@@ -163,6 +178,50 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: _showSupportDialog,
           ),
           
+          const SizedBox(height: 24),
+          _buildSectionHeader('RADAR BLUETOOTH'),
+          Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E293B),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.radar, color: Colors.white70),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Radio de detección: ${_discoveryRadius.round()} m',
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Usuarios Zone dentro de este radio (Bluetooth + Nearby). Recomendado: 10–15 m interior, hasta 30 m exterior.',
+                  style: TextStyle(color: Colors.white38, fontSize: 11),
+                ),
+                Slider(
+                  value: _discoveryRadius,
+                  min: RadarConfig.minDiscoveryRadiusMeters,
+                  max: RadarConfig.maxDiscoveryRadiusMeters,
+                  divisions: 5,
+                  activeColor: const Color(0xFF00D2FF),
+                  label: '${_discoveryRadius.round()} m',
+                  onChanged: (v) => setState(() => _discoveryRadius = v),
+                  onChangeEnd: (v) async {
+                    await _nearbyService.setDiscoveryRadiusMeters(v);
+                  },
+                ),
+              ],
+            ),
+          ),
           const SizedBox(height: 24),
           _buildSectionHeader('PRIVACIDAD'),
           _buildTile(

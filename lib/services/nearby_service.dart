@@ -2,7 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/widgets.dart';
 import 'package:nearby_connections/nearby_connections.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../config/radar_config.dart';
+import 'ble_proximity_service.dart';
 import 'supabase_service.dart';
+import 'zone_id_service.dart';
 
 /// Modelo de usuario descubierto por Nearby Connections.
 class NearbyUser {
@@ -11,6 +15,7 @@ class NearbyUser {
   String userName; // Resuelto desde Supabase
   String zoneId; // ZONE-ID real resuelto
   bool isConnected;
+  double? distanceMeters; // Estimado por RSSI BLE
   Map<String, dynamic>? profile; // Perfil completo de Supabase
 
   NearbyUser({
@@ -19,6 +24,7 @@ class NearbyUser {
     this.userName = '...',
     this.zoneId = '',
     this.isConnected = false,
+    this.distanceMeters,
     this.profile,
   });
 }
@@ -39,19 +45,28 @@ class NearbyService with WidgetsBindingObserver {
 
   final Nearby _nearby = Nearby();
   final _supabaseService = SupabaseService();
+  final _zoneIdService = ZoneIdService();
+  final _bleProximity = BleProximityService();
 
+  /// P2P_CLUSTER mejora alcance y descubrimiento bilateral en espacios abiertos.
   static const Strategy _strategy = Strategy.P2P_CLUSTER;
   static const String _serviceId = 'com.dybrocorp.zone';
+  static const String _invalidToken = 'ZONE-INIT';
 
-  /// Token efímero actual (se renueva cada ~4 min)
-  String _currentToken = 'ZONE-INIT';
+  String _currentToken = _invalidToken;
   String _userId = '';
+  String _myZoneId = '';
+  bool _stealthMode = false;
+  double _discoveryRadiusMeters = RadarConfig.discoveryRadiusMeters;
+  Set<String> _blockedUserIds = {};
+
+  double get discoveryRadiusMeters => _discoveryRadiusMeters;
 
   bool _isAdvertising = false;
   bool _isDiscovering = false;
+  bool _lifecycleObserverRegistered = false;
   bool get isRadarActive => _isAdvertising || _isDiscovering;
 
-  /// Smart scan timers
   Timer? _scanCycleTimer;
   Timer? _tokenRefreshTimer;
 
@@ -65,26 +80,69 @@ class NearbyService with WidgetsBindingObserver {
 
   final Map<String, dynamic> _pendingConnections = {};
   final Set<String> _connectedEndpoints = {};
+  final Set<String> _resolvingEndpoints = {};
 
   // ──────────────────────────────────────────────────────────────
   //  Inicialización
   // ──────────────────────────────────────────────────────────────
 
-  /// Inicializa con el userId de Supabase y obtiene el primer token BT.
   Future<void> initialize(String userId) async {
+    if (userId.isEmpty) {
+      print('[NearbyService] Error: Intentando inicializar con userId vacío');
+      return;
+    }
     _userId = userId;
-    WidgetsBinding.instance.addObserver(this);
+    _ensureLifecycleObserver();
+    await _loadUserContext();
     await _refreshToken();
   }
 
-  /// Renueva el token BT efímero cada 4 minutos.
+  Future<void> _loadUserContext() async {
+    _myZoneId = _zoneIdService.zoneId ?? '';
+    _blockedUserIds = await _supabaseService.getBlockedUserIds(_userId);
+    final profile = await _zoneIdService.getMyProfile();
+    _stealthMode = profile?['stealth_mode'] == true;
+    _myZoneId = profile?['zone_id'] as String? ?? _myZoneId;
+    await _loadDiscoveryRadius();
+  }
+
+  Future<void> _loadDiscoveryRadius() async {
+    final prefs = await SharedPreferences.getInstance();
+    _discoveryRadiusMeters = RadarConfig.effectiveRadius(
+      prefs.getDouble(RadarConfig.prefsDiscoveryRadiusKey),
+    );
+  }
+
+  /// Actualiza el radio de detección (metros) y persiste la preferencia.
+  Future<void> setDiscoveryRadiusMeters(double meters) async {
+    _discoveryRadiusMeters = RadarConfig.effectiveRadius(meters);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(RadarConfig.prefsDiscoveryRadiusKey, _discoveryRadiusMeters);
+  }
+
+  void _ensureLifecycleObserver() {
+    if (_lifecycleObserverRegistered) return;
+    WidgetsBinding.instance.addObserver(this);
+    _lifecycleObserverRegistered = true;
+  }
+
   Future<void> _refreshToken() async {
     if (_userId.isEmpty) return;
-    final token = await _supabaseService.generateBtToken(_userId);
-    if (token != null && token.isNotEmpty) {
-      _currentToken = token;
+    try {
+      final token = await _supabaseService.generateBtToken(_userId);
+      if (token != null && token.isNotEmpty) {
+        _currentToken = token;
+        print('[NearbyService] Token BT renovado');
+      } else {
+        print('[NearbyService] Advertencia: No se pudo generar token BT');
+      }
+    } catch (e) {
+      print('[NearbyService] Error renovando token: $e');
     }
   }
+
+  bool get _hasValidToken =>
+      _currentToken.isNotEmpty && _currentToken != _invalidToken;
 
   // ──────────────────────────────────────────────────────────────
   //  AppLifecycle — pausa en background (ahorra batería)
@@ -103,65 +161,84 @@ class NearbyService with WidgetsBindingObserver {
     _scanCycleTimer?.cancel();
     _nearby.stopAdvertising();
     _nearby.stopDiscovery();
+    _bleProximity.stopScanning();
     _isAdvertising = false;
     _isDiscovering = false;
   }
 
   void _resumeScanning() {
     if (!isRadarActive) return;
-    _startSmartScanCycle();
+    startRadar();
   }
 
   // ──────────────────────────────────────────────────────────────
-  //  Radar con escaneo inteligente (15s ciclo)
+  //  Radar
   // ──────────────────────────────────────────────────────────────
 
-  /// Inicia el radar con ciclo inteligente de 15s y renovación de token.
-  Future<void> startRadar() async {
-    await _startAdvertising();
+  Future<bool> startRadar() async {
+    _ensureLifecycleObserver();
+    await _loadUserContext();
+    await _refreshToken();
+
+    if (!_hasValidToken) {
+      print('[NearbyService] No se puede iniciar radar: token BT inválido');
+      return false;
+    }
+
+    _scanCycleTimer?.cancel();
+    _tokenRefreshTimer?.cancel();
+
+    if (!_stealthMode) {
+      await _startAdvertising();
+    } else {
+      await _stopAdvertising();
+      print('[NearbyService] Modo timidez: solo descubrimiento, sin anunciar');
+    }
     await _startDiscovery();
-    _startSmartScanCycle();
-    // Renovar token cada 4 minutos
+    await _bleProximity.startScanning();
+
+    _scanCycleTimer = Timer.periodic(const Duration(seconds: 45), (_) async {
+      if (_isDiscovering) {
+        print('[NearbyService] Reinicio periódico de discovery');
+        await _nearby.stopDiscovery();
+        _isDiscovering = false;
+        await Future.delayed(const Duration(milliseconds: 500));
+        await _startDiscovery();
+      }
+    });
+
     _tokenRefreshTimer = Timer.periodic(const Duration(minutes: 4), (_) async {
       await _refreshToken();
-      // Reiniciar advertising con el nuevo token
+      if (!_hasValidToken) return;
+      if (_stealthMode) return;
       if (_isAdvertising) {
-        await _nearby.stopAdvertising();
-        _isAdvertising = false;
+        await _stopAdvertising();
         await _startAdvertising();
       }
     });
+
+    return true;
   }
 
-  /// Ciclo inteligente: escanea 12s, pausa 3s (reduce consumo de batería).
-  void _startSmartScanCycle() {
-    _scanCycleTimer?.cancel();
-    _scanCycleTimer = Timer.periodic(const Duration(seconds: 15), (_) async {
-      if (!_isDiscovering) return;
-      // Breve pausa para que el stack BT/WiFi respire
-      await _nearby.stopDiscovery();
-      _isDiscovering = false;
-      await Future.delayed(const Duration(seconds: 3));
-      await _startDiscovery();
-    });
-  }
-
-  /// Detiene el radar completamente.
   Future<void> stopRadar() async {
     _scanCycleTimer?.cancel();
     _tokenRefreshTimer?.cancel();
     await _stopAdvertising();
     await _stopDiscovery();
+    _bleProximity.stopScanning();
     _discoveredUsers.clear();
+    _resolvingEndpoints.clear();
     _emitDiscoveredUsers();
-    WidgetsBinding.instance.removeObserver(this);
   }
 
   Future<void> _startAdvertising() async {
-    if (_isAdvertising) return;
+    if (_stealthMode || !_hasValidToken) return;
+    if (_isAdvertising) {
+      await _stopAdvertising();
+    }
     try {
       await _nearby.startAdvertising(
-        _currentToken, // ← Token efímero, NO el zone_id real
+        _currentToken,
         _strategy,
         onConnectionInitiated: _onConnectionInitiated,
         onConnectionResult: _onConnectionResult,
@@ -171,11 +248,15 @@ class NearbyService with WidgetsBindingObserver {
       _isAdvertising = true;
     } catch (e) {
       print('[NearbyService] Error al iniciar advertising: $e');
+      _isAdvertising = false;
     }
   }
 
   Future<void> _startDiscovery() async {
-    if (_isDiscovering) return;
+    if (!_hasValidToken) return;
+    if (_isDiscovering) {
+      await _stopDiscovery();
+    }
     try {
       await _nearby.startDiscovery(
         _currentToken,
@@ -187,71 +268,131 @@ class NearbyService with WidgetsBindingObserver {
       _isDiscovering = true;
     } catch (e) {
       print('[NearbyService] Error al iniciar discovery: $e');
+      _isDiscovering = false;
     }
   }
 
   Future<void> _stopAdvertising() async {
     if (!_isAdvertising) return;
-    await _nearby.stopAdvertising();
+    try {
+      await _nearby.stopAdvertising();
+    } catch (e) {
+      print('[NearbyService] Error al detener advertising: $e');
+    }
     _isAdvertising = false;
   }
 
   Future<void> _stopDiscovery() async {
     if (!_isDiscovering) return;
-    await _nearby.stopDiscovery();
+    try {
+      await _nearby.stopDiscovery();
+    } catch (e) {
+      print('[NearbyService] Error al detener discovery: $e');
+    }
     _isDiscovering = false;
   }
 
   // ──────────────────────────────────────────────────────────────
-  //  Callbacks de Discovery — resuelve token → zone_id via Supabase
+  //  Discovery — resuelve token → perfil via Supabase
   // ──────────────────────────────────────────────────────────────
 
   void _onEndpointFound(String id, String receivedToken, String serviceId) {
-    // Agregar con display temporal mientras se resuelve
-    _discoveredUsers[id] = NearbyUser(
-      endpointId: id,
-      token: receivedToken,
-      userName: 'Cargando...',
-    );
-    _emitDiscoveredUsers();
+    if (receivedToken.isEmpty || receivedToken == _invalidToken) return;
 
-    // Resolver token en Supabase de forma asíncrona
+    if (!_bleProximity.isTokenWithinRadius(receivedToken, _discoveryRadiusMeters)) {
+      return;
+    }
+
+    if (!_discoveredUsers.containsKey(id)) {
+      _discoveredUsers[id] = NearbyUser(
+        endpointId: id,
+        token: receivedToken,
+        userName: 'Cargando...',
+      );
+      _emitDiscoveredUsers();
+    }
+
     _resolveTokenAsync(id, receivedToken);
   }
 
   Future<void> _resolveTokenAsync(String endpointId, String token) async {
-    try {
-      final profile = await _supabaseService.resolveToken(token);
-      if (profile != null && _discoveredUsers.containsKey(endpointId)) {
-        _discoveredUsers[endpointId]!
-          ..userName = profile['display_name'] ?? profile['zone_id'] ?? 'ZONE-???'
-          ..zoneId = profile['zone_id'] ?? ''
-          ..profile = profile;
-        _emitDiscoveredUsers();
+    if (_resolvingEndpoints.contains(endpointId)) return;
+    _resolvingEndpoints.add(endpointId);
 
-        // Registrar encuentro en Supabase ("Nos cruzamos")
-        if (_userId.isNotEmpty && profile['zone_id'] != null) {
-          await _supabaseService.registerEncounter(_userId, profile['zone_id']);
-        }
+    try {
+      Map<String, dynamic>? profile;
+      for (var attempt = 0; attempt < 3; attempt++) {
+        profile = await _supabaseService.resolveToken(token);
+        if (profile != null) break;
+        await Future.delayed(Duration(milliseconds: 400 * (attempt + 1)));
+      }
+
+      if (!_discoveredUsers.containsKey(endpointId)) return;
+
+      if (profile == null) {
+        _discoveredUsers.remove(endpointId);
+        _emitDiscoveredUsers();
+        return;
+      }
+
+      final profileId = profile['id'] as String?;
+      final profileZoneId = profile['zone_id'] as String?;
+
+      if (profileId == _userId ||
+          (profileZoneId != null &&
+              profileZoneId.isNotEmpty &&
+              profileZoneId == _myZoneId)) {
+        _discoveredUsers.remove(endpointId);
+        _emitDiscoveredUsers();
+        return;
+      }
+
+      if (profileId != null && _blockedUserIds.contains(profileId)) {
+        _discoveredUsers.remove(endpointId);
+        _emitDiscoveredUsers();
+        return;
+      }
+
+      final distance = _bleProximity.distanceMetersForToken(token);
+      if (!RadarConfig.isDistanceWithinRadius(distance, _discoveryRadiusMeters)) {
+        _discoveredUsers.remove(endpointId);
+        _emitDiscoveredUsers();
+        return;
+      }
+
+      _discoveredUsers[endpointId]!
+        ..userName = profile['display_name'] ?? profile['zone_id'] ?? 'ZONE-???'
+        ..zoneId = profile['zone_id'] ?? ''
+        ..distanceMeters = distance
+        ..profile = profile;
+      _emitDiscoveredUsers();
+
+      if (_userId.isNotEmpty && profileZoneId != null && profileZoneId.isNotEmpty) {
+        await _supabaseService.registerEncounter(_userId, profileZoneId);
       }
     } catch (e) {
       print('[NearbyService] Error al resolver token: $e');
+      _discoveredUsers.remove(endpointId);
+      _emitDiscoveredUsers();
+    } finally {
+      _resolvingEndpoints.remove(endpointId);
     }
   }
 
   void _onEndpointLost(String? id) {
     if (id == null) return;
     _discoveredUsers.remove(id);
+    _resolvingEndpoints.remove(id);
     _emitDiscoveredUsers();
   }
 
   // ──────────────────────────────────────────────────────────────
-  //  Callbacks de Conexión
+  //  Conexión
   // ──────────────────────────────────────────────────────────────
 
   void _onConnectionInitiated(String id, ConnectionInfo info) {
     _pendingConnections[id] = info;
-    acceptConnection(id); // Auto-aceptar para radar; el match real va por Supabase
+    acceptConnection(id);
   }
 
   void _onConnectionResult(String id, Status status) {
@@ -275,11 +416,8 @@ class NearbyService with WidgetsBindingObserver {
     }
   }
 
-  // ──────────────────────────────────────────────────────────────
-  //  Acciones de conexión
-  // ──────────────────────────────────────────────────────────────
-
   Future<void> requestConnection(String endpointId) async {
+    if (!_hasValidToken) return;
     try {
       await _nearby.requestConnection(
         _currentToken,
@@ -323,10 +461,6 @@ class NearbyService with WidgetsBindingObserver {
     }
   }
 
-  // ──────────────────────────────────────────────────────────────
-  //  Envío y recepción de datos (Payloads)
-  // ──────────────────────────────────────────────────────────────
-
   Future<void> sendMessage(String endpointId, String message) async {
     if (!_connectedEndpoints.contains(endpointId)) return;
     try {
@@ -347,19 +481,18 @@ class NearbyService with WidgetsBindingObserver {
 
   void _onPayloadTransferUpdate(String endpointId, PayloadTransferUpdate update) {}
 
-  // ──────────────────────────────────────────────────────────────
-  //  Utilidades
-  // ──────────────────────────────────────────────────────────────
-
   void _emitDiscoveredUsers() {
-    _discoveredUsersController.add(discoveredUsers);
+    if (!_discoveredUsersController.isClosed) {
+      _discoveredUsersController.add(discoveredUsers);
+    }
   }
-
-  Future<void> requestPermissions() async {}
 
   void dispose() {
     stopRadar();
-    WidgetsBinding.instance.removeObserver(this);
+    if (_lifecycleObserverRegistered) {
+      WidgetsBinding.instance.removeObserver(this);
+      _lifecycleObserverRegistered = false;
+    }
     _discoveredUsersController.close();
     _incomingMessagesController.close();
   }

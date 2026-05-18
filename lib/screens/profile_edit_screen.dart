@@ -314,7 +314,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
             
             SwitchListTile(
               title: const Text('Modo Timidez', style: TextStyle(color: Colors.white)),
-              subtitle: const Text('No aparecerás en el radar de otros, pero tú si podrás verlos.', style: TextStyle(color: Colors.white54, fontSize: 12)),
+              subtitle: const Text('No aparecerás en el radar de otros, pero podrás seguir buscando.', style: TextStyle(color: Colors.white54, fontSize: 12)),
               value: _isStealthMode,
               activeColor: const Color(0xFF00D2FF),
               onChanged: (val) => setState(() => _isStealthMode = val),

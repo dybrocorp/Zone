@@ -16,17 +16,19 @@ class SupabaseService {
   //  TOKENS BLUETOOTH TEMPORALES
   // ──────────────────────────────────────────────────────────
 
-  /// Genera un token efímero (5 min TTL) para compartir en Nearby Connections.
+  /// Genera un token efímero (10 min TTL) para compartir en Nearby Connections.
   /// En vez de compartir el zone_id directamente, se comparte este token.
   Future<String?> generateBtToken(String userId) async {
+    if (userId.isEmpty) return null;
     try {
       final token = _uuid.v4();
-      final expiresAt = DateTime.now().add(const Duration(minutes: 5)).toUtc().toIso8601String();
+      final expiresAt = DateTime.now().add(const Duration(minutes: 10)).toUtc().toIso8601String();
 
       await _supabase.from('bt_tokens').insert({
         'user_id': userId,
         'token': token,
         'expires_at': expiresAt,
+        'used': false,
       });
 
       return token;
@@ -36,30 +38,50 @@ class SupabaseService {
     }
   }
 
-  /// Resuelve un token BT hacia el zone_id real del usuario.
-  /// Devuelve null si el token expiró, ya fue usado, o no existe.
+  /// Resuelve un token BT hacia el perfil del usuario (radar bilateral).
+  /// Usa RPC `resolve_bt_token` si está desplegado; si no, consulta directa.
   Future<Map<String, dynamic>?> resolveToken(String token) async {
+    if (token.isEmpty || token == 'ZONE-INIT') return null;
+
+    try {
+      final rpcResult = await _supabase.rpc('resolve_bt_token', params: {'p_token': token});
+      if (rpcResult != null) {
+        return Map<String, dynamic>.from(rpcResult as Map);
+      }
+    } catch (e) {
+      print('[SupabaseService] RPC resolve_bt_token no disponible, usando fallback: $e');
+    }
+
     try {
       final result = await _supabase
           .from('bt_tokens')
-          .select('user_id, users!inner(zone_id, display_name, stealth_mode, public_key, instagram_handle, ig_visible, facebook_handle, fb_visible, tiktok_handle, tiktok_visible)')
+          .select('user_id, users!inner(id, zone_id, display_name, avatar_url, stealth_mode, public_key, instagram_handle, ig_visible, facebook_handle, fb_visible, tiktok_handle, tiktok_visible)')
           .eq('token', token)
-          .eq('used', false)
           .gt('expires_at', DateTime.now().toUtc().toIso8601String())
           .maybeSingle();
 
       if (result == null) return null;
 
-      // Marcar token como usado
-      await _supabase
-          .from('bt_tokens')
-          .update({'used': true})
-          .eq('token', token);
-
-      return result['users'] as Map<String, dynamic>;
+      final user = result['users'] as Map<String, dynamic>;
+      if (user['stealth_mode'] == true) return null;
+      return user;
     } catch (e) {
       print('[SupabaseService] Error resolviendo token: $e');
       return null;
+    }
+  }
+
+  /// IDs de usuarios bloqueados por el usuario actual (para filtrar radar).
+  Future<Set<String>> getBlockedUserIds(String userId) async {
+    try {
+      final result = await _supabase
+          .from('blocked_users')
+          .select('blocked_id')
+          .eq('blocker_id', userId);
+      return result.map((r) => r['blocked_id'] as String).toSet();
+    } catch (e) {
+      print('[SupabaseService] Error obteniendo bloqueos: $e');
+      return {};
     }
   }
 
@@ -70,13 +92,13 @@ class SupabaseService {
   /// Registra que el usuario vio a `otherZoneId` cerca.
   Future<void> registerEncounter(String userId, String otherZoneId) async {
     try {
-      await _supabase.from('encounters').upsert({
+      await _supabase.from('encounters').insert({
         'user_id': userId,
         'other_zone_id': otherZoneId,
         'seen_at': DateTime.now().toUtc().toIso8601String(),
-      }, onConflict: 'user_id, other_zone_id, date_trunc(hour, seen_at)');
+      });
     } catch (e) {
-      // Ignorar duplicados (la constraint UNIQUE maneja esto)
+      // Ignorar duplicados horarios (índice único funcional)
     }
   }
 
@@ -138,12 +160,24 @@ class SupabaseService {
   /// Obtiene todos los matches aceptados del usuario actual.
   Future<List<Map<String, dynamic>>> getAcceptedMatches(String userId) async {
     try {
-      final result = await _supabase
+      final rows = await _supabase
           .from('matches')
-          .select('*, users!matches_requester_id_fkey(zone_id, display_name), users!matches_receiver_id_fkey(zone_id, display_name)')
+          .select()
           .eq('status', 'accepted')
           .or('requester_id.eq.$userId,receiver_id.eq.$userId');
-      return List<Map<String, dynamic>>.from(result);
+
+      final enriched = <Map<String, dynamic>>[];
+      for (final match in List<Map<String, dynamic>>.from(rows)) {
+        final otherId = match['requester_id'] == userId
+            ? match['receiver_id'] as String
+            : match['requester_id'] as String;
+        final otherProfile = await _getUserPublicProfile(otherId);
+        enriched.add({
+          ...match,
+          'other_user': otherProfile,
+        });
+      }
+      return enriched;
     } catch (e) {
       print('[SupabaseService] Error obteniendo matches: $e');
       return [];
@@ -153,15 +187,39 @@ class SupabaseService {
   /// Obtiene solicitudes de match pendientes dirigidas al usuario.
   Future<List<Map<String, dynamic>>> getPendingRequests(String userId) async {
     try {
-      final result = await _supabase
+      final rows = await _supabase
           .from('matches')
-          .select('*, users!matches_requester_id_fkey(zone_id, display_name)')
+          .select()
           .eq('receiver_id', userId)
           .eq('status', 'pending');
-      return List<Map<String, dynamic>>.from(result);
+
+      final enriched = <Map<String, dynamic>>[];
+      for (final match in List<Map<String, dynamic>>.from(rows)) {
+        final requesterId = match['requester_id'] as String;
+        final requesterProfile = await _getUserPublicProfile(requesterId);
+        enriched.add({
+          ...match,
+          'requester_user': requesterProfile,
+        });
+      }
+      return enriched;
     } catch (e) {
       print('[SupabaseService] Error obteniendo solicitudes match: $e');
       return [];
+    }
+  }
+
+  Future<Map<String, dynamic>?> _getUserPublicProfile(String userId) async {
+    try {
+      final row = await _supabase
+          .from('users')
+          .select('id, zone_id, display_name, avatar_url')
+          .eq('id', userId)
+          .eq('is_shadowbanned', false)
+          .maybeSingle();
+      return row;
+    } catch (e) {
+      return null;
     }
   }
 
@@ -319,10 +377,8 @@ class SupabaseService {
           table: 'matches',
           callback: (payload) {
             final match = payload.newRecord;
-            final u1 = match['user1_id'] as String;
-            final u2 = match['user2_id'] as String;
-
-            if (u2 == myUid) {
+            final receiverId = match['receiver_id'] as String?;
+            if (receiverId == myUid) {
               NotificationService().showMatchRequestNotification('Un usuario cercano');
             }
           },

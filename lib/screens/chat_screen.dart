@@ -38,9 +38,13 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isLoading = true;
   bool _isBlocked = false;
   String? _otherAvatarUrl;
-  SecretKey? _sharedSecret;
   RealtimeChannel? _subscription;
   final Map<String, String> _decryptedByMessageId = {};
+  
+  bool _isOtherOnline = false;
+  bool _isOtherTyping = false;
+  Timer? _typingTimer;
+  final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
@@ -108,59 +112,51 @@ class _ChatScreenState extends State<ChatScreen> {
 
       await _prefetchDecrypted(history);
 
-      _subscription = _supabaseService.subscribeToMessages(widget.matchId, (newMsg) async {
-        final msgId = newMsg['id']?.toString();
-        final senderId = newMsg['sender_id'];
-        final myId = _zoneIdService.uid;
+      _subscription = _supabaseService.subscribeToMessages(
+        widget.matchId, 
+        uid,
+        (newMsg) async {
+          final msgId = newMsg['id']?.toString();
+          final senderId = newMsg['sender_id'];
+          final myId = _zoneIdService.uid;
 
-        print('[ChatScreen] Nuevo mensaje recibido por Realtime: $msgId');
-        
-        // 1. Evitar duplicados exactos (por ID)
-        if (_messages.any((m) => m['id'] == msgId)) {
-          print('[ChatScreen] Mensaje ya existe en la lista (ID duplicado)');
-          return;
-        }
-
-        // 2. Si es MI mensaje, intentar reemplazar el mensaje "optimista" temporal
-        if (senderId == myId) {
-          final tempIndex = _messages.indexWhere((m) => 
-            m['id'].toString().startsWith('temp-') && 
-            m['sender_id'] == myId
-          );
+          print('[ChatScreen] Nuevo mensaje recibido: $msgId');
           
-          if (tempIndex != -1) {
-            print('[ChatScreen] Reemplazando mensaje optimista con el real de la red');
-            await _prefetchDecrypted([newMsg]);
-            if (mounted) {
-              setState(() {
-                _messages[tempIndex] = newMsg;
-              });
+          if (_messages.any((m) => m['id'] == msgId)) return;
+
+          if (senderId == myId) {
+            final tempIndex = _messages.indexWhere((m) => 
+              m['id'].toString().startsWith('temp-') && m['sender_id'] == myId
+            );
+            if (tempIndex != -1) {
+              await _prefetchDecrypted([newMsg]);
+              if (mounted) setState(() { _messages[tempIndex] = newMsg; });
+              return;
             }
-            return;
           }
-        }
 
-        // 3. Si no es duplicado ni optimista, añadirlo
-        try {
-          await _prefetchDecrypted([newMsg]);
-        } catch (e) {
-          print('[ChatScreen] Error descifrando mensaje nuevo: $e');
-        }
-        if (mounted) {
-          setState(() => _messages.add(newMsg));
-          // Scroll automático al final si el usuario no está navegando arriba (opcional, pero ayuda)
-        }
-      });
+          try { await _prefetchDecrypted([newMsg]); } catch (_) {}
+          if (mounted) {
+            setState(() => _messages.add(newMsg));
+            _scrollToBottom();
+          }
+        },
+        (isOnline) {
+          if (mounted) setState(() => _isOtherOnline = isOnline);
+        },
+        (isTyping) {
+          if (mounted) setState(() => _isOtherTyping = isTyping);
+        },
+      );
 
-      if (mounted) {
         setState(() {
           _isBlocked = isBlockedByMe;
-          // No limpiamos _decryptedByMessageId aquí para no perder los mensajes optimistas
-          // pero nos aseguramos de que history se una a lo que ya tenemos o se reemplace con cuidado
           _messages
             ..clear()
             ..addAll(history);
+          _isLoading = false;
         });
+        _scrollToBottom();
       }
     } catch (e) {
       if (mounted) {
@@ -173,6 +169,18 @@ class _ChatScreenState extends State<ChatScreen> {
         setState(() => _isLoading = false);
       }
     }
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
   Future<void> _prefetchDecrypted(List<Map<String, dynamic>> messages) async {
@@ -286,6 +294,8 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     _subscription?.unsubscribe();
     _messageController.dispose();
+    _typingTimer?.cancel();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -358,11 +368,18 @@ class _ChatScreenState extends State<ChatScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(widget.otherUserName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                  const Row(
+                  Row(
                     children: [
-                      Icon(Icons.lock, size: 12, color: Colors.greenAccent),
-                      SizedBox(width: 4),
-                      Text('E2EE', style: TextStyle(color: Colors.greenAccent, fontSize: 11)),
+                      Icon(Icons.circle, size: 8, color: _isOtherOnline ? Colors.greenAccent : Colors.white24),
+                      const SizedBox(width: 4),
+                      Text(
+                        _isOtherOnline ? 'En línea' : 'Desconectado', 
+                        style: TextStyle(color: _isOtherOnline ? Colors.greenAccent : Colors.white54, fontSize: 11)
+                      ),
+                      const SizedBox(width: 8),
+                      const Icon(Icons.lock, size: 11, color: Colors.white24),
+                      const SizedBox(width: 2),
+                      const Text('E2EE', style: TextStyle(color: Colors.white24, fontSize: 11)),
                     ],
                   ),
                 ],
@@ -447,54 +464,75 @@ class _ChatScreenState extends State<ChatScreen> {
           Expanded(
             child: _isLoading 
               ? const Center(child: CircularProgressIndicator(color: Color(0xFF00D2FF)))
-              : ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: _messages.length,
-                  itemBuilder: (context, index) {
-                    final msg = _messages[index];
-                    final isMe = msg['sender_id'] == _zoneIdService.uid;
-                    
-                    return Align(
-                      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          if (!isMe) ...[
-                            UserAvatar(
-                              avatarUrl: _otherAvatarUrl,
-                              displayName: widget.otherUserName,
-                              radius: 14,
-                            ),
-                            const SizedBox(width: 8),
-                          ],
-                          Flexible(
-                            child: Container(
-                              margin: const EdgeInsets.only(bottom: 8),
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                              decoration: BoxDecoration(
-                                color: isMe ? const Color(0xFF00D2FF) : const Color(0xFF1E293B),
-                                borderRadius: BorderRadius.circular(16).copyWith(
-                                  bottomRight: isMe ? Radius.zero : null,
-                                  bottomLeft: !isMe ? Radius.zero : null,
+              : Stack(
+                  children: [
+                    ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.all(16),
+                      itemCount: _messages.length,
+                      itemBuilder: (context, index) {
+                        final msg = _messages[index];
+                        final isMe = msg['sender_id'] == _zoneIdService.uid;
+                        
+                        return Align(
+                          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              if (!isMe) ...[
+                                UserAvatar(
+                                  avatarUrl: _otherAvatarUrl,
+                                  displayName: widget.otherUserName,
+                                  radius: 14,
                                 ),
-                                border: isMe ? null : Border.all(color: Colors.white10),
-                              ),
-                              child: Text(
-                                _messagePreview(msg),
-                                style: TextStyle(
-                                  color: isMe ? Colors.black : Colors.white,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w400,
+                                const SizedBox(width: 8),
+                              ],
+                              Flexible(
+                                child: Container(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                  decoration: BoxDecoration(
+                                    color: isMe ? const Color(0xFF00D2FF) : const Color(0xFF1E293B),
+                                    borderRadius: BorderRadius.circular(16).copyWith(
+                                      bottomRight: isMe ? Radius.zero : null,
+                                      bottomLeft: !isMe ? Radius.zero : null,
+                                    ),
+                                    border: isMe ? null : Border.all(color: Colors.white10),
+                                  ),
+                                  child: Text(
+                                    _messagePreview(msg),
+                                    style: TextStyle(
+                                      color: isMe ? Colors.black : Colors.white,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w400,
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
+                              if (isMe) const SizedBox(width: 24),
+                            ],
                           ),
-                          if (isMe) const SizedBox(width: 24), // Espacio para balancear el avatar del otro lado si fuera necesario, o simplemente padding
-                        ],
+                        );
+                      },
+                    ),
+                    if (_isOtherTyping)
+                      Positioned(
+                        bottom: 4,
+                        left: 16,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1E293B).withOpacity(0.8),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '${widget.otherUserName} está escribiendo...',
+                            style: const TextStyle(color: Color(0xFF00D2FF), fontSize: 11, fontStyle: FontStyle.italic),
+                          ),
+                        ),
                       ),
-                    );
-                  },
+                  ],
                 ),
           ),
           Container(
@@ -507,6 +545,21 @@ class _ChatScreenState extends State<ChatScreen> {
                     child: TextField(
                       controller: _messageController,
                       enabled: !_isBlocked,
+                      onChanged: (val) {
+                        if (_subscription != null) {
+                          final uid = _zoneIdService.uid;
+                          if (uid != null) {
+                            _supabaseService.sendTypingStatus(_subscription!, uid, val.isNotEmpty);
+                            
+                            _typingTimer?.cancel();
+                            if (val.isNotEmpty) {
+                              _typingTimer = Timer(const Duration(seconds: 3), () {
+                                _supabaseService.sendTypingStatus(_subscription!, uid, false);
+                              });
+                            }
+                          }
+                        }
+                      },
                       style: const TextStyle(color: Colors.white),
                       decoration: InputDecoration(
                         hintText: _isBlocked ? 'Usuario bloqueado' : 'Mensaje seguro...',

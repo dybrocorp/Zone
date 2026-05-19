@@ -285,13 +285,16 @@ class SupabaseService {
   /// Escucha mensajes en tiempo real para un match activo.
   RealtimeChannel subscribeToMessages(
     String matchId,
+    String myUid,
     void Function(Map<String, dynamic> message) onMessage,
+    void Function(bool isOnline)? onPresenceChange,
+    void Function(bool isTyping)? onTypingChange,
   ) {
     final normalizedMatchId = matchId.trim().toLowerCase();
     
     final channel = _supabase
-        .channel('msgs:$normalizedMatchId') 
-        // 1. Escuchar BROADCAST (Instantáneo via WebSockets)
+        .channel('msgs:$normalizedMatchId', opts: const RealtimeChannelConfig(self: true))
+        // 1. Escuchar BROADCAST (Mensajes instantáneos)
         .onBroadcast(
           event: 'new_msg',
           callback: (payload) {
@@ -299,7 +302,32 @@ class SupabaseService {
             onMessage(Map<String, dynamic>.from(payload));
           },
         )
-        // 2. Escuchar POSTGRES (Persistente via WAL - Fallback)
+        // 2. Escuchar EVENTOS DE ESCRITURA
+        .onBroadcast(
+          event: 'typing',
+          callback: (payload) {
+            final senderId = payload['sender_id'];
+            final isTyping = payload['is_typing'] as bool? ?? false;
+            if (senderId != myUid && onTypingChange != null) {
+              onTypingChange(isTyping);
+            }
+          },
+        )
+        // 3. Escuchar PRESENCIA (Online/Offline)
+        .onPresenceJoin((payload) {
+          if (onPresenceChange != null) {
+            // Si hay alguien más que yo en el canal
+            final others = payload.entries.where((e) => e.key != myUid);
+            if (others.isNotEmpty) onPresenceChange(true);
+          }
+        })
+        .onPresenceLeave((payload) {
+          if (onPresenceChange != null) {
+            final others = payload.entries.where((e) => e.key != myUid);
+            if (others.isEmpty) onPresenceChange(false);
+          }
+        })
+        // 4. Escuchar POSTGRES (Persistencia - Fallback)
         .onPostgresChanges(
           event: PostgresChangeEvent.insert,
           schema: 'public',
@@ -307,23 +335,36 @@ class SupabaseService {
           callback: (payload) {
             final newRec = payload.newRecord;
             final recMatchId = (newRec['match_id'] as String?)?.trim().toLowerCase();
-            
-            print('[SupabaseService] Realtime (Postgres): Mensaje detectado para match_id: $recMatchId');
-            
             if (recMatchId == normalizedMatchId) {
               onMessage(newRec);
             }
           },
         );
 
-    channel.subscribe((status, [error]) {
+    channel.subscribe((status, [error]) async {
       print('[SupabaseService] Estado suscripción mensajes ($normalizedMatchId): $status');
+      if (status == RealtimeSubscribeStatus.subscribed) {
+        // Al conectarnos, trackeamos nuestra presencia
+        await channel.track({'uid': myUid, 'online_at': DateTime.now().toIso8601String()});
+      }
       if (error != null) {
         print('[SupabaseService] ERROR suscripción mensajes: $error');
       }
     });
 
     return channel;
+  }
+
+  /// Envía un evento de "escribiendo..." o "dejó de escribir".
+  Future<void> sendTypingStatus(RealtimeChannel channel, String myUid, bool isTyping) async {
+    await channel.send(
+      type: rc.RealtimeListenTypes.broadcast,
+      event: 'typing',
+      payload: {
+        'sender_id': myUid,
+        'is_typing': isTyping,
+      },
+    );
   }
 
   // ──────────────────────────────────────────────────────────

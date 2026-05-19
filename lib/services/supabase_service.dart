@@ -321,8 +321,13 @@ class SupabaseService {
           if (onPresenceChange != null) {
             final activeUsers = channel.presenceState();
             final others = activeUsers.where((e) {
-              final uid = e.state['uid'] as String?;
-              return uid != null && uid != myUid;
+              for (final p in e.presences) {
+                try {
+                  final dynamic pl = (p as dynamic).payload;
+                  if (pl != null && pl['uid'] != null && pl['uid'] != myUid) return true;
+                } catch (_) {}
+              }
+              return false;
             }).toList();
             onPresenceChange(others.isNotEmpty);
           }

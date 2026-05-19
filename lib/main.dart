@@ -8,12 +8,14 @@ void main() async {
 
   try {
     // Inicializar Supabase
+    print('[Main] Inicializando Supabase...');
     await Supabase.initialize(
       url: 'https://leejpxwctnubihacudik.supabase.co',
       anonKey: 'sb_publishable_vl-aeN4Ior-GZ5YB45MFyA_KGxgfZjV',
     );
+    print('[Main] Supabase inicializado con éxito');
   } catch (e) {
-    print('[Main] Error inicializando Supabase: $e');
+    print('[Main] ERROR CRÍTICO inicializando Supabase: $e');
   }
 
   // Lanzar la app inmediatamente. Los permisos se manejarán dentro o en paralelo.

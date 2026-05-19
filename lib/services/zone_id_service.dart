@@ -61,6 +61,19 @@ class ZoneIdService {
   /// Obtiene o crea el ID ZONE- del usuario.
   /// Se llama solo cuando estamos seguros de que queremos iniciar/restaurar.
   Future<String> getOrCreate() async {
+    try {
+      return await _getOrCreateInternal();
+    } catch (e) {
+      if (e.toString().contains('BadPaddingException') || e.toString().contains('decryption')) {
+        print('[ZoneIdService] Corrupción de almacenamiento detectada. Limpiando todo y reintentando...');
+        await _storage.deleteAll();
+        return await _getOrCreateInternal();
+      }
+      rethrow;
+    }
+  }
+
+  Future<String> _getOrCreateInternal() async {
     // 1. Intentar restaurar desde almacenamiento seguro local
     final storedId = await _safeRead(_keyZoneId);
     if (storedId != null && storedId.isNotEmpty) {
@@ -87,6 +100,19 @@ class ZoneIdService {
   /// Permite a un usuario con un ID existente (ej: en otro dispositivo)
   /// "iniciar sesión" y recuperar su perfil.
   Future<bool> loginWithExistingID(String zoneId) async {
+    try {
+      return await _loginWithExistingIDInternal(zoneId);
+    } catch (e) {
+       if (e.toString().contains('BadPaddingException') || e.toString().contains('decryption')) {
+        print('[ZoneIdService] Corrupción de almacenamiento detectada en login. Limpiando...');
+        await _storage.deleteAll();
+        return await _loginWithExistingIDInternal(zoneId);
+      }
+      return false;
+    }
+  }
+
+  Future<bool> _loginWithExistingIDInternal(String zoneId) async {
     try {
       // 1. Iniciar sesión anónima PRIMERO para obtener el rol "authenticated"
       // Esto es OBLIGATORIO porque configuramos RLS: TO authenticated en Supabase
@@ -126,7 +152,7 @@ class ZoneIdService {
       return true;
     } catch (e) {
       print('[ZoneIdService] Error en loginWithExistingID: $e');
-      return false;
+      rethrow;
     }
   }
 

@@ -88,7 +88,7 @@ class ChatE2EEService {
       return utf8.decode(clearTextBytes);
     } catch (e) {
       print('[ChatE2EEService] Error al desencriptar: $e');
-      return '[Error de cifrado: Es posible que las llaves hayan cambiado]';
+      return 'Mensaje ininteligible (sesión anterior / claves cambiadas)';
     }
   }
 }

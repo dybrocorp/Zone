@@ -242,7 +242,9 @@ class SupabaseService {
     required String nonce,
     required String mac,
   }) async {
+    final messageId = _uuid.v4();
     final payload = {
+      'id': messageId,
       'match_id': matchId,
       'sender_id': senderId,
       'encrypted_content': encryptedContent,

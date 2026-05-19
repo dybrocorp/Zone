@@ -268,7 +268,7 @@ class SupabaseService {
     await _supabase
         .channel('msgs:$normalizedMatchId')
         .send(
-          type: rc.RealtimeListenTypes.broadcast,
+          type: RealtimeListenTypes.broadcast,
           event: 'new_msg',
           payload: payload,
         );
@@ -316,17 +316,11 @@ class SupabaseService {
           },
         )
         // 3. Escuchar PRESENCIA (Online/Offline)
-        .onPresenceJoin((payload) {
+        .onPresenceSync((_) {
           if (onPresenceChange != null) {
-            // Si hay alguien más que yo en el canal
-            final others = payload.entries.where((e) => e.key != myUid);
-            if (others.isNotEmpty) onPresenceChange(true);
-          }
-        })
-        .onPresenceLeave((payload) {
-          if (onPresenceChange != null) {
-            final others = payload.entries.where((e) => e.key != myUid);
-            if (others.isEmpty) onPresenceChange(false);
+            final activeUsers = channel.presenceState();
+            final others = activeUsers.keys.where((key) => key != myUid).toList();
+            onPresenceChange(others.isNotEmpty);
           }
         })
         // 4. Escuchar POSTGRES (Persistencia - Fallback)
@@ -360,7 +354,7 @@ class SupabaseService {
   /// Envía un evento de "escribiendo..." o "dejó de escribir".
   Future<void> sendTypingStatus(RealtimeChannel channel, String myUid, bool isTyping) async {
     await channel.send(
-      type: rc.RealtimeListenTypes.broadcast,
+      type: RealtimeListenTypes.broadcast,
       event: 'typing',
       payload: {
         'sender_id': myUid,

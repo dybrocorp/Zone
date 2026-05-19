@@ -210,8 +210,9 @@ class _ChatScreenState extends State<ChatScreen> {
     if (id != null && _decryptedByMessageId.containsKey(id)) {
       return _decryptedByMessageId[id]!;
     }
-    if (_sharedSecret == null) return 'Cifrado...';
-    return '...';
+    if (_sharedSecret == null) return 'Configurando cifrado seguro...';
+    if (id == null) return 'Sincronizando id de mensaje...';
+    return 'Descifrando mensaje...';
   }
 
   Future<void> _handleBlock() async {

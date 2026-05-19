@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -417,26 +418,7 @@ class ZoneIdService {
   }
 
   String _bytesToBase64(List<int> bytes) {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-    final b = bytes;
-    var result = '';
-    for (var i = 0; i < b.length - 2; i += 3) {
-      result += chars[(b[i] >> 2) & 0x3F];
-      result += chars[((b[i] & 0x3) << 4) | ((b[i + 1] & 0xF0) >> 4)];
-      result += chars[((b[i + 1] & 0xF) << 2) | ((b[i + 2] & 0xC0) >> 6)];
-      result += chars[b[i + 2] & 0x3F];
-    }
-    if (b.length % 3 == 1) {
-      result += chars[(b[b.length - 1] >> 2) & 0x3F];
-      result += chars[(b[b.length - 1] & 0x3) << 4];
-      result += '==';
-    } else if (b.length % 3 == 2) {
-      result += chars[(b[b.length - 2] >> 2) & 0x3F];
-      result += chars[((b[b.length - 2] & 0x3) << 4) | ((b[b.length - 1] & 0xF0) >> 4)];
-      result += chars[(b[b.length - 1] & 0xF) << 2];
-      result += '=';
-    }
-    return result;
+    return base64Encode(bytes);
   }
 
   Future<void> deleteAccount() async {

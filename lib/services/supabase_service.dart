@@ -264,8 +264,7 @@ class SupabaseService {
     
     await _supabase
         .channel('msgs:$normalizedMatchId')
-        .send(
-          type: RealtimeListenTypes.broadcast,
+        .sendBroadcast(
           event: 'new_msg',
           payload: payload,
         );

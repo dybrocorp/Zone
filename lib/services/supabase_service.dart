@@ -267,8 +267,7 @@ class SupabaseService {
     
     await _supabase
         .channel('msgs:$normalizedMatchId')
-        .send(
-          type: rc.RealtimeListenTypes.broadcast,
+        .sendBroadcastMessage(
           event: 'new_msg',
           payload: payload,
         );
@@ -355,8 +354,7 @@ class SupabaseService {
 
   /// Envía un evento de "escribiendo..." o "dejó de escribir".
   Future<void> sendTypingStatus(RealtimeChannel channel, String myUid, bool isTyping) async {
-    await channel.send(
-      type: rc.RealtimeListenTypes.broadcast,
+    await channel.sendBroadcastMessage(
       event: 'typing',
       payload: {
         'sender_id': myUid,

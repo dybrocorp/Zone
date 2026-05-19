@@ -38,15 +38,31 @@ class ZoneIdService {
 
   /// Verifica si ya existe un ID guardado localmente
   Future<bool> hasLocalID() async {
-    final storedId = await _storage.read(key: _keyZoneId);
+    final storedId = await _safeRead(_keyZoneId);
     return storedId != null && storedId.isNotEmpty;
+  }
+
+  /// Helper para leer de forma segura (evita BadPaddingException en algunos dispositivos)
+  Future<String?> _safeRead(String key) async {
+    try {
+      return await _storage.read(key: key);
+    } catch (e) {
+      print('[ZoneIdService] Error leyendo $key: $e');
+      // Si hay un error de cifrado (KeyStore corrupto), borramos la clave para permitir recuperación
+      try {
+        await _storage.delete(key: key);
+      } catch (e2) {
+        print('[ZoneIdService] Falló el borrado de clave corrupta: $e2');
+      }
+      return null;
+    }
   }
 
   /// Obtiene o crea el ID ZONE- del usuario.
   /// Se llama solo cuando estamos seguros de que queremos iniciar/restaurar.
   Future<String> getOrCreate() async {
     // 1. Intentar restaurar desde almacenamiento seguro local
-    final storedId = await _storage.read(key: _keyZoneId);
+    final storedId = await _safeRead(_keyZoneId);
     if (storedId != null && storedId.isNotEmpty) {
       _zoneId = storedId;
       await _restoreSession();
@@ -162,7 +178,7 @@ class ZoneIdService {
 
   /// Asegura que el UID y la sesión de Auth estén listos.
   Future<void> ensureAuth() async {
-    final oldUid = await _storage.read(key: _keySupabaseSession);
+    final oldUid = await _safeRead(_keySupabaseSession);
 
     // 1. Verificar sesión de Supabase Auth
     final session = _supabase.auth.currentSession;
@@ -180,13 +196,14 @@ class ZoneIdService {
     }
 
     _uid = newUid;
+    
     await _storage.write(key: _keySupabaseSession, value: _uid);
 
     final currentZoneId = _zoneId ?? await _storage.read(key: _keyZoneId);
     _zoneId = currentZoneId;
 
     // Restaurar par de claves E2EE
-    String? privateKeyBase64 = await _storage.read(key: _keyPrivateKey);
+    String? privateKeyBase64 = await _safeRead(_keyPrivateKey);
     
     // SI NO TENEMOS CLAVE LOCAL (usuario existente de antes de la persistencia o re-instalación)
     if (privateKeyBase64 == null) {
@@ -235,7 +252,7 @@ class ZoneIdService {
     try {
       final res = await _supabase.from('users').select().eq('id', _uid!).maybeSingle();
       
-      String? publicKeyBase64 = await _storage.read(key: _keyPublicKey);
+      String? publicKeyBase64 = await _safeRead(_keyPublicKey);
       
       if (res == null) {
         print('[ZoneIdService] Alerta: Fila de usuario no encontrada. Recreando...');
@@ -289,7 +306,7 @@ class ZoneIdService {
     await ensureAuth();
     
     // Obtener la clave pública guardada localmente
-    String? publicKey = await _storage.read(key: 'public_key');
+    String? publicKey = await _safeRead(_keyPublicKey);
     
     // Si no hay clave (caso extremo de pérdida local), generamos una nueva para no violar el NOT NULL
     if (publicKey == null) {
@@ -347,6 +364,9 @@ class ZoneIdService {
   Future<Map<String, dynamic>?> getMyProfile() async {
     try {
       await ensureAuth();
+      // Asegurarse de que si el UID es nuevo o la fila falta, se intente recuperar/recrear
+      await checkAndFixRegistration();
+      
       if (_uid == null) return null;
       
       final res = await _supabase.from('users').select().eq('id', _uid!).single();

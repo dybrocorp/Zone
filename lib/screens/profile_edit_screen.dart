@@ -55,7 +55,11 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
       print('[ProfileEditScreen] Error cargando perfil: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al cargar perfil: $e')),
+          SnackBar(
+            content: Text('Tus datos de perfil no se pudieron cargar. Es posible que debas configurarlos de nuevo debido a un error de seguridad en el almacenamiento de tu dispositivo.'),
+            duration: Duration(seconds: 5),
+            backgroundColor: Colors.orangeAccent,
+          ),
         );
       }
     } finally {

@@ -268,7 +268,7 @@ class SupabaseService {
     await _supabase
         .channel('msgs:$normalizedMatchId')
         .send(
-          type: RealtimeListenTypes.broadcast,
+          type: rc.RealtimeListenTypes.broadcast,
           event: 'new_msg',
           payload: payload,
         );
@@ -295,7 +295,9 @@ class SupabaseService {
     final normalizedMatchId = matchId.trim().toLowerCase();
     
     final channel = _supabase
-        .channel('msgs:$normalizedMatchId', opts: const RealtimeChannelConfig(self: true))
+        .channel('msgs:$normalizedMatchId', opts: const RealtimeChannelConfig(self: true));
+        
+    channel
         // 1. Escuchar BROADCAST (Mensajes instantáneos)
         .onBroadcast(
           event: 'new_msg',
@@ -354,7 +356,7 @@ class SupabaseService {
   /// Envía un evento de "escribiendo..." o "dejó de escribir".
   Future<void> sendTypingStatus(RealtimeChannel channel, String myUid, bool isTyping) async {
     await channel.send(
-      type: RealtimeListenTypes.broadcast,
+      type: rc.RealtimeListenTypes.broadcast,
       event: 'typing',
       payload: {
         'sender_id': myUid,

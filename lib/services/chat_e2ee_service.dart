@@ -10,12 +10,19 @@ class ChatE2EEService {
   final _algorithm = Chacha20.poly1305Aead();
   
   SimpleKeyPair? _myKeyPair;
+  bool get isInitialized => _myKeyPair != null;
 
   /// Genera las claves públicas y privadas locales para este cliente.
   /// La política dicta que el secreto privado nunca abandona el dispositivo.
   Future<SimpleKeyPair> generateKeyPair() async {
     _myKeyPair = await _x25519.newKeyPair();
     return _myKeyPair!;
+  }
+
+  /// Inicializa el par de claves desde un secreto privado guardado (base64).
+  Future<void> initFromPrivateBase64(String privateKeyBase64) async {
+    final privateKeyBytes = base64Decode(privateKeyBase64);
+    _myKeyPair = await _x25519.newKeyPairFromSeed(privateKeyBytes);
   }
 
   /// Deriva el secreto compartido usando tu clave privada y la clave pública extraída de Supabase del otro usuario.
@@ -28,11 +35,16 @@ class ChatE2EEService {
   }
 
   /// Helper para convertir un string base64 de Supabase en un objeto SimplePublicKey.
-  SimplePublicKey importPublicKeyFromBase64(String base64) {
-    return SimplePublicKey(
-      base64Decode(base64),
-      type: KeyPairType.x25519,
-    );
+  SimplePublicKey? importPublicKeyFromBase64(String base64Str) {
+    try {
+      return SimplePublicKey(
+        base64Decode(base64Str.trim()),
+        type: KeyPairType.x25519,
+      );
+    } catch (e) {
+      print('[ChatE2EEService] Error importando clave pública: $e');
+      return null;
+    }
   }
 
   /// Encripta un mensaje usando el secreto compartido generado, garantizando Forward Secrecy.
@@ -57,17 +69,26 @@ class ChatE2EEService {
     String macBase64, 
     SecretKey sharedSecret
   ) async {
-    final secretBox = SecretBox(
-      base64Decode(cipherTextBase64),
-      nonce: base64Decode(nonceBase64),
-      mac: Mac(base64Decode(macBase64)),
-    );
+    try {
+      if (cipherTextBase64.isEmpty || nonceBase64.isEmpty || macBase64.isEmpty) {
+        return '[Mensaje vacío o corrupto]';
+      }
 
-    final clearTextBytes = await _algorithm.decrypt(
-      secretBox,
-      secretKey: sharedSecret,
-    );
+      final secretBox = SecretBox(
+        base64Decode(cipherTextBase64.trim()),
+        nonce: base64Decode(nonceBase64.trim()),
+        mac: Mac(base64Decode(macBase64.trim())),
+      );
 
-    return utf8.decode(clearTextBytes);
+      final clearTextBytes = await _algorithm.decrypt(
+        secretBox,
+        secretKey: sharedSecret,
+      );
+
+      return utf8.decode(clearTextBytes);
+    } catch (e) {
+      print('[ChatE2EEService] Error al desencriptar: $e');
+      return '[Error de cifrado: Es posible que las llaves hayan cambiado]';
+    }
   }
 }

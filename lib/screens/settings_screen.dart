@@ -4,8 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'blocked_users_screen.dart';
 import '../config/radar_config.dart';
 import '../services/nearby_service.dart';
-import '../services/zone_id_service.dart';
-import 'auth_screen.dart';
+import '../services/premium_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -15,10 +14,10 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  final _zoneIdService = ZoneIdService();
   final _nearbyService = NearbyService();
   String _appVersion = '1.0.0';
   double _discoveryRadius = RadarConfig.discoveryRadiusMeters;
+  bool _isPremium = false;
 
   @override
   void initState() {
@@ -30,11 +29,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadRadarRadius() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getDouble(RadarConfig.prefsDiscoveryRadiusKey);
+    final isPremium = await PremiumService.instance.loadPremiumStatus();
     if (mounted) {
       setState(() {
-        _discoveryRadius = RadarConfig.effectiveRadius(saved);
+        _isPremium = isPremium;
+        _discoveryRadius = RadarConfig.effectiveRadius(saved, isPremium: isPremium);
       });
     }
+  }
+
+  void _showPremiumRequiredDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        title: const Row(
+          children: [
+            Icon(Icons.workspace_premium, color: Color(0xFFFFD700)),
+            SizedBox(width: 8),
+            Text('Zone Premium', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: const Text(
+          'Ampliar el radar a más de 20 metros está disponible solo con Zone Premium. '
+          'Activa Premium desde la tienda de la app para detectar usuarios hasta 30 m.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('ENTENDIDO', style: TextStyle(color: Color(0xFF00D2FF))),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _loadAppInfo() async {
@@ -98,12 +126,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('Soporte Técnico:', style: TextStyle(color: Color(0xFF00D2FF), fontWeight: FontWeight.bold)),
-            Text('support@dybrocorp.com', style: TextStyle(color: Colors.white70)),
+            Text('contacto@dybrocorp.com', style: TextStyle(color: Colors.white70)),
             SizedBox(height: 16),
-            Text('Reportes de Seguridad:', style: TextStyle(color: Color(0xFF00D2FF), fontWeight: FontWeight.bold)),
-            Text('security@zoneapp.com', style: TextStyle(color: Colors.white70)),
+            Text('Asuntos Legales / Privacidad:', style: TextStyle(color: Color(0xFF00D2FF), fontWeight: FontWeight.bold)),
+            Text('legal@dybrocorp.com', style: TextStyle(color: Colors.white70)),
             SizedBox(height: 16),
-            Text('GitHub / Dybro Corp:', style: TextStyle(color: Color(0xFF00D2FF), fontWeight: FontWeight.bold)),
+            Text('GitHub / DYBROCORP:', style: TextStyle(color: Color(0xFF00D2FF), fontWeight: FontWeight.bold)),
             Text('github.com/dybrocorp', style: TextStyle(color: Colors.white70)),
           ],
         ),
@@ -112,35 +140,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
-  }
-
-  void _signOut() async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E293B),
-        title: const Text('Cerrar Sesión', style: TextStyle(color: Colors.white)),
-        content: const Text('Se borrarán tus datos locales. Necesitarás tu ZONE-ID para volver a entrar en este u otro dispositivo.', style: TextStyle(color: Colors.white70)),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('CANCELAR', style: TextStyle(color: Colors.white54))),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('CERRAR SESIÓN', style: TextStyle(color: Colors.redAccent))),
-        ],
-      ),
-    );
-
-    if (confirm == true) {
-      // Nota: En una app real de E2EE, deberías exportar tu clave privada antes de borrar.
-      // Aquí simplemente limpiamos la sesión local para el demo.
-      // Implementamos una función de logout en ZoneIdService si hace falta.
-      // Por ahora limpiamos storage.
-      await _zoneIdService.clearAuth();
-      if (mounted) {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const AuthScreen()),
-          (route) => false,
-        );
-      }
-    }
   }
 
   @override
@@ -159,15 +158,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _buildTile(
             icon: Icons.info_outline,
             title: 'Sobre Zone',
-            subtitle: 'Versión $_appVersion • Dybro Corp',
+            subtitle: 'Versión $_appVersion • DYBROCORP',
             onTap: () {
               _showDocument(
                 'Sobre Zone', 
                 'Zone nació de la necesidad de crear conexiones humanas reales y seguras en un mundo digital sobreexplotado. \n\n'
                 'Inspirado en la simplicidad de compartir momentos y la potencia de la criptografía, Zone permite descubrir a quienes te rodean mediante Bluetooth Low Energy, garantizando que tu identidad sea siempre un código anónimo controlado por ti.\n\n'
-                'Creado por Dybro Corp para aquellos que valoran su privacidad tanto como su vida social.\n\n'
+                'Creado por DYBROCORP para aquellos que valoran su privacidad tanto como su vida social.\n\n'
                 'Versión: $_appVersion\n'
-                'Desarrollado por: Team Dybro\n'
+                'Desarrollado por: DYBROCORP\n'
                 'Año: 2026'
               );
             },
@@ -203,19 +202,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ],
                 ),
                 const SizedBox(height: 4),
-                const Text(
-                  'Usuarios Zone dentro de este radio (Bluetooth + Nearby). Recomendado: 10–15 m interior, hasta 30 m exterior.',
-                  style: TextStyle(color: Colors.white38, fontSize: 11),
+                Text(
+                  _isPremium
+                      ? 'Usuarios Zone dentro de este radio (hasta 30 m con Premium).'
+                      : 'Hasta 20 m en versión gratuita. Más de 20 m requiere Zone Premium.',
+                  style: const TextStyle(color: Colors.white38, fontSize: 11),
                 ),
+                if (!_isPremium)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Row(
+                      children: [
+                        Icon(Icons.lock, size: 14, color: Colors.amber.shade200),
+                        const SizedBox(width: 6),
+                        Text(
+                          '25–30 m bloqueados',
+                          style: TextStyle(color: Colors.amber.shade200, fontSize: 11, fontWeight: FontWeight.w500),
+                        ),
+                      ],
+                    ),
+                  ),
                 Slider(
                   value: _discoveryRadius,
                   min: RadarConfig.minDiscoveryRadiusMeters,
-                  max: RadarConfig.maxDiscoveryRadiusMeters,
+                  max: RadarConfig.sliderMax(isPremium: _isPremium),
                   divisions: 5,
                   activeColor: const Color(0xFF00D2FF),
                   label: '${_discoveryRadius.round()} m',
-                  onChanged: (v) => setState(() => _discoveryRadius = v),
+                  onChanged: (v) {
+                    if (!_isPremium && v > RadarConfig.maxFreeDiscoveryRadiusMeters) {
+                      _showPremiumRequiredDialog();
+                      return;
+                    }
+                    setState(() => _discoveryRadius = v);
+                  },
                   onChangeEnd: (v) async {
+                    if (!_isPremium && v > RadarConfig.maxFreeDiscoveryRadiusMeters) {
+                      setState(() => _discoveryRadius = RadarConfig.maxFreeDiscoveryRadiusMeters);
+                      _showPremiumRequiredDialog();
+                      await _nearbyService.setDiscoveryRadiusMeters(RadarConfig.maxFreeDiscoveryRadiusMeters);
+                      return;
+                    }
                     await _nearbyService.setDiscoveryRadiusMeters(v);
                   },
                 ),
@@ -242,15 +269,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: () => _showDocument('Política de Privacidad', _privacyContent),
           ),
 
-          const SizedBox(height: 24),
-          _buildSectionHeader('CUENTA'),
-          _buildTile(
-            icon: Icons.logout,
-            title: 'Cerrar Sesión',
-            textColor: Colors.redAccent,
-            onTap: _signOut,
-          ),
-          
           const SizedBox(height: 60),
           Center(
             child: Opacity(
@@ -305,50 +323,61 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // Contenido estático (podría leerse de archivos, pero para velocidad del demo lo incluyo aquí simplificado)
+  // Contenido oficial de DYBROCORP 2026
   final String _termsContent = '''
-# Términos y Condiciones
-Última actualización: Abril 2026
+# Términos y Condiciones - DYBROCORP / ZONE
+Versión 1.0 (Mayo 2026)
 
-1. Aceptación de los Términos
-Al acceder o utilizar Zone, desarrollado por Dybro Corp, usted acepta estar sujeto a estos Términos y Condiciones.
+1. Introducción
+Estos términos regulan el uso de ZONE y productos de DYBROCORP. El uso de la app implica su aceptación expresa.
 
-2. Propósito del Servicio
-Zone es una red social basada en proximidad (Bluetooth) y privacidad con cifrado de extremo a extremo (E2EE).
+2. Identificación
+DYBROCORP, con sede principal en la República de Colombia. Contacto: contacto@dybrocorp.com.
 
-3. Responsabilidad del Usuario
-- Usted es responsable de la información que decide compartir.
-- Se prohíbe el uso de Zone para acoso o actividades ilícitas.
+3. Capacidad Legal
+El usuario declara tener capacidad legal y suministrar información veraz.
 
-4. Seguridad
-Zone usa claves X25519 y ChaCha20-Poly1305 para proteger todas las comunicaciones. No tenemos acceso a sus mensajes privados.
+4. Responsabilidad
+El usuario es responsable de sus credenciales y de toda actividad realizada desde su cuenta.
 
-5. Propiedad Intelectual
-Todos los derechos son de Dybro Corp.
+5. Uso Permitido
+Se prohíbe el uso para actividades ilícitas, acoso, malware, suplantación o scraping.
 
-6. Limitación de Responsabilidad
-Dybro Corp no se hace responsable por encuentros en la vida real derivados del uso de la app. Al ser una red descentralizada y anónima, Zone no garantiza la identidad verídica de los perfiles encontrados.
+6. Propiedad Intelectual
+Todo el software, logos y algoritmos son propiedad de DYBROCORP. Queda prohibida la ingeniería inversa o reproducción no autorizada.
+
+7. Limitación de Responsabilidad
+DYBROCORP no se hace responsable por encuentros en la vida real. Los usuarios interactúan bajo su propio riesgo.
+
+8. Modificaciones
+Podremos modificar estos términos en cualquier momento, entrando en vigencia desde su publicación en la app.
 ''';
 
   final String _privacyContent = '''
-# Políticas de Privacidad
-Última actualización: Abril 2026
+# Política de Privacidad - DYBROCORP / ZONE
+Versión 1.0 (Mayo 2026)
 
-1. Información que Recopilamos
-- No usamos correos ni números de teléfono.
-- Datos de Proximidad: Usamos Bluetooth (BLE) para detectar usuarios cercanos de forma anónima.
-- Mensajes: Cifrados de extremo a extremo (E2EE). Las claves nunca salen de su dispositivo.
+1. Responsable
+DYBROCORP es el responsable del tratamiento de sus datos personales.
 
-2. Uso de la Información
-El uso del Bluetooth es exclusivo para la funcionalidad del radar.
+2. Información Recopilada
+- Datos técnicos (IP, dispositivo).
+- ZONE-ID y datos de perfil.
+- Mensajes cifrados de extremo a extremo (E2EE) que nunca abandonan su dispositivo en texto plano.
 
-3. Divulgación a Terceros
-No vendemos ni compartimos sus datos con nadie.
+3. Finalidades
+Operar el servicio, mejorar la experiencia y garantizar la seguridad mediante tecnología de proximidad Bluetooth (BLE).
 
-4. Retención de Datos
-Usted puede eliminar su perfil desde la app en cualquier momento, borrando sus credenciales del servidor.
+4. Derechos del Titular
+Usted tiene derecho a conocer, actualizar y rectificar sus datos personales enviando un correo a legal@dybrocorp.com.
 
-5. Sus Derechos
-Usted tiene control total sobre su visibilidad y enlaces de redes sociales.
+5. Seguridad Digital
+Implementamos medidas alineadas con ISO/IEC 27001 y OWASP para proteger su infraestructura y privacidad.
+
+6. No Venta de Datos
+DYBROCORP NO vende su información personal a terceros.
+
+7. Conservación
+Los datos se conservan mientras exista la relación o por obligación legal.
 ''';
 }

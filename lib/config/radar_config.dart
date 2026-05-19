@@ -8,10 +8,13 @@ class RadarConfig {
   RadarConfig._();
 
   /// Distancia máxima (metros) para mostrar un usuario en el radar.
-  static const double discoveryRadiusMeters = 15.0;
+  static const double discoveryRadiusMeters = 20.0;
 
-  /// Límite superior permitido en ajustes (metros).
-  static const double maxDiscoveryRadiusMeters = 30.0;
+  /// Límite superior permitido en ajustes (metros). Solo Zone Premium.
+  static const double maxDiscoveryRadiusMeters = 50.0;
+
+  /// Máximo sin premium (más de 30 m requiere compra).
+  static const double maxFreeDiscoveryRadiusMeters = 30.0;
 
   /// Distancia mínima (metros).
   static const double minDiscoveryRadiusMeters = 5.0;
@@ -29,10 +32,16 @@ class RadarConfig {
   static const String prefsDiscoveryRadiusKey = 'radar_discovery_radius_meters';
 
   /// Radio efectivo: preferencia guardada o [discoveryRadiusMeters].
-  static double effectiveRadius(double? savedMeters) {
-    if (savedMeters == null) return discoveryRadiusMeters;
-    return savedMeters.clamp(minDiscoveryRadiusMeters, maxDiscoveryRadiusMeters);
+  static double effectiveRadius(double? savedMeters, {bool isPremium = false}) {
+    final max = isPremium ? maxDiscoveryRadiusMeters : maxFreeDiscoveryRadiusMeters;
+    if (savedMeters == null) {
+      return discoveryRadiusMeters.clamp(minDiscoveryRadiusMeters, max);
+    }
+    return savedMeters.clamp(minDiscoveryRadiusMeters, max);
   }
+
+  static double sliderMax({required bool isPremium}) =>
+      isPremium ? maxDiscoveryRadiusMeters : maxFreeDiscoveryRadiusMeters;
 
   /// Estima distancia en metros a partir del RSSI (dBm).
   static double distanceFromRssi(int rssi) {

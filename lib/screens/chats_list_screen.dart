@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'chat_screen.dart';
 import '../services/supabase_service.dart';
 import '../services/zone_id_service.dart';
+import '../widgets/user_avatar.dart';
 
 class ChatsListScreen extends StatefulWidget {
   const ChatsListScreen({Key? key}) : super(key: key);
@@ -113,12 +114,13 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
   Widget _buildPendingItem(Map<String, dynamic> req) {
     final sender = req['requester_user'] as Map<String, dynamic>?;
     final name = sender?['display_name'] ?? sender?['zone_id'] ?? 'Usuario Zone';
+    final avatarUrl = sender?['avatar_url'] as String?;
 
     return Card(
       color: const Color(0xFF1E293B),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ListTile(
-        leading: const CircleAvatar(backgroundColor: Color(0xFF00D2FF), child: Icon(Icons.person_add, color: Colors.black)),
+        leading: UserAvatar(avatarUrl: avatarUrl, displayName: name, radius: 24),
         title: Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         subtitle: const Text('Quiere chatear contigo', style: TextStyle(color: Colors.white54, fontSize: 12)),
         trailing: Row(
@@ -147,11 +149,12 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
   Widget _buildMatchItem(Map<String, dynamic> match) {
     final otherUser = match['other_user'] as Map<String, dynamic>?;
     final name = otherUser?['display_name'] ?? otherUser?['zone_id'] ?? 'Usuario Zone';
+    final avatarUrl = otherUser?['avatar_url'] as String?;
 
     final isMuted = _mutedMatchIds.contains(match['id']);
 
     return ListTile(
-      leading: const CircleAvatar(backgroundColor: Color(0xFF00D2FF), child: Icon(Icons.person, color: Colors.black)),
+      leading: UserAvatar(avatarUrl: avatarUrl, displayName: name, radius: 24),
       title: Row(
         children: [
           Expanded(child: Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
@@ -167,6 +170,8 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
               matchId: match['id'],
               otherUserName: name,
               otherZoneId: otherUser?['zone_id'] ?? '',
+              otherUserId: otherUser?['id'] as String?,
+              otherAvatarUrl: avatarUrl,
             ),
           ),
         );

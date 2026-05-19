@@ -4,6 +4,20 @@
 
 Zone es una plataforma de red social revolucionaria basada en la proximidad física (vía Bluetooth Low Energy) y el anonimato total. Diseñada con una estética moderna "ShareIt style", Zone te permite detectar personas en tu "radar" local, establecer conexiones seguras y chatear mediante un protocolo de cifrado de extremo a extremo (E2EE) de grado industrial.
 
+---
+
+## 🏢 DYBROCORP
+
+Zone es un producto propiedad de **DYBROCORP**, una compañía tecnológica líder enfocada en el desarrollo de ecosistemas digitales, ciberseguridad y transformación digital.
+
+### Misión
+Diseñar y operar productos tecnológicos propios como **ZONE** y **NovaApp**, ofreciendo experiencias modernas, escalables y confiables para usuarios, empresas y comunidades, bajo principios de protección de datos y cumplimiento normativo.
+
+### Visión
+Consolidar a DYBROCORP como una compañía tecnológica líder en Latinoamérica y con proyección internacional, reconocida por el desarrollo de plataformas digitales innovadoras, seguras y de alto impacto.
+
+---
+
 ## 🚀 Características Principales
 
 - **Radar de Proximidad (BLE)**: Descubrimiento pasivo de usuarios cercanos sin necesidad de GPS, protegiendo tu ubicación exacta.
@@ -11,16 +25,24 @@ Zone es una plataforma de red social revolucionaria basada en la proximidad fís
 - **Mensajería E2EE**: Comunicación protegida por **X25519** (intercambio de claves) y **ChaCha20-Poly1305** (cifrado de mensajes).
 - **Social Connect**: Comparte tus perfiles de Instagram, Facebook o TikTok de forma selectiva. Tú decides quién ve qué.
 - **Modo Timidez (Stealth)**: Mira quién está cerca sin ser detectado en el radar de los demás.
-- **Hardened Backend**: Servidores Supabase con auditoría de seguridad, políticas RLS estrictas y funciones protegidas.
+- **Seguridad Corporativa**: Respaldado por los estándares de seguridad de Dybrocorp, incluyendo cifrado avanzado y monitoreo de integridad.
 
 ## 🛠️ Stack Tecnológico
 
 - **Framework**: Flutter (Dart)
 - **Backend**: Supabase (PostgreSQL, Realtime, Storage)
 - **Seguridad**: Ed25519 para firmas, X25519 para E2EE, PBKDF2 para derivación de claves locales.
-- **Diseño**: Vanilla CSS/Flutter con estética premium de modo oscuro y micro-animaciones.
+- **Diseño**: Estética premium de modo oscuro y micro-animaciones.
 
-## ⚙️ Configuración
+## ⚖️ Legal y Privacidad
+
+El uso de esta plataforma está sujeto a los siguientes documentos legales de DYBROCORP:
+
+- [Términos y Condiciones](TERMS.md)
+- [Política de Privacidad](PRIVACY_POLICY.md)
+- [Seguridad Digital](PRIVACY_POLICY.md#5-política-de-seguridad-digital)
+
+## ⚙️ Instalación y Uso
 
 ```bash
 git clone https://github.com/dybrocorp/Zone.git
@@ -29,8 +51,8 @@ flutter pub get
 flutter run
 ```
 
-## 📜 Licencia y Desarrollador
+---
 
-Desarrollado con pasión por **Team Dybro** de **Dybro Corp**.
+Desarrollado con excelencia por **DYBROCORP**.
 Todos los derechos reservados © 2026.
-Para soporte, contactar a `support@dybrocorp.com`.
+Contacto Legal: `legal@dybrocorp.com` | Soporte: `contacto@dybrocorp.com`

@@ -5,6 +5,7 @@ import 'package:nearby_connections/nearby_connections.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/radar_config.dart';
 import 'ble_proximity_service.dart';
+import 'premium_service.dart';
 import 'supabase_service.dart';
 import 'zone_id_service.dart';
 
@@ -64,8 +65,9 @@ class NearbyService with WidgetsBindingObserver {
 
   bool _isAdvertising = false;
   bool _isDiscovering = false;
+  bool _isRadarIntendedActive = false; // Nueva bandera para persistir el estado deseado
   bool _lifecycleObserverRegistered = false;
-  bool get isRadarActive => _isAdvertising || _isDiscovering;
+  bool get isRadarActive => _isRadarIntendedActive;
 
   Timer? _scanCycleTimer;
   Timer? _tokenRefreshTimer;
@@ -104,18 +106,25 @@ class NearbyService with WidgetsBindingObserver {
     _stealthMode = profile?['stealth_mode'] == true;
     _myZoneId = profile?['zone_id'] as String? ?? _myZoneId;
     await _loadDiscoveryRadius();
+    
+    // Cargar estado del radar
+    final prefs = await SharedPreferences.getInstance();
+    _isRadarIntendedActive = prefs.getBool('radar_active') ?? false;
   }
 
   Future<void> _loadDiscoveryRadius() async {
     final prefs = await SharedPreferences.getInstance();
+    final isPremium = await PremiumService.instance.ensureLoaded();
     _discoveryRadiusMeters = RadarConfig.effectiveRadius(
       prefs.getDouble(RadarConfig.prefsDiscoveryRadiusKey),
+      isPremium: isPremium,
     );
   }
 
   /// Actualiza el radio de detección (metros) y persiste la preferencia.
   Future<void> setDiscoveryRadiusMeters(double meters) async {
-    _discoveryRadiusMeters = RadarConfig.effectiveRadius(meters);
+    final isPremium = await PremiumService.instance.ensureLoaded();
+    _discoveryRadiusMeters = RadarConfig.effectiveRadius(meters, isPremium: isPremium);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(RadarConfig.prefsDiscoveryRadiusKey, _discoveryRadiusMeters);
   }
@@ -166,16 +175,11 @@ class NearbyService with WidgetsBindingObserver {
     _isDiscovering = false;
   }
 
-  void _resumeScanning() {
-    if (!isRadarActive) return;
-    startRadar();
-  }
-
-  // ──────────────────────────────────────────────────────────────
-  //  Radar
-  // ──────────────────────────────────────────────────────────────
-
   Future<bool> startRadar() async {
+    _isRadarIntendedActive = true;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('radar_active', true);
+
     _ensureLifecycleObserver();
     await _loadUserContext();
     await _refreshToken();
@@ -197,12 +201,12 @@ class NearbyService with WidgetsBindingObserver {
     await _startDiscovery();
     await _bleProximity.startScanning();
 
-    _scanCycleTimer = Timer.periodic(const Duration(seconds: 45), (_) async {
+    _scanCycleTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
       if (_isDiscovering) {
-        print('[NearbyService] Reinicio periódico de discovery');
+        print('[NearbyService] Reinicio periódico de discovery (optimizando visibilidad)');
         await _nearby.stopDiscovery();
         _isDiscovering = false;
-        await Future.delayed(const Duration(milliseconds: 500));
+        await Future.delayed(const Duration(milliseconds: 200));
         await _startDiscovery();
       }
     });
@@ -221,6 +225,10 @@ class NearbyService with WidgetsBindingObserver {
   }
 
   Future<void> stopRadar() async {
+    _isRadarIntendedActive = false;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('radar_active', false);
+
     _scanCycleTimer?.cancel();
     _tokenRefreshTimer?.cancel();
     await _stopAdvertising();
@@ -229,6 +237,11 @@ class NearbyService with WidgetsBindingObserver {
     _discoveredUsers.clear();
     _resolvingEndpoints.clear();
     _emitDiscoveredUsers();
+  }
+
+  void _resumeScanning() {
+    if (!_isRadarIntendedActive) return;
+    startRadar();
   }
 
   Future<void> _startAdvertising() async {
@@ -354,7 +367,11 @@ class NearbyService with WidgetsBindingObserver {
       }
 
       final distance = _bleProximity.distanceMetersForToken(token);
-      if (!RadarConfig.isDistanceWithinRadius(distance, _discoveryRadiusMeters)) {
+      
+      // Si tenemos distancia, validamos que esté en el radio. 
+      // Si es null, permitimos que aparezca (algunos dispositivos no reportan RSSI rápido)
+      if (distance != null && !RadarConfig.isDistanceWithinRadius(distance, _discoveryRadiusMeters)) {
+        print('[NearbyService] Usuario ${profile['zone_id']} fuera de radio (${distance.toStringAsFixed(1)}m > ${_discoveryRadiusMeters}m)');
         _discoveredUsers.remove(endpointId);
         _emitDiscoveredUsers();
         return;

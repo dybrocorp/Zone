@@ -171,6 +171,40 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     }
   }
 
+  Future<void> _signOut() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        title: const Text('Cerrar Sesión', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Se borrarán tus datos locales. Necesitarás tu ZONE-ID para volver a entrar en este u otro dispositivo.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('CERRAR SESIÓN', style: TextStyle(color: Colors.redAccent)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await _zoneIdService.clearAuth();
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const AuthScreen()),
+          (route) => false,
+        );
+      }
+    }
+  }
+
   Future<void> _confirmDeleteAccount() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -332,6 +366,17 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
             ),
             
             const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: _signOut,
+              icon: const Icon(Icons.logout, color: Colors.redAccent),
+              label: const Text('Cerrar Sesión', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 48),
+                side: const BorderSide(color: Colors.redAccent),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+            const SizedBox(height: 12),
             TextButton.icon(
               onPressed: _confirmDeleteAccount,
               icon: const Icon(Icons.delete_forever, color: Colors.redAccent),

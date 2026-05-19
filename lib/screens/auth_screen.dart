@@ -34,30 +34,33 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
   }
 
   void _startSplash() async {
-    await _fadeController.forward();
+    // 1. Iniciar animación
+    final animFuture = _fadeController.forward();
     
-    // 1. Verificar si ya existe un ID guardado localmente
-    final hasLocal = await _zoneIdService.hasLocalID();
-    
-    if (hasLocal) {
-      try {
-        // Restaurar sesión de fondo
-        await _zoneIdService.getOrCreate();
-        
-        if (mounted) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const RadarScreen()),
-          );
-        }
-        return;
-      } catch (e) {
-        print('[AuthScreen] Error restaurando sesión automática: $e');
+    // 2. Intentar restaurar sesión en paralelo con la animación
+    bool restoreSuccess = false;
+    try {
+      final hasLocal = await _zoneIdService.hasLocalID();
+      if (hasLocal) {
+        // Timeout de 10 segundos para restaurar sesión, de lo contrario ir al menú
+        await _zoneIdService.getOrCreate().timeout(
+          const Duration(seconds: 10),
+        );
+        restoreSuccess = true;
       }
+    } catch (e) {
+      print('[AuthScreen] Error o timeout restaurando sesión: $e');
     }
 
-    // 2. Si no hay ID o falló la restauración -> Esperar un momento y mostrar menú
-    await Future.delayed(const Duration(seconds: 1));
-    if (mounted) {
+    // Esperar a que la animación termine (mínimo de tiempo visual)
+    await animFuture;
+    
+    if (restoreSuccess && mounted) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const RadarScreen()),
+      );
+    } else if (mounted) {
+      // Si no hay sesión o falló, mostrar el menú de inicio
       setState(() { _showSplash = false; });
     }
   }

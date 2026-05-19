@@ -6,16 +6,25 @@ import 'services/permissions_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Inicializar Supabase
-  await Supabase.initialize(
-    url: 'https://leejpxwctnubihacudik.supabase.co',
-    anonKey: 'sb_publishable_vl-aeN4Ior-GZ5YB45MFyA_KGxgfZjV',
-  );
+  try {
+    // Inicializar Supabase
+    await Supabase.initialize(
+      url: 'https://leejpxwctnubihacudik.supabase.co',
+      anonKey: 'sb_publishable_vl-aeN4Ior-GZ5YB45MFyA_KGxgfZjV',
+    );
+  } catch (e) {
+    print('[Main] Error inicializando Supabase: $e');
+  }
 
-  // Solicitar permisos al arranque
-  await PermissionsService.requestAllPermissions();
-
+  // Lanzar la app inmediatamente. Los permisos se manejarán dentro o en paralelo.
   runApp(const ZoneApp());
+  
+  // Solicitar permisos en paralelo para no bloquear el arranque visual
+  PermissionsService.requestAllPermissions().then((granted) {
+    print('[Main] Permisos iniciales concedidos: $granted');
+  }).catchError((e) {
+    print('[Main] Error en permisos iniciales: $e');
+  });
 }
 
 class ZoneApp extends StatelessWidget {

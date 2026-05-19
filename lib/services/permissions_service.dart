@@ -3,25 +3,36 @@ import 'package:permission_handler/permission_handler.dart';
 class PermissionsService {
   /// Solicita los permisos necesarios para Nearby Connections y BLE.
   static Future<bool> requestAllPermissions() async {
-    final corePermissions = [
-      Permission.location,
-      Permission.bluetoothScan,
-      Permission.bluetoothAdvertise,
-      Permission.bluetoothConnect,
-      Permission.nearbyWifiDevices,
-    ];
+    try {
+      final corePermissions = [
+        Permission.location,
+        Permission.bluetoothScan,
+        Permission.bluetoothAdvertise,
+        Permission.bluetoothConnect,
+        Permission.nearbyWifiDevices,
+      ];
 
-    Map<Permission, PermissionStatus> statuses = await corePermissions.request();
+      // Timeout de 8 segundos para evitar bloqueos infinitos al arranque
+      Map<Permission, PermissionStatus> statuses = await corePermissions.request().timeout(
+        const Duration(seconds: 8),
+        onTimeout: () => {},
+      );
 
-    bool allGranted = true;
-    statuses.forEach((permission, status) {
-      if (!status.isGranted) {
-        print('Permiso fuertemente denegado en SO: $permission');
-        allGranted = false;
-      }
-    });
+      if (statuses.isEmpty) return false;
 
-    return allGranted;
+      bool allGranted = true;
+      statuses.forEach((permission, status) {
+        if (!status.isGranted) {
+          print('Permiso fuertemente denegado en SO: $permission');
+          allGranted = false;
+        }
+      });
+
+      return allGranted;
+    } catch (e) {
+      print('[PermissionsService] Error solicitando permisos: $e');
+      return false;
+    }
   }
 
   /// Solicita los permisos para la cámara y galería de fotos.

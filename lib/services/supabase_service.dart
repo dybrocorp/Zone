@@ -55,7 +55,7 @@ class SupabaseService {
     try {
       final result = await _supabase
           .from('bt_tokens')
-          .select('user_id, users!inner(id, zone_id, display_name, avatar_url, stealth_mode, public_key, instagram_handle, ig_visible, facebook_handle, fb_visible, tiktok_handle, tiktok_visible)')
+          .select('user_id, users!inner(*)')
           .eq('token', token)
           .gt('expires_at', DateTime.now().toUtc().toIso8601String())
           .maybeSingle();
@@ -64,7 +64,14 @@ class SupabaseService {
 
       final user = result['users'] as Map<String, dynamic>;
       if (user['stealth_mode'] == true) return null;
-      return user;
+      
+      // Filtrar redes sociales según visibilidad
+      final filteredUser = Map<String, dynamic>.from(user);
+      if (user['ig_visible'] != true) filteredUser['instagram_handle'] = null;
+      if (user['fb_visible'] != true) filteredUser['facebook_handle'] = null;
+      if (user['tiktok_visible'] != true) filteredUser['tiktok_handle'] = null;
+      
+      return filteredUser;
     } catch (e) {
       print('[SupabaseService] Error resolviendo token: $e');
       return null;
@@ -162,19 +169,20 @@ class SupabaseService {
     try {
       final rows = await _supabase
           .from('matches')
-          .select()
+          .select('*, requester:users!matches_requester_id_fkey(id, zone_id, display_name, avatar_url), receiver:users!matches_receiver_id_fkey(id, zone_id, display_name, avatar_url)')
           .eq('status', 'accepted')
           .or('requester_id.eq.$userId,receiver_id.eq.$userId');
 
       final enriched = <Map<String, dynamic>>[];
       for (final match in List<Map<String, dynamic>>.from(rows)) {
-        final otherId = match['requester_id'] == userId
-            ? match['receiver_id'] as String
-            : match['requester_id'] as String;
-        final otherProfile = await _getUserPublicProfile(otherId);
+        final requester = match['requester'] as Map<String, dynamic>?;
+        final receiver = match['receiver'] as Map<String, dynamic>?;
+        
+        final otherUser = requester?['id'] == userId ? receiver : requester;
+        
         enriched.add({
           ...match,
-          'other_user': otherProfile,
+          'other_user': otherUser,
         });
       }
       return enriched;
@@ -189,17 +197,15 @@ class SupabaseService {
     try {
       final rows = await _supabase
           .from('matches')
-          .select()
+          .select('*, requester:users!matches_requester_id_fkey(id, zone_id, display_name, avatar_url)')
           .eq('receiver_id', userId)
           .eq('status', 'pending');
 
       final enriched = <Map<String, dynamic>>[];
       for (final match in List<Map<String, dynamic>>.from(rows)) {
-        final requesterId = match['requester_id'] as String;
-        final requesterProfile = await _getUserPublicProfile(requesterId);
         enriched.add({
           ...match,
-          'requester_user': requesterProfile,
+          'requester_user': match['requester'],
         });
       }
       return enriched;
@@ -259,22 +265,37 @@ class SupabaseService {
     String matchId,
     void Function(Map<String, dynamic> message) onMessage,
   ) {
-    return _supabase
-        .channel('messages:$matchId')
+    final normalizedMatchId = matchId.trim().toLowerCase();
+    
+    final channel = _supabase
+        .channel('msgs:$normalizedMatchId') // Nombre de canal más corto
         .onPostgresChanges(
           event: PostgresChangeEvent.insert,
           schema: 'public',
           table: 'messages',
-          filter: PostgresChangeFilter(
-            type: PostgresChangeFilterType.eq,
-            column: 'match_id',
-            value: matchId,
-          ),
+          // Filtramos manualmente para evitar problemas con filtros de Supabase RPC/Realtime
           callback: (payload) {
-            onMessage(payload.newRecord);
+            final newRec = payload.newRecord;
+            final recMatchId = (newRec['match_id'] as String?)?.trim().toLowerCase();
+            
+            print('[SupabaseService] Realtime: Mensaje recibido para match_id: $recMatchId');
+            
+            if (recMatchId == normalizedMatchId) {
+              onMessage(newRec);
+            } else {
+              print('[SupabaseService] Realtime: Mensaje ignorado (match_id mismatch: $recMatchId != $normalizedMatchId)');
+            }
           },
-        )
-        .subscribe();
+        );
+
+    channel.subscribe((status, [error]) {
+      print('[SupabaseService] Estado suscripción mensajes ($normalizedMatchId): $status');
+      if (error != null) {
+        print('[SupabaseService] ERROR suscripción mensajes: $error');
+      }
+    });
+
+    return channel;
   }
 
   // ──────────────────────────────────────────────────────────
@@ -340,11 +361,22 @@ class SupabaseService {
         .eq('zone_id', zoneId)
         .eq('is_shadowbanned', false)
         .maybeSingle();
-    return result;
+    
+    if (result == null) return null;
+    if (result['stealth_mode'] == true) return null;
+
+    final filtered = Map<String, dynamic>.from(result);
+    if (result['ig_visible'] != true) filtered['instagram_handle'] = null;
+    if (result['fb_visible'] != true) filtered['facebook_handle'] = null;
+    if (result['tiktok_visible'] != true) filtered['tiktok_handle'] = null;
+
+    return filtered;
   }
 
   /// Escucha notificaciones globales (mensajes y nuevos matches) para el usuario.
   void startGlobalNotificationListener(String myUid) {
+    print('[SupabaseService] Iniciando escucha global de notificaciones para $myUid');
+
     // 1. Escuchar Nuevos Mensajes en cualquier match
     _supabase
         .channel('global_messages')
@@ -353,20 +385,25 @@ class SupabaseService {
           schema: 'public',
           table: 'messages',
           callback: (payload) async {
+            print('[SupabaseService] Notificación Global: Mensaje detectado');
             final msg = payload.newRecord;
-            final senderId = msg['sender_id'] as String;
-            final matchId = msg['match_id'] as String;
+            final senderId = msg['sender_id'] as String?;
+            final matchId = msg['match_id'] as String?;
 
-            if (senderId != myUid) {
-              // Si no estamos en el chat abierto actualmente
+            if (senderId != null && senderId != myUid) {
               if (NotificationService.currentActiveMatchId != matchId) {
-                // Obtener nombre del remitente (opcional, por ahora genérico por privacidad)
+                print('[SupabaseService] Mostrando notificación de mensaje...');
                 NotificationService().showMessageNotification('Alguien', 'Te ha enviado un mensaje seguro.');
+              } else {
+                print('[SupabaseService] Notificación omitida (chat abierto)');
               }
             }
           },
         )
-        .subscribe();
+        .subscribe((status, [error]) {
+          print('[SupabaseService] Estado canal global_messages: $status');
+          if (error != null) print('[SupabaseService] Error global_messages: $error');
+        });
 
     // 2. Escuchar Nuevos Matches (Solicitudes)
     _supabase
@@ -376,13 +413,18 @@ class SupabaseService {
           schema: 'public',
           table: 'matches',
           callback: (payload) {
+            print('[SupabaseService] Notificación Global: Match detectado');
             final match = payload.newRecord;
             final receiverId = match['receiver_id'] as String?;
             if (receiverId == myUid) {
+              print('[SupabaseService] Mostrando notificación de solicitud...');
               NotificationService().showMatchRequestNotification('Un usuario cercano');
             }
           },
         )
-        .subscribe();
+        .subscribe((status, [error]) {
+          print('[SupabaseService] Estado canal global_matches: $status');
+          if (error != null) print('[SupabaseService] Error global_matches: $error');
+        });
   }
 }

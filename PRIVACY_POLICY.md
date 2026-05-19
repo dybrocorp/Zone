@@ -1,33 +1,62 @@
-# Políticas de Privacidad
+# Política de Privacidad - DYBROCORP / ZONE
 
-**Última actualización: Abril 2026**
+**Versión:** 1.0  
+**Fecha de actualización:** 10 de mayo de 2026  
+**Responsable:** DYBROCORP (legal@dybrocorp.com)
 
-En **Zone** (operado por Dybro Corp), nos tomamos su privacidad muy en serio. Esta política describe cómo manejamos su información al utilizar la aplicación Zone.
+---
 
-### 1. Información que Recopilamos
+## 4.0 Responsable del Tratamiento
+DYBROCORP actuará como Responsable del Tratamiento de datos personales recolectados mediante sus plataformas digitales, incluyendo ZONE, NovaApp y demás productos tecnológicos asociados. La compañía garantiza obligaciones contractuales de confidencialidad y protección de datos.
 
-- **Información Generada Localmente:** No requerimos correos, números de teléfono ni nombres reales para funcionar. Su cuenta se basa en claves generadas de forma segura y un ID anónimo en su dispositivo.
-- **Datos de Proximidad (Bluetooth):** Usamos tecnologías Bluetooth Low Energy (BLE) para detectar usuarios cercanos. Estos datos se procesan localmente y no almacenamos su ubicación GPS.
-- **Redes Sociales Enlazadas:** Los usuarios pueden optar por agregar sus perfiles de Instagram, Facebook o TikTok. Esta información sólo es visible para las personas que usted apruebe.
-- **Mensajes:** Los mensajes están cifrados de extremo a extremo (E2EE) utilizando protocolos industriales de alta seguridad (**X25519** y **ChaCha20-Poly1305**). Las claves privadas nunca salen de su dispositivo. Los servidores de Zone solo actúan como intermediarios por un corto tiempo para la retransmisión de paquetes cifrados y no tienen capacidad técnica para leer su contenido.
+## 4.1 Introducción
+DYBROCORP reconoce la importancia de la privacidad y protección de los datos personales. Esta Política explica cómo recopilamos, utilizamos, almacenamos y protegemos su información.
 
-### 2. Uso de la Información
+## 4.2 Normatividad Aplicable
+Esta política se fundamenta en:
+* **Colombia:** Ley 1581 de 2012, Decreto 1377 de 2013, Ley 1273 de 2009 (delitos informáticos).
+* **Internacional:** GDPR (Unión Europea), CCPA (California), Principios OCDE.
 
-- **Descubrimiento:** El uso exclusivo del Bluetooth es para permitir la funcionalidad del "radar" y lograr que usuarios cercanos se encuentren en la app.
-- **Seguridad y Cifrado:** Usamos claves X25519 y ChaCha20-Poly1305 para proteger todas las comunicaciones.
+## 4.3 Información Recopilada
+Podremos recopilar:
+* **Proporcionada por el usuario:** Nombre, correo, número (si aplica), foto de perfil, ZONE-ID, información de autenticación.
+* **Información técnica:** Dirección IP, tipo de dispositivo, sistema operativo, identificadores únicos.
+* **Información de uso:** Interacciones, tiempo de uso, preferencias, contenido compartido.
 
-### 3. Divulgación a Terceros
+## 4.4 Finalidades del Tratamiento
+La información se utiliza para operar la plataforma, gestionar cuentas, mejorar servicios, garantizar seguridad, detectar fraude y cumplir obligaciones legales.
 
-No vendemos, alquilamos ni compartimos su información personal a terceros bajo ninguna circunstancia, excepto en el caso de ser requerido expresamente por mandato de ley aplicable, donde únicamente podríamos facilitar metadatos debido al cifrado E2EE.
+## 4.5 Bases Legales del Tratamiento
+El tratamiento se realiza bajo el consentimiento del titular, ejecución contractual, obligaciones legales e intereses legítimos.
 
-### 4. Retención de Datos
+## 4.6 Derechos de los Titulares
+Los usuarios pueden conocer, actualizar, corregir o solicitar la eliminación de sus datos, así como revocar la autorización de uso. Las solicitudes deben realizarse a `contacto@dybrocorp.com`.
 
-Los datos temporales del radar y mensajes cifrados entregados se eliminan de nuestros servidores a la brevedad. Usted puede eliminar su perfil desde la aplicación en cualquier momento, lo que borrará definitivamente sus credenciales públicas.
+## 4.7 Conservación de Datos
+La información se conservará mientras exista la relación contractual o sea necesario para obligaciones legales o fines legítimos.
 
-### 5. Sus Derechos
+## 4.8 Seguridad de la Información
+DYBROCORP implementa medidas alineadas con estándares internacionales (ISO/IEC 27001, OWASP, Zero Trust):
+* Cifrado de datos (E2EE en chats).
+* Controles de acceso y segmentación de infraestructura.
+* Monitoreo preventivo y gestión de incidentes.
+* Copias de seguridad periódicas.
 
-Usted tiene el control total sobre su perfil y los enlaces de redes sociales que decide compartir. Puede revocarlos desde la configuración.
+## 4.9 Compartición de Información
+La información se comparte únicamente con proveedores tecnológicos autorizados o por requerimiento judicial. DYBROCORP **no vende** datos personales.
 
-### 6. Contacto
+## 4.10 Cookies y Tecnologías Similares
+Utilizamos cookies y tokens para mejorar la experiencia y analizar el uso del servicio. El usuario puede gestionarlas desde su navegador.
 
-Si tiene alguna pregunta, contáctenos a través de nuestro soporte o repositorio en [Dybro Corp](https://github.com/dybrocorp).
+## 4.11 Transferencia Internacional de Datos
+Los datos podrán almacenarse o procesarse fuera de Colombia, procurando siempre estándares adecuados de protección de datos.
+
+## 4.12 Protección de Menores
+La plataforma no está dirigida a menores sin autorización legal. Se adoptarán medidas correctivas si se detecta recopilación indebida.
+
+## 4.13 Modificaciones
+DYBROCORP podrá actualizar esta Política. La versión vigente será la publicada oficialmente en los canales de la empresa.
+
+---
+**DYBROCORP - Privacidad y Transparencia.**
+Soporte de Privacidad: `legal@dybrocorp.com`

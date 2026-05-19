@@ -1,28 +1,108 @@
-# Términos y Condiciones
+# Términos y Condiciones de Uso - DYBROCORP / ZONE
 
-**Última actualización: Abril 2026**
+**Versión:** 1.0  
+**Fecha de actualización:** 10 de mayo de 2026  
+**Jurisdicción principal:** República de Colombia
 
-Bienvenido a **Zone**. Al descargar o usar la aplicación, se aplican automáticamente estos términos. Le rogamos que los lea atentamente antes de usar la aplicación.
+---
 
-### 1. Aceptación de los Términos
-Al acceder o utilizar Zone, desarrollado por Dybro Corp, usted acepta estar sujeto a estos Términos y Condiciones y a nuestra Política de Privacidad. Si no está de acuerdo, por favor no utilice la aplicación.
+## 3.1 Introducción
 
-### 2. Propósito del Servicio
-Zone es una aplicación estructurada como red social basada en proximidad (vía Bluetooth) y privacidad, que permite la conexión, descubrimiento de personas cercanas y el chat cifrado de extremo a extremo (E2EE). 
+Los presentes Términos y Condiciones regulan el acceso, navegación y uso de las plataformas, aplicaciones móviles, sitios web, APIs, software, servicios digitales y demás productos tecnológicos desarrollados, administrados u operados por DYBROCORP, incluyendo pero no limitándose a ZONE, NovaApp y futuros productos o servicios vinculados a la compañía.
 
-### 3. Responsabilidad del Usuario
-- Usted es responsable de la información (como enlaces de redes sociales o avatares) que decide compartir de forma pública o privada en la app.
-- Se prohíbe terminantemente usar Zone para acosar, abusar, amenazar o realizar actividades ilícitas contra cualquier otro usuario cercano.
-- Usted es responsable del cuidado del hardware y su uso razonable de la conexión y permisos de Bluetooth requeridos para el correcto funcionamiento del Radar de la app.
+Al acceder, registrarse o utilizar cualquiera de los servicios, el usuario acepta de manera expresa y voluntaria estos términos.
 
-### 4. Seguridad
-Zone proporciona cifrado de extremo a extremo para las conversaciones, imposibilitando nuestra intervención de moderación en chats privados. En caso de acoso, se insta a los usuarios a usar la función "Bloquear Usuario".
+---
 
-### 5. Propiedad Intelectual
-Todos los derechos de propiedad intelectual, marcas registradas, código, bases de datos y la interfaz gráfica de Zone son propiedad de Dybro Corp. Ninguna parte de la App puede ser usada comercialmente sin el consentimiento previo por escrito.
+## 3.2 Identificación de la Empresa
 
-### 6. Limitación de Responsabilidad
-Dybro Corp no se hace responsable por ninguna pérdida directa, indirecta o cualquier altercado ocurrido a raíz del descubrimiento de personas generado en la plataforma. Los encuentros en la vida real quedan bajo estricta responsabilidad de los usuarios. Al ser una red descentralizada y anónima, Zone no garantiza la identidad verídica de los perfiles encontrados.
+* **Razón social:** DYBROCORP
+* **Marcas:** ZONE, NovaApp y demás productos desarrollados por DYBROCORP.
+* **País de operación principal:** Colombia
+* **Correo de contacto:** contacto@dybrocorp.com
 
-### 7. Cambios a los Términos
-Nos reservamos el derecho de modificar estos términos en cualquier momento. Modificaciones sustanciales serán notificadas mediante una actualización de la aplicación.
+---
+
+## 3.3 Capacidad Legal
+
+El usuario declara:
+* Tener capacidad legal para aceptar estos términos.
+* Que la información suministrada es veraz y actualizada.
+* Que utilizará la plataforma conforme a la ley, la moral, el orden público y las buenas prácticas digitales.
+
+En caso de menores de edad, el uso de la plataforma deberá contar con autorización de padres o representantes legales cuando la legislación aplicable así lo requiera.
+
+---
+
+## 3.4 Registro de Cuenta
+
+El usuario será responsable de:
+* Mantener la confidencialidad de sus credenciales.
+* Todas las actividades realizadas desde su cuenta.
+* Notificar inmediatamente accesos no autorizados.
+
+DYBROCORP podrá suspender o cancelar cuentas que incumplan estos términos, utilicen información falsa o participen en actividades fraudulentas o ilegales.
+
+---
+
+## 3.5 Uso Permitido
+
+El usuario se compromete a **NO**:
+* Realizar actividades ilícitas.
+* Publicar contenido ofensivo, discriminatorio o ilegal.
+* Distribuir malware, virus o software malicioso.
+* Intentar acceder sin autorización a sistemas internos.
+* Extraer datos masivamente mediante bots o scraping.
+* Suplantar identidades o vulnerar derechos de terceros.
+
+---
+
+## 3.6 Propiedad Intelectual
+
+Todo el contenido de la plataforma (código fuente, interfaces, diseños, logos, bases de datos, marcas, textos, algoritmos, imágenes, funcionalidades) es propiedad de DYBROCORP o cuenta con autorización legal para su uso. Queda prohibida la reproducción no autorizada, ingeniería inversa, distribución comercial o modificación del software salvo autorización escrita expresa.
+
+---
+
+## 3.7 Disponibilidad del Servicio
+
+DYBROCORP no garantiza disponibilidad continua e ininterrumpida. La empresa podrá actualizar funcionalidades, modificar características o suspender temporalmente servicios por mantenimiento o seguridad sin necesidad de notificación previa cuando sea razonablemente necesario.
+
+---
+
+## 3.8 Contenido Generado por Usuarios
+
+El usuario conserva la titularidad sobre el contenido que publique. Sin embargo, al publicar contenido en la plataforma, concede a DYBROCORP una licencia limitada, no exclusiva y revocable para alojar, mostrar y distribuir técnicamente el contenido únicamente con el propósito de operar la plataforma.
+
+---
+
+## 3.9 Limitación de Responsabilidad
+
+DYBROCORP no será responsable por pérdidas indirectas, interrupciones externas, fallos de terceros, acciones de usuarios o pérdida de datos causada por fuerza mayor. El usuario utiliza los servicios bajo su propia responsabilidad.
+
+---
+
+## 3.10 Protección de Datos
+
+El tratamiento de datos personales se rige conforme a la Ley 1581 de 2012 de Colombia, el GDPR (Europa) y la CCPA (EE.UU.) cuando corresponda.
+
+---
+
+## 3.11 Suspensión y Terminación
+
+DYBROCORP podrá restringir o cancelar el acceso de usuarios que incumplan la ley, estos términos o generen riesgos operativos afectando a otros usuarios.
+
+---
+
+## 3.12 Modificaciones
+
+DYBROCORP podrá modificar estos términos en cualquier momento. Las modificaciones entrarán en vigencia desde su publicación. El uso continuado constituye la aceptación de los cambios.
+
+---
+
+## 3.13 Legislación Aplicable
+
+Estos términos se regirán principalmente por las leyes de la República de Colombia. En caso de operaciones internacionales, podrán aplicarse normas adicionales conforme a la jurisdicción correspondiente.
+
+---
+**DYBROCORP - Tecnología Responsable y Segura.**
+Contacto Legal: `legal@dybrocorp.com`

@@ -6,17 +6,22 @@ import '../services/supabase_service.dart';
 import '../services/zone_id_service.dart';
 import '../services/chat_e2ee_service.dart';
 import '../services/notification_service.dart';
+import '../widgets/user_avatar.dart';
 
 class ChatScreen extends StatefulWidget {
   final String matchId;
   final String otherUserName;
   final String otherZoneId;
+  final String? otherUserId;
+  final String? otherAvatarUrl;
 
   const ChatScreen({
     super.key,
     required this.matchId,
     required this.otherUserName,
     required this.otherZoneId,
+    this.otherUserId,
+    this.otherAvatarUrl,
   });
 
   @override
@@ -32,8 +37,10 @@ class _ChatScreenState extends State<ChatScreen> {
   final List<Map<String, dynamic>> _messages = [];
   bool _isLoading = true;
   bool _isBlocked = false;
+  String? _otherAvatarUrl;
   SecretKey? _sharedSecret;
   RealtimeChannel? _subscription;
+  final Map<String, String> _decryptedByMessageId = {};
 
   @override
   void initState() {
@@ -43,46 +50,208 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _setupChat() async {
-    final uid = _zoneIdService.uid;
-    if (uid == null) return;
+    _otherAvatarUrl = widget.otherAvatarUrl;
 
-    // 1. Verificar si está bloqueado
-    final blockedList = await _supabaseService.getBlockedUsers(uid);
-    final isBlockedByMe = blockedList.any((b) => b['blocked_id'] == widget.otherZoneId || b['users']['id'] == widget.otherZoneId);
-
-    // 2. Obtener la clave pública del otro usuario de Supabase
-    final otherProfile = await _supabaseService.getProfileByZoneId(widget.otherZoneId);
-    if (otherProfile != null) {
-      final otherPubKeyBase64 = otherProfile['public_key'];
-      final otherPubKey = _e2eeService.importPublicKeyFromBase64(otherPubKeyBase64);
+    try {
+      // Siempre llamar a getOrCreate para asegurar que la sesión y las llaves estén restauradas
+      await _zoneIdService.getOrCreate();
+      final uid = _zoneIdService.uid;
       
-      // 3. Calcular el secreto compartido (Shared Secret) para esta sesión
-      _sharedSecret = await _e2eeService.computeSharedSecret(otherPubKey);
-    }
-    
-    if (mounted) {
-      setState(() {
-        _isBlocked = isBlockedByMe;
-      });
-    }
+      // VERIFICACIÓN DE SEGURIDAD: Si por algún motivo el par de llaves no está listo, forzarlo ahora.
+      if (!_e2eeService.isInitialized) {
+        print('[ChatScreen] Par de llaves no inicializado. Intentando recuperación forzada...');
+        await _zoneIdService.ensureAuth();
+      }
 
-    // 3. Cargar historial de mensajes existentes
-    final history = await _supabaseService.getMessages(widget.matchId);
-    
-    // 4. Suscribirse a mensajes nuevos en tiempo real
-    _subscription = _supabaseService.subscribeToMessages(widget.matchId, (newMsg) {
+      if (uid == null || !_e2eeService.isInitialized) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Error de seguridad: Llaves no listas. Por favor, reinicia la app.')),
+          );
+        }
+        return;
+      }
+
+      // Ejecutar consultas en paralelo para mejorar velocidad
+      final results = await Future.wait([
+        _supabaseService.getBlockedUsers(uid),
+        _supabaseService.getProfileByZoneId(widget.otherZoneId),
+        _supabaseService.getMessages(widget.matchId),
+      ]);
+
+      final blockedList = results[0] as List<Map<String, dynamic>>;
+      final otherProfile = results[1] as Map<String, dynamic>?;
+      final history = results[2] as List<Map<String, dynamic>>;
+
+      final isBlockedByMe = blockedList.any((b) {
+        final blockedId = b['blocked_id'] as String?;
+        final users = b['users'] as Map<String, dynamic>?;
+        return blockedId == widget.otherUserId ||
+            blockedId == widget.otherZoneId ||
+            users?['zone_id'] == widget.otherZoneId;
+      });
+
+      if (otherProfile != null) {
+        _otherAvatarUrl ??= otherProfile['avatar_url'] as String?;
+        final otherPubKeyBase64 = otherProfile['public_key'];
+        if (otherPubKeyBase64 != null && otherPubKeyBase64.toString().isNotEmpty) {
+          try {
+            final otherPubKey = _e2eeService.importPublicKeyFromBase64(otherPubKeyBase64.toString());
+            if (otherPubKey != null) {
+              _sharedSecret = await _e2eeService.computeSharedSecret(otherPubKey);
+            }
+          } catch (e) {
+            print('[ChatScreen] Error derivando secreto compartido: $e');
+          }
+        }
+      }
+
+      await _prefetchDecrypted(history);
+
+      _subscription = _supabaseService.subscribeToMessages(widget.matchId, (newMsg) async {
+        print('[ChatScreen] Nuevo mensaje recibido por Realtime: ${newMsg['id']}');
+        
+        // Evitar duplicados (si ya lo añadimos de forma optimista)
+        final alreadyPresent = _messages.any((m) => m['id'] == newMsg['id']);
+        if (alreadyPresent) {
+          print('[ChatScreen] Mensaje omitido por ser duplicado');
+          return;
+        }
+
+        try {
+          await _prefetchDecrypted([newMsg]);
+        } catch (e) {
+          print('[ChatScreen] Error descifrando mensaje nuevo: $e');
+        }
+        if (mounted) {
+          setState(() => _messages.add(newMsg));
+        }
+      });
+
       if (mounted) {
         setState(() {
-          _messages.add(newMsg);
+          _isBlocked = isBlockedByMe;
+          // No limpiamos _decryptedByMessageId aquí para no perder los mensajes optimistas
+          // pero nos aseguramos de que history se una a lo que ya tenemos o se reemplace con cuidado
+          _messages
+            ..clear()
+            ..addAll(history);
         });
       }
-    });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al abrir el chat: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
 
-    if (mounted) {
-      setState(() {
-        _messages.addAll(history);
-        _isLoading = false;
-      });
+  Future<void> _prefetchDecrypted(List<Map<String, dynamic>> messages) async {
+    if (_sharedSecret == null) return;
+    for (final msg in messages) {
+      final id = msg['id']?.toString();
+      if (id == null || _decryptedByMessageId.containsKey(id)) continue;
+      try {
+        _decryptedByMessageId[id] = await _e2eeService.decryptMessage(
+          msg['encrypted_content'] ?? '',
+          msg['nonce'] ?? '',
+          msg['mac'] ?? '',
+          _sharedSecret!,
+        );
+        print('[ChatScreen] Mensaje $id descifrado con éxito');
+      } catch (e) {
+        print('[ChatScreen] Error descifrando mensaje $id: $e');
+        _decryptedByMessageId[id] = '[Error al descifrar]';
+      }
+    }
+  }
+
+  String _messagePreview(Map<String, dynamic> msg) {
+    final id = msg['id']?.toString();
+    if (id != null && _decryptedByMessageId.containsKey(id)) {
+      return _decryptedByMessageId[id]!;
+    }
+    if (_sharedSecret == null) return 'Cifrado...';
+    return '...';
+  }
+
+  Future<void> _handleBlock() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        title: const Text('¿Bloquear usuario?', style: TextStyle(color: Colors.white)),
+        content: const Text('No podrá enviarte más mensajes y desaparecerá de tu radar.', style: TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('CANCELAR')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('BLOQUEAR', style: TextStyle(color: Colors.redAccent)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      final myId = _zoneIdService.uid;
+      final theirId = widget.otherUserId ?? widget.otherZoneId;
+      if (myId != null) {
+        await _supabaseService.blockUser(myId, theirId);
+        if (mounted) {
+          Navigator.pop(context); // Salir del chat
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Usuario bloqueado')),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _handleReport() async {
+    final controller = TextEditingController();
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        title: Text('Reportar a ${widget.otherUserName}', style: const TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            hintText: 'Describe el motivo...',
+            hintStyle: TextStyle(color: Colors.white24),
+          ),
+          maxLines: 3,
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('CANCELAR')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('ENVIAR REPORTE', style: TextStyle(color: Colors.redAccent)),
+          ),
+        ],
+      ),
+    );
+
+    if (reason != null && reason.isNotEmpty) {
+      final myId = _zoneIdService.uid;
+      final theirId = widget.otherUserId ?? widget.otherZoneId;
+      if (myId != null) {
+        await _supabaseService.reportUser(myId, theirId, reason);
+        await _supabaseService.blockUser(myId, theirId);
+        if (mounted) {
+          Navigator.pop(context); // Salir del chat
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Gracias por tu reporte. Hemos bloqueado al usuario.')),
+          );
+        }
+      }
     }
   }
 
@@ -106,16 +275,44 @@ class _ChatScreenState extends State<ChatScreen> {
     final controllerText = text;
     _messageController.clear();
 
-    // Encriptar mensaje con E2EE real
-    final encrypted = await _e2eeService.encryptMessage(controllerText, _sharedSecret!);
+    // ID temporal para la UI optimista
+    final tempId = 'temp-${DateTime.now().millisecondsSinceEpoch}';
+    final tempMsg = {
+      'id': tempId,
+      'sender_id': uid,
+      'match_id': widget.matchId,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+    };
+    
+    // Guardar texto descifrado localmente para el mensaje optimista
+    _decryptedByMessageId[tempId] = controllerText;
 
-    await _supabaseService.sendMessage(
-      matchId: widget.matchId,
-      senderId: uid,
-      encryptedContent: encrypted['encrypted_content'],
-      nonce: encrypted['nonce'],
-      mac: encrypted['mac'],
-    );
+    if (mounted) {
+      setState(() => _messages.add(tempMsg));
+    }
+
+    try {
+      // Encriptar mensaje con E2EE real
+      final encrypted = await _e2eeService.encryptMessage(controllerText, _sharedSecret!);
+
+      await _supabaseService.sendMessage(
+        matchId: widget.matchId,
+        senderId: uid,
+        encryptedContent: encrypted['encrypted_content'],
+        nonce: encrypted['nonce'],
+        mac: encrypted['mac'],
+      );
+      print('[ChatScreen] Mensaje enviado a Supabase');
+    } catch (e) {
+      print('[ChatScreen] Error enviando mensaje a Supabase: $e');
+      if (mounted) {
+        // Quitar mensaje fallido
+        setState(() => _messages.removeWhere((m) => m['id'] == tempId));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al enviar: $e')),
+        );
+      }
+    }
   }
 
   @override
@@ -125,11 +322,78 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: AppBar(
         title: Row(
           children: [
-            const Icon(Icons.lock, size: 16, color: Colors.greenAccent),
-            const SizedBox(width: 8),
-            Text(widget.otherUserName, style: const TextStyle(fontWeight: FontWeight.bold)),
+            UserAvatar(
+              avatarUrl: _otherAvatarUrl,
+              displayName: widget.otherUserName,
+              radius: 18,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(widget.otherUserName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  const Row(
+                    children: [
+                      Icon(Icons.lock, size: 12, color: Colors.greenAccent),
+                      SizedBox(width: 4),
+                      Text('E2EE', style: TextStyle(color: Colors.greenAccent, fontSize: 11)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
+        actions: [
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: Colors.white70),
+            onSelected: (value) {
+              if (value == 'refresh') {
+                setState(() => _isLoading = true);
+                _setupChat();
+              } else if (value == 'block') {
+                _handleBlock();
+              } else if (value == 'report') {
+                _handleReport();
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'refresh',
+                child: Row(
+                  children: [
+                    Icon(Icons.refresh, size: 20, color: Colors.white70),
+                    SizedBox(width: 10),
+                    Text('Actualizar chat'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'block',
+                child: Row(
+                  children: [
+                    Icon(Icons.block, size: 20, color: Colors.redAccent),
+                    SizedBox(width: 10),
+                    Text('Bloquear usuario', style: TextStyle(color: Colors.redAccent)),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'report',
+                child: Row(
+                  children: [
+                    Icon(Icons.report_problem, size: 20, color: Colors.orangeAccent),
+                    SizedBox(width: 10),
+                    Text('Reportar usuario', style: TextStyle(color: Colors.orangeAccent)),
+                  ],
+                ),
+              ),
+            ],
+            color: const Color(0xFF1E293B),
+          ),
+        ],
         backgroundColor: const Color(0xFF1E293B),
         elevation: 1,
       ),
@@ -166,40 +430,45 @@ class _ChatScreenState extends State<ChatScreen> {
                     final msg = _messages[index];
                     final isMe = msg['sender_id'] == _zoneIdService.uid;
                     
-                    return FutureBuilder<String>(
-                      future: _sharedSecret != null 
-                        ? _e2eeService.decryptMessage(
-                            msg['encrypted_content'], 
-                            msg['nonce'] ?? '', 
-                            msg['mac'] ?? '',
-                            _sharedSecret!
-                          )
-                        : Future.value('Cifrado...'),
-                      builder: (context, snapshot) {
-                        return Align(
-                          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-                          child: Container(
-                            margin: const EdgeInsets.only(bottom: 8),
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                            decoration: BoxDecoration(
-                              color: isMe ? const Color(0xFF00D2FF) : const Color(0xFF1E293B),
-                              borderRadius: BorderRadius.circular(16).copyWith(
-                                bottomRight: isMe ? Radius.zero : null,
-                                bottomLeft: !isMe ? Radius.circular(16) : null,
-                              ),
-                              border: isMe ? null : Border.all(color: Colors.white10),
+                    return Align(
+                      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          if (!isMe) ...[
+                            UserAvatar(
+                              avatarUrl: _otherAvatarUrl,
+                              displayName: widget.otherUserName,
+                              radius: 14,
                             ),
-                            child: Text(
-                              snapshot.data ?? '...',
-                              style: TextStyle(
-                                color: isMe ? Colors.black : Colors.white, 
-                                fontSize: 16, 
-                                fontWeight: FontWeight.w500
+                            const SizedBox(width: 8),
+                          ],
+                          Flexible(
+                            child: Container(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: isMe ? const Color(0xFF00D2FF) : const Color(0xFF1E293B),
+                                borderRadius: BorderRadius.circular(16).copyWith(
+                                  bottomRight: isMe ? Radius.zero : null,
+                                  bottomLeft: !isMe ? Radius.zero : null,
+                                ),
+                                border: isMe ? null : Border.all(color: Colors.white10),
+                              ),
+                              child: Text(
+                                _messagePreview(msg),
+                                style: TextStyle(
+                                  color: isMe ? Colors.black : Colors.white,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w400,
+                                ),
                               ),
                             ),
                           ),
-                        );
-                      }
+                          if (isMe) const SizedBox(width: 24), // Espacio para balancear el avatar del otro lado si fuera necesario, o simplemente padding
+                        ],
+                      ),
                     );
                   },
                 ),

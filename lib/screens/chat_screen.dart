@@ -38,6 +38,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isLoading = true;
   bool _isBlocked = false;
   String? _otherAvatarUrl;
+  SecretKey? _sharedSecret;
   RealtimeChannel? _subscription;
   final Map<String, String> _decryptedByMessageId = {};
   
@@ -149,15 +150,16 @@ class _ChatScreenState extends State<ChatScreen> {
         },
       );
 
-        setState(() {
-          _isBlocked = isBlockedByMe;
-          _messages
-            ..clear()
-            ..addAll(history);
-          _isLoading = false;
-        });
-        _scrollToBottom();
-      }
+        if (mounted) {
+          setState(() {
+            _isBlocked = isBlockedByMe;
+            _messages
+              ..clear()
+              ..addAll(history);
+            _isLoading = false;
+          });
+          _scrollToBottom();
+        }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

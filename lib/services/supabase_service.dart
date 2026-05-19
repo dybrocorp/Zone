@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:realtime_client/realtime_client.dart';
 import 'notification_service.dart';
 import 'package:uuid/uuid.dart';
 
@@ -265,7 +266,7 @@ class SupabaseService {
     await _supabase
         .channel('msgs:$normalizedMatchId')
         .send(
-          type: RealtimeListenType.broadcast,
+          type: RealtimeListenTypes.broadcast,
           event: 'new_msg',
           payload: payload,
         );

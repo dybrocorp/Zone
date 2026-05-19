@@ -241,13 +241,34 @@ class SupabaseService {
     required String nonce,
     required String mac,
   }) async {
-    await _supabase.from('messages').insert({
+    final payload = {
       'match_id': matchId,
       'sender_id': senderId,
       'encrypted_content': encryptedContent,
       'nonce': nonce,
       'mac': mac,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+    };
+
+    // 1. Insertar en DB para persistencia (Segundo plano)
+    // No esperamos al insert para el broadcast, así es más rápido
+    _supabase.from('messages').insert(payload).then((_) {
+      print('[SupabaseService] Mensaje guardado en DB');
+    }).catchError((e) {
+      print('[SupabaseService] Error guardando mensaje en DB: $e');
     });
+
+    // 2. Enviar via Broadcast para inmediatez (WebSocket puro)
+    final normalizedMatchId = matchId.trim().toLowerCase();
+    print('[SupabaseService] Enviando Broadcast a canal msgs:$normalizedMatchId');
+    
+    await _supabase
+        .channel('msgs:$normalizedMatchId')
+        .send(
+          type: RealtimeListenTypes.broadcast,
+          event: 'new_msg',
+          payload: payload,
+        );
   }
 
   /// Obtiene mensajes de un match, ordernados por fecha.
@@ -268,22 +289,28 @@ class SupabaseService {
     final normalizedMatchId = matchId.trim().toLowerCase();
     
     final channel = _supabase
-        .channel('msgs:$normalizedMatchId') // Nombre de canal más corto
+        .channel('msgs:$normalizedMatchId') 
+        // 1. Escuchar BROADCAST (Instantáneo via WebSockets)
+        .onBroadcast(
+          event: 'new_msg',
+          callback: (payload) {
+            print('[SupabaseService] Realtime (Broadcast): Mensaje recibido!');
+            onMessage(Map<String, dynamic>.from(payload));
+          },
+        )
+        // 2. Escuchar POSTGRES (Persistente via WAL - Fallback)
         .onPostgresChanges(
           event: PostgresChangeEvent.insert,
           schema: 'public',
           table: 'messages',
-          // Filtramos manualmente para evitar problemas con filtros de Supabase RPC/Realtime
           callback: (payload) {
             final newRec = payload.newRecord;
             final recMatchId = (newRec['match_id'] as String?)?.trim().toLowerCase();
             
-            print('[SupabaseService] Realtime: Mensaje recibido para match_id: $recMatchId');
+            print('[SupabaseService] Realtime (Postgres): Mensaje detectado para match_id: $recMatchId');
             
             if (recMatchId == normalizedMatchId) {
               onMessage(newRec);
-            } else {
-              print('[SupabaseService] Realtime: Mensaje ignorado (match_id mismatch: $recMatchId != $normalizedMatchId)');
             }
           },
         );

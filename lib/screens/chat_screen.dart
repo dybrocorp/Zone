@@ -109,15 +109,38 @@ class _ChatScreenState extends State<ChatScreen> {
       await _prefetchDecrypted(history);
 
       _subscription = _supabaseService.subscribeToMessages(widget.matchId, (newMsg) async {
-        print('[ChatScreen] Nuevo mensaje recibido por Realtime: ${newMsg['id']}');
+        final msgId = newMsg['id']?.toString();
+        final senderId = newMsg['sender_id'];
+        final myId = _zoneIdService.uid;
+
+        print('[ChatScreen] Nuevo mensaje recibido por Realtime: $msgId');
         
-        // Evitar duplicados (si ya lo añadimos de forma optimista)
-        final alreadyPresent = _messages.any((m) => m['id'] == newMsg['id']);
-        if (alreadyPresent) {
-          print('[ChatScreen] Mensaje omitido por ser duplicado');
+        // 1. Evitar duplicados exactos (por ID)
+        if (_messages.any((m) => m['id'] == msgId)) {
+          print('[ChatScreen] Mensaje ya existe en la lista (ID duplicado)');
           return;
         }
 
+        // 2. Si es MI mensaje, intentar reemplazar el mensaje "optimista" temporal
+        if (senderId == myId) {
+          final tempIndex = _messages.indexWhere((m) => 
+            m['id'].toString().startsWith('temp-') && 
+            m['sender_id'] == myId
+          );
+          
+          if (tempIndex != -1) {
+            print('[ChatScreen] Reemplazando mensaje optimista con el real de la red');
+            await _prefetchDecrypted([newMsg]);
+            if (mounted) {
+              setState(() {
+                _messages[tempIndex] = newMsg;
+              });
+            }
+            return;
+          }
+        }
+
+        // 3. Si no es duplicado ni optimista, añadirlo
         try {
           await _prefetchDecrypted([newMsg]);
         } catch (e) {
@@ -125,6 +148,7 @@ class _ChatScreenState extends State<ChatScreen> {
         }
         if (mounted) {
           setState(() => _messages.add(newMsg));
+          // Scroll automático al final si el usuario no está navegando arriba (opcional, pero ayuda)
         }
       });
 

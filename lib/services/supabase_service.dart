@@ -320,7 +320,10 @@ class SupabaseService {
         .onPresenceSync((_) {
           if (onPresenceChange != null) {
             final activeUsers = channel.presenceState();
-            final others = activeUsers.keys.where((key) => key != myUid).toList();
+            final others = activeUsers.where((e) {
+              final uid = e.state['uid'] as String?;
+              return uid != null && uid != myUid;
+            }).toList();
             onPresenceChange(others.isNotEmpty);
           }
         })

@@ -300,17 +300,20 @@ class SupabaseService {
         // 1. Escuchar BROADCAST (Mensajes instantáneos)
         .onBroadcast(
           event: 'new_msg',
-          callback: (payload) {
+          callback: (eventPayload) {
             print('[SupabaseService] Realtime (Broadcast): Mensaje recibido!');
-            onMessage(Map<String, dynamic>.from(payload));
+            // Supabase envuelve los datos en una propiedad "payload" de igual nombre
+            final data = eventPayload['payload'] as Map<String, dynamic>? ?? eventPayload;
+            onMessage(Map<String, dynamic>.from(data));
           },
         )
         // 2. Escuchar EVENTOS DE ESCRITURA
         .onBroadcast(
           event: 'typing',
-          callback: (payload) {
-            final senderId = payload['sender_id'];
-            final isTyping = payload['is_typing'] as bool? ?? false;
+          callback: (eventPayload) {
+            final data = eventPayload['payload'] as Map<String, dynamic>? ?? eventPayload;
+            final senderId = data['sender_id'];
+            final isTyping = data['is_typing'] as bool? ?? false;
             if (senderId != myUid && onTypingChange != null) {
               onTypingChange(isTyping);
             }

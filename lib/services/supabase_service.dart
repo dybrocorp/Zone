@@ -141,6 +141,22 @@ class SupabaseService {
     }
   }
 
+  /// Verifica el estado actual del match entre dos usuarios.
+  /// Devuelve el objeto match si existe, o null si no hay interacción.
+  Future<Map<String, dynamic>?> getMatchStatus(String userA, String userB) async {
+    try {
+      final res = await _supabase
+          .from('matches')
+          .select()
+          .or('and(requester_id.eq.$userA,receiver_id.eq.$userB),and(requester_id.eq.$userB,receiver_id.eq.$userA)')
+          .maybeSingle();
+      return res;
+    } catch (e) {
+      print('[SupabaseService] Error obteniendo status del match: $e');
+      return null;
+    }
+  }
+
   /// Acepta un match pendiente.
   Future<void> acceptMatch(String matchId) async {
     await _supabase

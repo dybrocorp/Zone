@@ -360,43 +360,40 @@ class _ChatScreenState extends State<ChatScreen> {
       backgroundColor: const Color(0xFF0F172A),
       appBar: AppBar(
         backgroundColor: const Color(0xFF1E293B),
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
+        title: Row(
           children: [
-            Row(
-              children: [
-                UserAvatar(
-                  avatarUrl: _otherAvatarUrl,
-                  displayName: widget.otherUserName,
-                  radius: 16,
-                ),
-                const SizedBox(width: 8),
-                Text(widget.otherUserName, style: const TextStyle(fontSize: 16)),
-                const SizedBox(width: 8),
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: _isOtherOnline ? Colors.greenAccent : Colors.grey,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ],
+            UserAvatar(
+              avatarUrl: _otherAvatarUrl,
+              displayName: widget.otherUserName,
+              radius: 18,
             ),
-            Text(
-              'Fingerprint: ${_getOtherKeyFingerprint()}',
-              style: const TextStyle(fontSize: 10, color: Colors.white38),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(widget.otherUserName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  Row(
+                    children: [
+                      Icon(Icons.circle, size: 8, color: _isOtherOnline ? Colors.greenAccent : Colors.white24),
+                      const SizedBox(width: 4),
+                      Text(
+                        _isOtherOnline ? 'En línea' : 'Desconectado', 
+                        style: TextStyle(color: _isOtherOnline ? Colors.greenAccent : Colors.white54, fontSize: 11)
+                      ),
+                      const SizedBox(width: 8),
+                      const Icon(Icons.lock, size: 11, color: Colors.white24),
+                      const SizedBox(width: 2),
+                      const Text('E2EE', style: TextStyle(color: Colors.white24, fontSize: 11)),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ],
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.security, size: 18, color: Colors.greenAccent),
-            onPressed: () {
-              _showSecurityInfo();
-            },
-          ),
+
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert, color: Colors.white70),
             onSelected: (value) {
@@ -570,43 +567,4 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
   }
-  String _getOtherKeyFingerprint() {
-    final key = _debugOtherPublicKeyBase64;
-    if (key == null) return "Cargando...";
-    return key.length > 8 ? key.substring(0, 8) : key;
-  }
-
-  void _showSecurityInfo() async {
-    final myProfile = await _zoneIdService.getMyProfile();
-    final myKey = myProfile?['public_key']?.toString() ?? 'N/A';
-    final otherKey = _debugOtherPublicKeyBase64 ?? 'N/A';
-    
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E293B),
-        title: const Text('Identidad de Seguridad', style: TextStyle(color: Colors.white)),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('Tu clave pública (Fingerprint):', style: TextStyle(color: Colors.white70, fontSize: 12)),
-              SelectableText(myKey.length > 10 ? myKey.substring(0, 10) + '...' : myKey, style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              const Text('Clave de tu contacto (Fingerprint):', style: TextStyle(color: Colors.white70, fontSize: 12)),
-              SelectableText(otherKey.length > 10 ? otherKey.substring(0, 10) + '...' : otherKey, style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
-              const Divider(color: Colors.white10, height: 32),
-              const Text('Si los fingerprints no coinciden con lo que ve tu contacto, el chat está desincronizado.', style: TextStyle(color: Colors.white38, fontSize: 11)),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('CERRAR')),
-        ],
-      ),
-    );
-  }
-
-  String? _debugOtherPublicKeyBase64;
 }

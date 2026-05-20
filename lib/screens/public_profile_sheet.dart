@@ -3,6 +3,10 @@ import 'package:url_launcher/url_launcher.dart';
 import '../services/supabase_service.dart';
 import '../services/zone_id_service.dart';
 
+import 'dart:async';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'chat_screen.dart';
+
 class PublicProfileSheet extends StatefulWidget {
   final String userId; // El zone_id público
   final String? realUid; // El UID interno de Supabase
@@ -56,8 +60,73 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
   final _supabaseService = SupabaseService();
   final _zoneIdService = ZoneIdService();
   
-  // 0: Initial, 1: Requesting, 2: Sent
+  // 0: Initial, 1: Requesting, 2: Sent/Pending, 3: Accepted
   int _connectionState = 0;
+  String? _currentMatchId;
+  StreamSubscription<List<Map<String, dynamic>>>? _matchSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkInitialMatchStatus();
+  }
+
+  @override
+  void dispose() {
+    _matchSubscription?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _checkInitialMatchStatus() async {
+    final myId = _zoneIdService.uid;
+    final theirId = widget.realUid;
+    if (myId == null || theirId == null) return;
+
+    final match = await _supabaseService.getMatchStatus(myId, theirId);
+    if (match != null) {
+      _currentMatchId = match['id'];
+      final status = match['status'];
+      if (mounted) {
+        setState(() {
+          if (status == 'pending') {
+            _connectionState = 2; // Sent/Pending
+          } else if (status == 'accepted') {
+            _connectionState = 3; // Accepted
+          } else {
+            _connectionState = 0; // Rejected or other
+          }
+        });
+      }
+    }
+    
+    _listenToMatchChanges(myId, theirId);
+  }
+
+  void _listenToMatchChanges(String myId, String theirId) {
+    _matchSubscription = Supabase.instance.client
+        .from('matches')
+        .stream(primaryKey: ['id'])
+        .eq('requester_id', myId)
+        .eq('receiver_id', theirId)
+        .listen((data) {
+      if (data.isNotEmpty) {
+        final match = data.first;
+        final status = match['status'];
+        if (mounted) {
+          setState(() {
+            _currentMatchId = match['id'];
+            if (status == 'pending') {
+              _connectionState = 2;
+            } else if (status == 'accepted') {
+              _connectionState = 3;
+            } else {
+              _connectionState = 0;
+            }
+          });
+        }
+      }
+    });
+  }
 
   Future<void> _launchUrl(String platform, String? handle) async {
     if (handle == null || handle.isEmpty) return;
@@ -84,6 +153,25 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
   }
 
   void _handleConnectPressed() async {
+    if (_connectionState == 3) {
+      // Si ya está aceptado, entrar al chat inmediatamente
+      if (_currentMatchId != null && widget.realUid != null) {
+        Navigator.pop(context); // Cerrar el modal
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ChatScreen(
+              matchId: _currentMatchId!,
+              otherUserId: widget.realUid!,
+              otherUserName: widget.userName,
+              otherZoneId: widget.userId,
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
     if (_connectionState == 0) {
       final myId = _zoneIdService.uid;
       final theirId = widget.realUid;
@@ -98,12 +186,12 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
       setState(() => _connectionState = 1);
       
       try {
-        await _supabaseService.requestMatch(myId, theirId);
+        final matchId = await _supabaseService.requestMatch(myId, theirId);
         if (mounted) {
+          if (matchId != null) {
+            _currentMatchId = matchId;
+          }
           setState(() => _connectionState = 2);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Solicitud enviada a ${widget.userName}')),
-          );
         }
       } catch (e) {
         if (mounted) {
@@ -197,24 +285,31 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
           
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
-              backgroundColor: _connectionState == 0 ? const Color(0xFF00D2FF) : (_connectionState == 1 ? Colors.grey.shade600 : Colors.greenAccent),
+              backgroundColor: _connectionState == 3 
+                  ? Colors.greenAccent 
+                  : (_connectionState == 0 ? const Color(0xFF00D2FF) : Colors.grey.shade600),
               minimumSize: const Size(double.infinity, 55),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
             icon: _connectionState == 1 
               ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-              : Icon(Icons.lock, color: _connectionState == 1 ? Colors.white : Colors.black, size: 20),
+              : Icon(
+                  _connectionState == 3 ? Icons.chat : Icons.lock, 
+                  color: _connectionState == 1 ? Colors.white : Colors.black, 
+                  size: 20
+                ),
             label: Text(
-              _connectionState == 0 
-                ? 'Solicitar Chat Privado E2EE' 
-                : (_connectionState == 1 ? 'Enviando...' : 'Solicitud Enviada'),
+              _connectionState == 0 ? 'Conectar' 
+              : _connectionState == 1 ? 'Enviando...' 
+              : _connectionState == 2 ? 'Solicitud enviada, a la espera'
+              : 'Entrar al Chat',
               style: TextStyle(
                 color: _connectionState == 1 ? Colors.white : Colors.black, 
                 fontWeight: FontWeight.bold, 
                 fontSize: 16
               ),
             ),
-            onPressed: (_connectionState == 1) ? null : _handleConnectPressed,
+            onPressed: (_connectionState == 1 || _connectionState == 2) ? null : _handleConnectPressed,
           ),
           const SizedBox(height: 20),
         ],

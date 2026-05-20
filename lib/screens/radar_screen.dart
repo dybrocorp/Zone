@@ -170,115 +170,17 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
       return;
     }
 
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: const Color(0xFF1E293B),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        final profile = user.profile;
-        final hasIg = profile?['ig_visible'] == true && profile?['instagram_handle'] != null;
-        final hasFb = profile?['fb_visible'] == true && profile?['facebook_handle'] != null;
-        final hasTiktok = profile?['tiktok_visible'] == true && profile?['tiktok_handle'] != null;
-
-        return Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 20),
-                decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              CircleAvatar(
-                radius: 36,
-                backgroundColor: const Color(0xFF00D2FF),
-                backgroundImage: profile?['avatar_url'] != null ? NetworkImage(profile!['avatar_url']) : null,
-                child: profile?['avatar_url'] == null
-                    ? Text(
-                        user.userName.isNotEmpty ? user.userName[0].toUpperCase() : '?',
-                        style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.black),
-                      )
-                    : null,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                user.userName,
-                style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                user.zoneId,
-                style: const TextStyle(color: Color(0xFF00D2FF), fontSize: 13, fontWeight: FontWeight.w500),
-              ),
-              const SizedBox(height: 24),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        PublicProfileSheet.show(
-                          context,
-                          userId: user.zoneId,
-                          realUid: profile?['id'],
-                          userName: user.userName,
-                          instagramHandle: profile?['instagram_handle'],
-                          facebookHandle: profile?['facebook_handle'],
-                          tiktokHandle: profile?['tiktok_handle'],
-                          avatarUrl: profile?['avatar_url'],
-                        );
-                      },
-                      icon: const Icon(Icons.person, color: Colors.black),
-                      label: const Text('Ver Perfil', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF00D2FF),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () async {
-                        Navigator.pop(context);
-
-                        final myId = _zoneIdService.uid;
-                        final theirId = profile?['id'];
-                        if (myId != null && theirId != null) {
-                          await _supabaseService.requestMatch(myId, theirId);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Solicitud de chat enviada a ${user.userName}'),
-                              backgroundColor: const Color(0xFF00D2FF),
-                            ),
-                          );
-                        }
-                      },
-                      icon: const Icon(Icons.message, color: Color(0xFF00D2FF)),
-                      label: const Text('Conectar', style: TextStyle(color: Color(0xFF00D2FF), fontWeight: FontWeight.bold)),
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: Color(0xFF00D2FF)),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-            ],
-          ),
-        );
-      },
+    final profile = user.profile;
+    
+    PublicProfileSheet.show(
+      context,
+      userId: user.zoneId,
+      realUid: profile?['id'],
+      userName: user.userName,
+      instagramHandle: profile?['instagram_handle'],
+      facebookHandle: profile?['facebook_handle'],
+      tiktokHandle: profile?['tiktok_handle'],
+      avatarUrl: profile?['avatar_url'],
     );
   }
 

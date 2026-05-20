@@ -99,8 +99,6 @@ class _ChatScreenState extends State<ChatScreen> {
       if (otherProfile != null) {
         _otherAvatarUrl ??= otherProfile['avatar_url'] as String?;
         final otherPubKeyBase64 = otherProfile['public_key'];
-        _debugOtherPublicKeyBase64 = otherPubKeyBase64?.toString(); // Guardar para debug
-        
         if (otherPubKeyBase64 != null && otherPubKeyBase64.toString().isNotEmpty) {
           try {
             final otherPubKey = _e2eeService.importPublicKeyFromBase64(otherPubKeyBase64.toString());
@@ -393,7 +391,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ],
         ),
-
+        actions: [
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert, color: Colors.white70),
             onSelected: (value) {

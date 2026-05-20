@@ -293,6 +293,7 @@ class ZoneIdService {
 
   /// Verifica si el usuario actual tiene su fila en la tabla 'users'.
   /// Si no existe (ej: borrado manual de DB o fallo previo), la intenta recrear.
+  /// SIEMPRE sincroniza la clave pública local con Supabase para evitar desincronización.
   Future<void> checkAndFixRegistration() async {
     if (_uid == null || _zoneId == null) return;
 
@@ -301,20 +302,20 @@ class ZoneIdService {
       
       String? publicKeyBase64 = await _safeRead(_keyPublicKey);
       
+      // Si no tenemos clave local, generamos una ahora
+      if (publicKeyBase64 == null) {
+        print('[ZoneIdService] Clave pública local no encontrada. Generando...');
+        final keyPair = await _e2ee.generateKeyPair();
+        final keyPairData = await keyPair.extract();
+        publicKeyBase64 = _bytesToBase64(keyPairData.publicKey.bytes);
+        final privKey = _bytesToBase64(await keyPair.extractPrivateKeyBytes());
+        
+        await _storage.write(key: _keyPublicKey, value: publicKeyBase64);
+        await _storage.write(key: _keyPrivateKey, value: privKey);
+      }
+
       if (res == null) {
         print('[ZoneIdService] Alerta: Fila de usuario no encontrada. Recreando...');
-        
-        // Si no tenemos clave local generamos una ahora (aunque _ensureAuth ya debería haberlo hecho)
-        if (publicKeyBase64 == null) {
-          final keyPair = await _e2ee.generateKeyPair();
-          final keyPairData = await keyPair.extract();
-          publicKeyBase64 = _bytesToBase64(keyPairData.publicKey.bytes);
-          final privKey = _bytesToBase64(await keyPair.extractPrivateKeyBytes());
-          
-          await _storage.write(key: _keyPublicKey, value: publicKeyBase64);
-          await _storage.write(key: _keyPrivateKey, value: privKey);
-        }
-
         await _supabase.from('users').upsert({
           'id': _uid,
           'zone_id': _zoneId,
@@ -322,14 +323,21 @@ class ZoneIdService {
           'stealth_mode': false,
         });
         print('[ZoneIdService] Fila de usuario recreada con éxito.');
-      } 
-      else if (_needPublicKeyUpdate) {
-        print('[ZoneIdService] Actualizando clave pública en Supabase debido a nueva generación local...');
-        await _supabase.from('users').update({
-          'public_key': publicKeyBase64,
-        }).eq('id', _uid!);
-        _needPublicKeyUpdate = false;
+      } else {
+        // SIEMPRE sincronizar la clave pública con Supabase
+        final dbKey = res['public_key']?.toString();
+        if (dbKey != publicKeyBase64) {
+          print('[ZoneIdService] ⚠️ Clave en Supabase NO coincide con la local. Sincronizando...');
+          print('[ZoneIdService] DB: ${dbKey?.substring(0, 8)}... vs Local: ${publicKeyBase64.substring(0, 8)}...');
+          await _supabase.from('users').update({
+            'public_key': publicKeyBase64,
+          }).eq('id', _uid!);
+          print('[ZoneIdService] ✅ Clave pública sincronizada con Supabase.');
+        } else {
+          print('[ZoneIdService] ✅ Clave pública ya sincronizada.');
+        }
       }
+      _needPublicKeyUpdate = false;
     } catch (e) {
       print('[ZoneIdService] Error en checkAndFixRegistration: $e');
     }

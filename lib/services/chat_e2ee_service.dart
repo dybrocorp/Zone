@@ -55,10 +55,17 @@ class ChatE2EEService {
       secretKey: sharedSecret,
     );
     
+    final eContent = base64Encode(secretBox.cipherText);
+    final nContent = base64Encode(secretBox.nonce);
+    final mContent = base64Encode(secretBox.mac.bytes);
+    
+    // VALIDACÍON LOCAL PARA CONFIRMAR QUE EL MAC NO ES TRUNCADO
+    print('[DEBUG-CRYPTO] Encrypted Len: ${eContent.length}, Nonce: ${nContent.length}, Mac: ${mContent.length}');
+
     return {
-      'encrypted_content': base64Encode(secretBox.cipherText),
-      'nonce': base64Encode(secretBox.nonce),
-      'mac': base64Encode(secretBox.mac.bytes),
+      'encrypted_content': eContent,
+      'nonce': nContent,
+      'mac': mContent,
     };
   }
 

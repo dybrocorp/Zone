@@ -241,8 +241,19 @@ class ZoneIdService {
       
       final publicKeyBase64 = _bytesToBase64(keyPairData.publicKey.bytes);
       
-      await _storage.write(key: _keyPrivateKey, value: privateKeyBase64);
-      await _storage.write(key: _keyPublicKey, value: publicKeyBase64);
+      try {
+        await _storage.write(key: _keyPrivateKey, value: privateKeyBase64);
+        await _storage.write(key: _keyPublicKey, value: publicKeyBase64);
+      } catch(e) {
+        print('[ZoneIdService] Error escribiendo en keystore corrupto: $e. Forzando borrado.');
+        try {
+          await _storage.deleteAll();
+          await _storage.write(key: _keyPrivateKey, value: privateKeyBase64);
+          await _storage.write(key: _keyPublicKey, value: publicKeyBase64);
+        } catch(e2) {
+          print('[ZoneIdService] No se pudo recuperar almacenamiento seguro: $e2');
+        }
+      }
       
       // Marcar que necesitamos actualizar la pública en Supabase
       _needPublicKeyUpdate = true;

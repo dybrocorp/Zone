@@ -417,43 +417,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ],
       ),
-              const PopupMenuItem(
-                value: 'refresh',
-                child: Row(
-                  children: [
-                    Icon(Icons.refresh, size: 20, color: Colors.white70),
-                    SizedBox(width: 10),
-                    Text('Actualizar chat'),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'block',
-                child: Row(
-                  children: [
-                    Icon(Icons.block, size: 20, color: Colors.redAccent),
-                    SizedBox(width: 10),
-                    Text('Bloquear usuario', style: TextStyle(color: Colors.redAccent)),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'report',
-                child: Row(
-                  children: [
-                    Icon(Icons.report_problem, size: 20, color: Colors.orangeAccent),
-                    SizedBox(width: 10),
-                    Text('Reportar usuario', style: TextStyle(color: Colors.orangeAccent)),
-                  ],
-                ),
-              ),
-            ],
-            color: const Color(0xFF1E293B),
-          ),
-        ],
-        backgroundColor: const Color(0xFF1E293B),
-        elevation: 1,
-      ),
+
       body: Column(
         children: [
           Container(

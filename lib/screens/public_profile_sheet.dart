@@ -106,11 +106,14 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
     _matchSubscription = Supabase.instance.client
         .from('matches')
         .stream(primaryKey: ['id'])
-        .eq('requester_id', myId)
-        .eq('receiver_id', theirId)
         .listen((data) {
-      if (data.isNotEmpty) {
-        final match = data.first;
+      final relevantMatches = data.where((m) => 
+        (m['requester_id'] == myId && m['receiver_id'] == theirId) ||
+        (m['requester_id'] == theirId && m['receiver_id'] == myId)
+      ).toList();
+
+      if (relevantMatches.isNotEmpty) {
+        final match = relevantMatches.first;
         final status = match['status'];
         if (mounted) {
           setState(() {

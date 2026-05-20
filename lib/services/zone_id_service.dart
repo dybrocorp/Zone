@@ -133,7 +133,11 @@ class ZoneIdService {
       
       // 5. Actualizar la base de datos para que este dispositivo sea el nuevo "dueño" del ZONE-ID
       // Usamos RPC para saltarnos el bloqueo de RLS en el handover de ID
-      await _supabase.rpc('claim_zone_id', params: {'p_zone_id': zoneId});
+      final pubKey = await _storage.read(key: _keyPublicKey);
+      await _supabase.rpc('claim_zone_id', params: {
+        'p_zone_id': zoneId,
+        'p_public_key': pubKey,
+      });
       
       // 6. Si teníamos perfil previo, migrarlo al nuevo UID
       if (profileQuery != null && (profileQuery['display_name'] != null || profileQuery['avatar_url'] != null)) {
@@ -266,7 +270,12 @@ class ZoneIdService {
     // Usamos el RPC claim_zone_id que es idempotente y seguro (Security Definer).
     if (currentZoneId != null) {
       try {
-        await _supabase.rpc('claim_zone_id', params: {'p_zone_id': currentZoneId});
+        final pubKey = await _storage.read(key: _keyPublicKey);
+        await _supabase.rpc('claim_zone_id', params: {
+          'p_zone_id': currentZoneId,
+          'p_public_key': pubKey,
+        });
+        print('[ZoneIdService] Reclamo exitoso para $currentZoneId con llave ${pubKey?.substring(0, 5)}...');
       } catch (e) {
         print('[ZoneIdService] Aviso: Error al reclamar Zone ID en el inicio: $e');
       }

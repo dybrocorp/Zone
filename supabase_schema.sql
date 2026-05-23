@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS public.users (
     tiktok_visible BOOLEAN DEFAULT TRUE,
     reports_count INT DEFAULT 0,
     is_shadowbanned BOOLEAN DEFAULT FALSE,
-    avatar_url TEXT,                        -- URL pública de la foto de perfil
+    avatar_url TEXT,                        -- URL pública de la foto de perfil principal
+    avatar_is_public BOOLEAN DEFAULT TRUE,  -- ¿La foto de perfil es pública para todos?
+    gallery_photos JSONB DEFAULT '[]'::jsonb, -- Array de fotos de galería con permisos
     created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 

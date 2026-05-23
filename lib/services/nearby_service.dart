@@ -1,13 +1,20 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/widgets.dart';
+import 'notification_service.dart';
 import 'package:nearby_connections/nearby_connections.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/radar_config.dart';
 import 'ble_proximity_service.dart';
 import 'premium_service.dart';
-import 'supabase_service.dart';
 import 'zone_id_service.dart';
+import 'isar_service.dart';
+import 'connectivity_service.dart';
+import 'p2p_security_service.dart';
+import 'chat_e2ee_service.dart';
+import 'supabase_service.dart';
+import 'package:cryptography/cryptography.dart';
+import '../models/isar_models.dart';
 
 /// Modelo de usuario descubierto por Nearby Connections.
 class NearbyUser {
@@ -33,8 +40,9 @@ class NearbyUser {
 /// Modelo de mensaje recibido via payload.
 class NearbyMessage {
   final String fromEndpointId;
+  final String? sourceZoneId; // ID original del emisor en la malla
   final String text;
-  NearbyMessage({required this.fromEndpointId, required this.text});
+  NearbyMessage({required this.fromEndpointId, required this.text, this.sourceZoneId});
 }
 
 /// Servicio Singleton que usa Google Nearby Connections + tokens efímeros de Supabase.
@@ -48,6 +56,10 @@ class NearbyService with WidgetsBindingObserver {
   final _supabaseService = SupabaseService();
   final _zoneIdService = ZoneIdService();
   final _bleProximity = BleProximityService();
+  final _isar = IsarService();
+  final _connectivity = ConnectivityService();
+  final _security = P2PSecurityService();
+  final _chatE2EE = ChatE2EEService();
 
   /// P2P_CLUSTER mejora alcance y descubrimiento bilateral en espacios abiertos.
   static const Strategy _strategy = Strategy.P2P_CLUSTER;
@@ -67,12 +79,14 @@ class NearbyService with WidgetsBindingObserver {
   bool _isDiscovering = false;
   bool _isRadarIntendedActive = false; // Nueva bandera para persistir el estado deseado
   bool _lifecycleObserverRegistered = false;
+  bool _isAppMinimized = false; // Bandera para saber si estamos en segundo plano
   bool get isRadarActive => _isRadarIntendedActive;
 
   Timer? _scanCycleTimer;
   Timer? _tokenRefreshTimer;
 
   final Map<String, NearbyUser> _discoveredUsers = {};
+  final Set<String> _notifiedUserIds = {}; // Para no spamear notificaciones del mismo usuario
   final _discoveredUsersController = StreamController<List<NearbyUser>>.broadcast();
   Stream<List<NearbyUser>> get discoveredUsersStream => _discoveredUsersController.stream;
   List<NearbyUser> get discoveredUsers => _discoveredUsers.values.toList();
@@ -83,6 +97,12 @@ class NearbyService with WidgetsBindingObserver {
   final Map<String, dynamic> _pendingConnections = {};
   final Set<String> _connectedEndpoints = {};
   final Set<String> _resolvingEndpoints = {};
+  
+  // Mesh Routing Table: Map<ZoneId, MeshRoute>
+  final Map<String, MeshRoute> _routingTable = {};
+  static const int _maxMeshHops = 5;
+
+  int get routingTableSize => _routingTable.length;
 
   // ──────────────────────────────────────────────────────────────
   //  Inicialización
@@ -95,6 +115,7 @@ class NearbyService with WidgetsBindingObserver {
     }
     _userId = userId;
     _ensureLifecycleObserver();
+    await _connectivity.initialize();
     await _loadUserContext();
     await _refreshToken();
   }
@@ -159,10 +180,19 @@ class NearbyService with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
+    if (state == AppLifecycleState.paused) {
+      _isAppMinimized = true;
+      // No pausar el radar si _isRadarIntendedActive == true.
+      if (!_isRadarIntendedActive) {
+        _pauseScanning();
+      }
+    } else if (state == AppLifecycleState.detached) {
       _pauseScanning();
     } else if (state == AppLifecycleState.resumed) {
-      _resumeScanning();
+      _isAppMinimized = false;
+      if (_isRadarIntendedActive) {
+        _resumeScanning();
+      }
     }
   }
 
@@ -377,15 +407,29 @@ class NearbyService with WidgetsBindingObserver {
         return;
       }
 
-      _discoveredUsers[endpointId]!
-        ..userName = profile['display_name'] ?? profile['zone_id'] ?? 'ZONE-???'
-        ..zoneId = profile['zone_id'] ?? ''
-        ..distanceMeters = distance
-        ..profile = profile;
-      _emitDiscoveredUsers();
+      final user = _discoveredUsers[endpointId]!;
+      if (profile != null) {
+        user.userName = profile['display_name'] ?? 'Usuario';
+        user.zoneId = profile['zone_id'] ?? '';
+        user.profile = profile;
+      }
 
-      if (_userId.isNotEmpty && profileZoneId != null && profileZoneId.isNotEmpty) {
-        await _supabaseService.registerEncounter(_userId, profileZoneId);
+      _discoveredUsers[endpointId] = user;
+      _resolvingEndpoints.remove(endpointId);
+      
+      // Notificación en segundo plano si es nuevo
+      if (_isAppMinimized && !_notifiedUserIds.contains(user.zoneId)) {
+        _notifiedUserIds.add(user.zoneId);
+        NotificationService().showDiscoveryNotification(user.userName);
+      }
+      
+      _emitDiscoveredUsers();
+      
+      // Registrar el encuentro en base de datos de manera silente
+      if (user.zoneId.isNotEmpty) {
+        _supabaseService.registerEncounter(_userId, user.zoneId);
+        _isar.saveEncounter(userId: _userId, otherZoneId: user.zoneId, isSynced: _connectivity.isOnline);
+        _isar.saveProfile(profile);
       }
     } catch (e) {
       print('[NearbyService] Error al resolver token: $e');
@@ -418,6 +462,12 @@ class NearbyService with WidgetsBindingObserver {
       if (_discoveredUsers.containsKey(id)) {
         _discoveredUsers[id]!.isConnected = true;
         _emitDiscoveredUsers();
+        
+        // Si estamos offline o preferimos P2P, intercambiamos perfiles inmediatamente
+        _shareProfileP2P(id);
+        
+        // Mesh: Compartir nuestra tabla de rutas
+        _shareRoutingTable(id);
       }
     } else {
       _pendingConnections.remove(id);
@@ -490,13 +540,275 @@ class NearbyService with WidgetsBindingObserver {
   void _onPayloadReceived(String endpointId, Payload payload) {
     if (payload.type == PayloadType.BYTES && payload.bytes != null) {
       final text = utf8.decode(payload.bytes!);
-      _incomingMessagesController.add(
-        NearbyMessage(fromEndpointId: endpointId, text: text),
-      );
+      
+      try {
+        final Map<String, dynamic> data = jsonDecode(text);
+        final type = data['type'];
+        
+        if (type == 'profile_exchange') {
+          _handleProfileExchange(endpointId, data['data']);
+        } else if (type == 'routing_table') {
+          _handleRoutingTableUpdate(endpointId, data['data']);
+        } else if (type == 'mesh_msg') {
+          _handleMeshMessage(endpointId, data);
+        }
+      } catch (e) {
+        // Tratar como mensaje directo legado o ignorar si no es JSON válido
+        _incomingMessagesController.add(
+          NearbyMessage(fromEndpointId: endpointId, text: text),
+        );
+      }
     }
   }
 
+  Future<void> _shareProfileP2P(String endpointId) async {
+    final profile = await _zoneIdService.getMyProfile();
+    if (profile == null) return;
+
+    final exchangeData = {
+      'type': 'profile_exchange',
+      'data': {
+        'id': profile['id'],
+        'zone_id': profile['zone_id'],
+        'display_name': profile['display_name'],
+        'avatar_url': profile['avatar_url'],
+        'publicKey': _security.publicBase64,
+        'updatedAt': DateTime.now().toIso8601String(),
+      }
+    };
+
+    sendMessage(endpointId, jsonEncode(exchangeData));
+  }
+
+  void _handleProfileExchange(String endpointId, Map<String, dynamic> profileData) async {
+    print('[NearbyService] Perfil P2P recibido de $endpointId: ${profileData['zone_id']}');
+    
+    // Derivación de llave de sesión si viene clave pública
+    final remotePublicKey = profileData['publicKey'] as String?;
+    if (remotePublicKey != null) {
+      print('[NearbyService] Derivando llave de sesión P2P...');
+      final sessionKey = await _security.deriveSessionKey(remotePublicKey);
+      if (sessionKey != null) {
+        profileData['sessionKey'] = sessionKey;
+        print('[NearbyService] Llave de sesión establecida con éxito.');
+      }
+    }
+
+    // Guardar en Isar
+    _isar.saveProfile(profileData);
+    
+    // Registrar encuentro localmente
+    _isar.saveEncounter(
+      userId: _userId,
+      otherZoneId: profileData['zone_id'],
+      isSynced: _connectivity.isOnline,
+    );
+
+    // Mesh: Añadir ruta directa a nuestra tabla
+    _updateRoutingTable(profileData['zone_id'], endpointId, 1);
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  //  Mesh Routing Logic
+  // ──────────────────────────────────────────────────────────────
+
+  void _shareRoutingTable(String targetEndpointId) {
+    // Compartir rutas conocidas (incluyéndonos a nosotros)
+    final routes = <Map<String, dynamic>>[];
+    
+    // Ruta hacia mí mismo (distancia 0)
+    routes.add({'zoneId': _myZoneId, 'distance': 0});
+    
+    // Otras rutas conocidas
+    _routingTable.forEach((zoneId, route) {
+      if (route.distance < _maxMeshHops) {
+        routes.add({'zoneId': zoneId, 'distance': route.distance});
+      }
+    });
+
+    sendMessage(targetEndpointId, jsonEncode({
+      'type': 'routing_table',
+      'data': routes,
+    }));
+  }
+
+  void _handleRoutingTableUpdate(String fromEndpointId, List<dynamic> routes) {
+    print('[NearbyService] Actualización de tabla Mesh desde $fromEndpointId');
+    for (final r in routes) {
+      final zoneId = r['zoneId'] as String;
+      final distance = r['distance'] as int;
+
+      if (zoneId == _myZoneId) continue;
+
+      // Si es una ruta más corta o nueva, actualizar
+      final existing = _routingTable[zoneId];
+      if (existing == null || (distance + 1) < existing.distance) {
+        _updateRoutingTable(zoneId, fromEndpointId, distance + 1);
+      }
+    }
+  }
+
+  void _updateRoutingTable(String zoneId, String nextHop, int distance) {
+    final route = MeshRoute()
+      ..targetZoneId = zoneId
+      ..nextHopEndpointId = nextHop
+      ..distance = distance
+      ..lastUpdate = DateTime.now();
+    
+    _routingTable[zoneId] = route;
+    _isar.updateRoute(zoneId, nextHop, distance);
+    print('[NearbyService] Ruta Mesh actualizada: $zoneId vía $nextHop (saltos: $distance)');
+  }
+
+  Future<void> sendMeshMessage(String targetZoneId, String message) async {
+    final route = _routingTable[targetZoneId];
+    final profile = await _isar.getProfile(targetZoneId);
+    
+    Map<String, dynamic> packet = {
+      'type': 'mesh_msg',
+      'source': _myZoneId,
+      'target': targetZoneId,
+      'msgId': DateTime.now().millisecondsSinceEpoch.toString(),
+      'text': message,
+      'hops': 0,
+      'isEncrypted': false,
+    };
+
+    // Intentar cifrar si tenemos llave de sesión
+    if (profile?.sessionKey != null) {
+      try {
+        final sessionKeyBytes = base64Decode(profile!.sessionKey!);
+        final sharedSecret = SecretKey(sessionKeyBytes);
+        final encrypted = await _chatE2EE.encryptMessage(message, sharedSecret);
+        
+        packet['text'] = encrypted['encrypted_content'];
+        packet['nonce'] = encrypted['nonce'];
+        packet['mac'] = encrypted['mac'];
+        packet['isEncrypted'] = true;
+        print('[NearbyService] Mensaje Mesh cifrado para $targetZoneId');
+      } catch (e) {
+        print('[NearbyService] Error cifrando mensaje Mesh: $e');
+      }
+    }
+
+    if (route != null) {
+      print('[NearbyService] Enviando mensaje Mesh a $targetZoneId vía ${route.nextHopEndpointId}');
+      sendMessage(route.nextHopEndpointId, jsonEncode(packet));
+    } else {
+      // Flood: Si no hay ruta, enviar a todos los vecinos
+      print('[NearbyService] No hay ruta para $targetZoneId, inundando red...');
+      for (final endpoint in _connectedEndpoints) {
+        sendMessage(endpoint, jsonEncode(packet));
+      }
+    }
+  }
+
+  void _handleMeshMessage(String fromEndpointId, Map<String, dynamic> packet) async {
+    final target = packet['target'] as String;
+    final source = packet['source'] as String;
+    final msgId = packet['msgId'] as String;
+    final hops = (packet['hops'] as int) + 1;
+
+    if (target == _myZoneId) {
+      // Validar si hay un match/permiso antes de procesar
+      final profile = await _isar.getProfile(source);
+      if (profile != null) {
+        _processIncomingMeshMessage(source, packet, fromEndpointId);
+      } else {
+        print('[NearbyService] Mensaje Mesh ignorado: No hay perfil/match previo con $source');
+      }
+      return;
+    }
+
+    if (hops >= _maxMeshHops) return;
+
+    // Relay: Reenviar mensaje
+    packet['hops'] = hops;
+    final route = _routingTable[target];
+    
+    if (route != null) {
+      // Reenviar al siguiente salto conocido
+      if (route.nextHopEndpointId != fromEndpointId) {
+        sendMessage(route.nextHopEndpointId, jsonEncode(packet));
+      }
+    } else {
+      // Flood relay: A todos excepto de donde vino
+      for (final endpoint in _connectedEndpoints) {
+        if (endpoint != fromEndpointId) {
+          sendMessage(endpoint, jsonEncode(packet));
+        }
+      }
+    }
+  }
+
+  Future<void> _processIncomingMeshMessage(String sourceZoneId, Map<String, dynamic> packet, String fromEndpointId) async {
+    String text = packet['text'] as String;
+    final isEncrypted = packet['isEncrypted'] as bool? ?? false;
+
+    if (isEncrypted) {
+      final profile = await _isar.getProfile(sourceZoneId);
+      if (profile?.sessionKey != null) {
+        try {
+          final sessionKeyBytes = base64Decode(profile!.sessionKey!);
+          final sharedSecret = SecretKey(sessionKeyBytes);
+          text = await _chatE2EE.decryptMessage(
+            text,
+            packet['nonce'] as String,
+            packet['mac'] as String,
+            sharedSecret,
+          );
+          print('[NearbyService] Mensaje Mesh descifrado de $sourceZoneId');
+        } catch (e) {
+          text = '[Error de descifrado: la llave de sesión podría ser inválida]';
+          print('[NearbyService] Error descifrando mensaje Mesh: $e');
+        }
+      } else {
+        text = '[Mensaje cifrado recibido pero no se tiene la llave de sesión]';
+      }
+    }
+
+    print('[NearbyService] Mensaje Mesh procesado de $sourceZoneId: $text');
+    _incomingMessagesController.add(
+      NearbyMessage(fromEndpointId: fromEndpointId, text: text, sourceZoneId: sourceZoneId),
+    );
+  }
+
+  /// Verifica si un usuario está disponible para chat P2P directo.
+  bool isPeerConnected(String zoneId) {
+    return _routingTable.containsKey(zoneId) && _routingTable[zoneId]!.distance == 1;
+  }
+
+  /// Verifica si un usuario es alcanzable vía Mesh.
+  bool isPeerReachable(String zoneId) {
+    return _routingTable.containsKey(zoneId);
+  }
+
   void _onPayloadTransferUpdate(String endpointId, PayloadTransferUpdate update) {}
+
+  // ──────────────────────────────────────────────────────────────
+  //  STRESS TESTING & SIMULATION
+  // ──────────────────────────────────────────────────────────────
+
+  /// Simula el recibimiento de múltiples mensajes Mesh para pruebas de estrés.
+  void simulateMeshTraffic(int messageCount) {
+    print('[NearbyService] Iniciando simulación de estrés: $messageCount mensajes...');
+    for (int i = 0; i < messageCount; i++) {
+       final mockPacket = {
+        'type': 'mesh_msg',
+        'source': 'MOCK-USER-$i',
+        'target': _myZoneId,
+        'msgId': 'mock-$i-${DateTime.now().millisecondsSinceEpoch}',
+        'text': 'Mensaje de prueba número $i - Malla de Seguridad Activa.',
+        'hops': 1,
+        'isEncrypted': false,
+      };
+      
+      // Inyectar manualmente
+      Timer(Duration(milliseconds: i * 50), () {
+        _handleMeshMessage('MOCK-ENDPOINT-$i', mockPacket);
+      });
+    }
+  }
 
   void _emitDiscoveredUsers() {
     if (!_discoveredUsersController.isClosed) {

@@ -170,17 +170,81 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
       return;
     }
 
-    final profile = user.profile;
-    
-    PublicProfileSheet.show(
-      context,
-      userId: user.zoneId,
-      realUid: profile?['id'],
-      userName: user.userName,
-      instagramHandle: profile?['instagram_handle'],
-      facebookHandle: profile?['facebook_handle'],
-      tiktokHandle: profile?['tiktok_handle'],
-      avatarUrl: profile?['avatar_url'],
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E293B),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        final profile = user.profile;
+        
+        return Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 20),
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              CircleAvatar(
+                radius: 36,
+                backgroundColor: const Color(0xFF00D2FF),
+                backgroundImage: profile?['avatar_url'] != null ? NetworkImage(profile!['avatar_url']) : null,
+                child: profile?['avatar_url'] == null
+                    ? Text(
+                        user.userName.isNotEmpty ? user.userName[0].toUpperCase() : '?',
+                        style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.black),
+                      )
+                    : null,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                user.userName,
+                style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                user.zoneId,
+                style: const TextStyle(color: Color(0xFF00D2FF), fontSize: 13, fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    PublicProfileSheet.show(
+                      context,
+                      userId: user.zoneId,
+                      realUid: profile?['id'],
+                      userName: user.userName,
+                      instagramHandle: profile?['instagram_handle'],
+                      facebookHandle: profile?['facebook_handle'],
+                      tiktokHandle: profile?['tiktok_handle'],
+                      avatarUrl: profile?['avatar_url'],
+                    );
+                  },
+                  icon: const Icon(Icons.person, color: Colors.black),
+                  label: const Text('Ver Perfil Completo y Conectar', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00D2FF),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -198,9 +262,17 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
               AnimatedBuilder(
                 animation: _animationController,
                 builder: (context, child) {
-                  return CustomPaint(
-                    size: Size(screenSize.width, screenSize.height),
-                    painter: RadarPainter(_animationController.value),
+                  return Stack(
+                    children: [
+                      CustomPaint(
+                        size: Size(screenSize.width, screenSize.height),
+                        painter: MeshLinkPainter(_nearbyUsers, _nearbyService, screenSize),
+                      ),
+                      CustomPaint(
+                        size: Size(screenSize.width, screenSize.height),
+                        painter: RadarPainter(_animationController.value),
+                      ),
+                    ],
                   );
                 },
               ),
@@ -384,15 +456,24 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
             ),
             Positioned(
               bottom: 40,
-              child: TextButton.icon(
-                onPressed: _openDonations,
-                icon: const Icon(Icons.favorite, color: Colors.pinkAccent),
-                label: const Text('Donaciones', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold)),
-                style: TextButton.styleFrom(
-                  backgroundColor: Colors.white10,
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                ),
+              left: 20,
+              right: 20,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const MeshHealthDashboard(),
+                  const SizedBox(height: 16),
+                  TextButton.icon(
+                    onPressed: _openDonations,
+                    icon: const Icon(Icons.favorite, color: Colors.pinkAccent),
+                    label: const Text('Donaciones', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold)),
+                    style: TextButton.styleFrom(
+                      backgroundColor: Colors.white10,
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -460,20 +541,134 @@ class RadarPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final Paint paint = Paint()
-      ..color = const Color(0xFF00D2FF).withOpacity((1.0 - animationValue).clamp(0.0, 1.0))
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-
     final Offset center = Offset(size.width / 2, size.height / 2);
     final double maxRadius = sqrt(size.width * size.width + size.height * size.height) / 1.5;
-    for (int i = 0; i < 3; i++) {
-      double currentProgress = (animationValue + (i * 0.33)) % 1.0;
-      paint.color = const Color(0xFF00D2FF).withOpacity((1.0 - currentProgress).clamp(0.0, 1.0));
-      canvas.drawCircle(center, maxRadius * currentProgress, paint);
+
+    for (int i = 0; i < 4; i++) {
+      double currentProgress = (animationValue + (i * 0.25)) % 1.0;
+      final double opacity = (1.0 - currentProgress).clamp(0.0, 1.0);
+      
+      final Paint ringPaint = Paint()
+        ..shader = RadialGradient(
+          colors: [
+            const Color(0xFF00D2FF).withOpacity(opacity * 0.3),
+            const Color(0xFF00D2FF).withOpacity(0.0),
+          ],
+        ).createShader(Rect.fromCircle(center: center, radius: maxRadius * currentProgress))
+        ..style = PaintingStyle.fill;
+
+      final Paint strokePaint = Paint()
+        ..color = const Color(0xFF00D2FF).withOpacity(opacity * 0.4)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0 + (1.0 - currentProgress) * 2.0;
+
+      canvas.drawCircle(center, maxRadius * currentProgress, ringPaint);
+      canvas.drawCircle(center, maxRadius * currentProgress, strokePaint);
     }
   }
 
   @override
   bool shouldRepaint(covariant RadarPainter oldDelegate) => oldDelegate.animationValue != animationValue;
+}
+
+class MeshLinkPainter extends CustomPainter {
+  final List<NearbyUser> users;
+  final NearbyService service;
+  final Size screenSize;
+
+  MeshLinkPainter(this.users, this.service, this.screenSize);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final paint = Paint()
+      ..color = const Color(0xFF00D2FF).withOpacity(0.2)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0
+      ..strokeCap = StrokeCap.round;
+
+    final dashPaint = Paint()
+      ..color = const Color(0xFF00D2FF).withOpacity(0.1)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.5;
+
+    // Dibujar líneas desde el centro a cada usuario directo
+    for (int i = 0; i < users.length; i++) {
+        final user = users[i];
+        final angle = (2 * pi / max(users.length, 1)) * i - (pi / 2);
+        final random = Random(user.endpointId.hashCode);
+        final radius = size.width * (0.15 + random.nextDouble() * 0.25);
+        final userPos = Offset(
+          center.dx + radius * cos(angle),
+          center.dy + radius * sin(angle),
+        );
+
+        // Si es salto directo (distancia 1)
+        if (service.isPeerConnected(user.zoneId)) {
+          canvas.drawLine(center, userPos, paint);
+        } else {
+          // Si es un nodo mesh indirecto, dibujar línea punteada o tenue
+          canvas.drawLine(center, userPos, dashPaint);
+        }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant MeshLinkPainter oldDelegate) => true;
+}
+
+class MeshHealthDashboard extends StatelessWidget {
+  const MeshHealthDashboard({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    final nearbyService = NearbyService();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E293B).withOpacity(0.8),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF00D2FF).withOpacity(0.2)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.2),
+            blurRadius: 10,
+            spreadRadius: 2,
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildStat(Icons.security, 'E2EE', 'ACTIVO', Colors.greenAccent),
+          _buildDivider(),
+          _buildStat(Icons.hub, 'MESH', '${nearbyService.routingTableSize} Nodos', const Color(0xFF00D2FF)),
+          _buildDivider(),
+          _buildStat(Icons.bolt, 'ESTADO', 'PROTEGIDO', Colors.orangeAccent),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStat(IconData icon, String label, String value, Color color) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(height: 4),
+        Text(label, style: const TextStyle(color: Colors.white38, fontSize: 8, fontWeight: FontWeight.bold)),
+        Text(value, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
+      ],
+    );
+  }
+
+  Widget _buildDivider() {
+    return Container(
+      height: 24,
+      width: 1,
+      margin: const EdgeInsets.symmetric(horizontal: 12),
+      color: Colors.white10,
+    );
+  }
 }

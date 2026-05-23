@@ -356,6 +356,8 @@ class ZoneIdService {
     String? tiktok,
     bool tiktokVisible = true,
     String? avatarUrl,
+    bool avatarIsPublic = true,
+    List<Map<String, dynamic>> galleryPhotos = const [],
   }) async {
     // Entrar a asegurar la sesión
     await ensureAuth();
@@ -385,6 +387,8 @@ class ZoneIdService {
       'tiktok_handle': tiktok,
       'tiktok_visible': tiktokVisible,
       'avatar_url': avatarUrl,
+      'avatar_is_public': avatarIsPublic,
+      'gallery_photos': galleryPhotos,
     });
   }
 

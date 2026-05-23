@@ -6,6 +6,8 @@ import '../services/supabase_service.dart';
 import '../services/zone_id_service.dart';
 import '../services/chat_e2ee_service.dart';
 import '../services/notification_service.dart';
+import '../services/nearby_service.dart';
+import '../services/connectivity_service.dart';
 import '../widgets/user_avatar.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -32,6 +34,10 @@ class _ChatScreenState extends State<ChatScreen> {
   final _supabaseService = SupabaseService();
   final _zoneIdService = ZoneIdService();
   final _e2eeService = ChatE2EEService();
+  final _nearbyService = NearbyService();
+  final _connectivity = ConnectivityService();
+  
+  StreamSubscription? _meshSubscription;
   
   final TextEditingController _messageController = TextEditingController();
   final List<Map<String, dynamic>> _messages = [];
@@ -52,6 +58,32 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     NotificationService.currentActiveMatchId = widget.matchId;
     _setupChat();
+    _setupMeshListener();
+  }
+
+  void _setupMeshListener() {
+    _meshSubscription = _nearbyService.incomingMessagesStream.listen((msg) {
+      if (msg.sourceZoneId == widget.otherZoneId) {
+        print('[ChatScreen] Mensaje Mesh recibido de ${msg.sourceZoneId}');
+        
+        final newMsg = {
+          'id': 'mesh-${DateTime.now().millisecondsSinceEpoch}',
+          'sender_id': widget.otherUserId ?? widget.otherZoneId,
+          'match_id': widget.matchId,
+          'text': msg.text, // Ya viene descifrado si NearbyService hizo su trabajo
+          'created_at': DateTime.now().toUtc().toIso8601String(),
+          'transport': 'mesh',
+        };
+
+        if (mounted) {
+          setState(() {
+            _messages.add(newMsg);
+            _decryptedByMessageId[newMsg['id']!] = msg.text;
+          });
+          _scrollToBottom();
+        }
+      }
+    });
   }
 
   Future<void> _setupChat() async {
@@ -329,21 +361,42 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     try {
-      // Encriptar mensaje con E2EE real
-      final encrypted = await _e2eeService.encryptMessage(controllerText, _sharedSecret!);
+      // 1. Enviar vía MESH si estamos cerca (Máxima velocidad, Offline)
+      bool sentViaMesh = false;
+      if (_nearbyService.isPeerReachable(widget.otherZoneId)) {
+        await _nearbyService.sendMeshMessage(widget.otherZoneId, controllerText);
+        sentViaMesh = true;
+        print('[ChatScreen] Mensaje enviado vía Mesh');
+      }
 
-      await _supabaseService.sendMessage(
-        matchId: widget.matchId,
-        senderId: uid,
-        encryptedContent: encrypted['encrypted_content'],
-        nonce: encrypted['nonce'],
-        mac: encrypted['mac'],
-      );
-      print('[ChatScreen] Mensaje enviado a Supabase');
+      // 2. Enviar vía SUPABASE si hay conexión (Persistencia y Nube)
+      if (_connectivity.isOnline) {
+        final encrypted = await _e2eeService.encryptMessage(controllerText, _sharedSecret!);
+        await _supabaseService.sendMessage(
+          matchId: widget.matchId,
+          senderId: uid,
+          encryptedContent: encrypted['encrypted_content'],
+          nonce: encrypted['nonce'],
+          mac: encrypted['mac'],
+        );
+        print('[ChatScreen] Mensaje enviado a Supabase');
+      } else if (!sentViaMesh) {
+        // Si no hay mesh ni internet, el mensaje falló
+        throw Exception('Sin conexión Mesh ni Internet');
+      }
+
+      // Marcar transporte en el mensaje optimista si fue solo mesh
+      if (sentViaMesh && !_connectivity.isOnline) {
+        if (mounted) {
+          setState(() {
+            final idx = _messages.indexWhere((m) => m['id'] == tempId);
+            if (idx != -1) _messages[idx]['transport'] = 'mesh';
+          });
+        }
+      }
     } catch (e) {
-      print('[ChatScreen] Error enviando mensaje a Supabase: $e');
+      print('[ChatScreen] Error enviando mensaje: $e');
       if (mounted) {
-        // Quitar mensaje fallido
         setState(() => _messages.removeWhere((m) => m['id'] == tempId));
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error al enviar: $e')),
@@ -473,15 +526,57 @@ class _ChatScreenState extends State<ChatScreen> {
                                       bottomRight: isMe ? Radius.zero : null,
                                       bottomLeft: !isMe ? Radius.zero : null,
                                     ),
+                                    gradient: isMe ? const LinearGradient(
+                                      colors: [Color(0xFF00D2FF), Color(0xFF3A7BD5)],
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                    ) : null,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.1),
+                                        blurRadius: 4,
+                                        offset: const Offset(0, 2),
+                                      ),
+                                      if (msg['transport'] == 'mesh')
+                                        BoxShadow(
+                                          color: const Color(0xFF00D2FF).withOpacity(0.1),
+                                          blurRadius: 8,
+                                          spreadRadius: 1,
+                                        ),
+                                    ],
                                     border: isMe ? null : Border.all(color: Colors.white10),
                                   ),
-                                  child: Text(
-                                    _messagePreview(msg),
-                                    style: TextStyle(
-                                      color: isMe ? Colors.black : Colors.white,
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w400,
-                                    ),
+                                  child: Column(
+                                    crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        _messagePreview(msg),
+                                        style: TextStyle(
+                                          color: isMe ? Colors.black : Colors.white,
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w400,
+                                        ),
+                                      ),
+                                      if (msg['transport'] == 'mesh')
+                                        Padding(
+                                          padding: const EdgeInsets.only(top: 4),
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color: Colors.black12,
+                                              borderRadius: BorderRadius.circular(4),
+                                            ),
+                                            child: const Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(Icons.bolt, size: 10, color: Color(0xFF00D2FF)),
+                                                SizedBox(width: 2),
+                                                Text('MALLA SEGURA', style: TextStyle(fontSize: 8, color: Color(0xFF00D2FF), fontWeight: FontWeight.bold)),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                    ],
                                   ),
                                 ),
                               ),

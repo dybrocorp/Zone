@@ -64,17 +64,41 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
   int _connectionState = 0;
   String? _currentMatchId;
   StreamSubscription<List<Map<String, dynamic>>>? _matchSubscription;
+  
+  bool _avatarIsPublic = true;
+  List<dynamic> _galleryPhotos = [];
 
   @override
   void initState() {
     super.initState();
     _checkInitialMatchStatus();
+    _fetchPrivacySettings();
   }
 
   @override
   void dispose() {
     _matchSubscription?.cancel();
     super.dispose();
+  }
+
+  Future<void> _fetchPrivacySettings() async {
+    if (widget.realUid == null) return;
+    try {
+      final res = await Supabase.instance.client
+          .from('users')
+          .select('avatar_is_public, gallery_photos')
+          .eq('id', widget.realUid!)
+          .maybeSingle();
+
+      if (res != null && mounted) {
+        setState(() {
+          _avatarIsPublic = res['avatar_is_public'] ?? true;
+          _galleryPhotos = List<dynamic>.from(res['gallery_photos'] ?? []);
+        });
+      }
+    } catch (e) {
+      print('Error fetching privacy settings: $e');
+    }
   }
 
   Future<void> _checkInitialMatchStatus() async {
@@ -237,8 +261,8 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
               CircleAvatar(
                 radius: 40,
                 backgroundColor: Colors.grey.shade800,
-                backgroundImage: widget.avatarUrl != null ? NetworkImage(widget.avatarUrl!) : null,
-                child: widget.avatarUrl == null
+                backgroundImage: widget.avatarUrl != null && (_avatarIsPublic || _connectionState == 3) ? NetworkImage(widget.avatarUrl!) : null,
+                child: widget.avatarUrl == null || (!_avatarIsPublic && _connectionState != 3)
                     ? Text(
                         widget.userName.isNotEmpty ? widget.userName[0].toUpperCase() : '?',
                         style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white54),
@@ -283,6 +307,33 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
             const SizedBox(height: 40),
           ] else ...[
             const Text('Este usuario no ha compartido redes públicas.', style: TextStyle(color: Colors.white54, fontStyle: FontStyle.italic)),
+            const SizedBox(height: 30),
+          ],
+          
+          if (_galleryPhotos.where((p) => p['is_public'] == true || _connectionState == 3).isNotEmpty) ...[
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Galería', style: TextStyle(color: Colors.white70, fontSize: 16)),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              height: 120,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: _galleryPhotos
+                    .where((p) => p['is_public'] == true || _connectionState == 3)
+                    .map((photo) {
+                  return Container(
+                    width: 100,
+                    margin: const EdgeInsets.only(right: 12),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      image: DecorationImage(image: NetworkImage(photo['url']), fit: BoxFit.cover),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
             const SizedBox(height: 30),
           ],
           

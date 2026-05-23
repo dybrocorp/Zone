@@ -2,9 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'screens/auth_screen.dart';
 import 'services/permissions_service.dart';
+import 'services/connectivity_service.dart';
+import 'services/sync_service.dart';
+import 'services/isar_service.dart';
+import 'services/p2p_security_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Inicializar Servicios Híbridos y Seguridad
+  await ConnectivityService().initialize();
+  await IsarService().initialize();
+  await P2PSecurityService().initialize();
+  SyncService().initialize();
 
   try {
     // Inicializar Supabase

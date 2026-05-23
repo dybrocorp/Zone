@@ -4,6 +4,8 @@ import '../services/zone_id_service.dart';
 import '../services/permissions_service.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
+import '../services/supabase_service.dart';
+import '../services/nearby_service.dart';
 
 class ProfileEditScreen extends StatefulWidget {
   const ProfileEditScreen({Key? key}) : super(key: key);
@@ -24,9 +26,13 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   bool _isFbVisible = true;
   bool _isTiktokVisible = true;
   bool _isStealthMode = false;
+  bool _avatarIsPublic = true;
   bool _isLoading = true;
   File? _imageFile;
   String? _serverAvatarUrl;
+  
+  List<dynamic> _serverGalleryPhotos = [];
+  List<File> _newGalleryFiles = [];
   final ImagePicker _picker = ImagePicker();
 
   @override
@@ -49,6 +55,8 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
           _isTiktokVisible = profile['tiktok_visible'] ?? true;
           _isStealthMode = profile['stealth_mode'] ?? false;
           _serverAvatarUrl = profile['avatar_url'];
+          _avatarIsPublic = profile['avatar_is_public'] ?? true;
+          _serverGalleryPhotos = List<dynamic>.from(profile['gallery_photos'] ?? []);
         });
       }
     } catch (e) {
@@ -88,6 +96,27 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error al seleccionar imagen: $e')),
+      );
+    }
+  }
+
+  Future<void> _pickGalleryImage() async {
+    try {
+      await PermissionsService.requestCameraAndGalleryPermissions();
+      final XFile? pickedFile = await _picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1000,
+        maxHeight: 1000,
+        imageQuality: 85,
+      );
+      if (pickedFile != null) {
+        setState(() {
+          _newGalleryFiles.add(File(pickedFile.path));
+        });
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al seleccionar foto de galería: $e')),
       );
     }
   }
@@ -145,6 +174,16 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         avatarUrl = await _zoneIdService.uploadProfilePicture(_imageFile!);
       }
 
+      // Subir fotos de galería nuevas
+      for (final file in _newGalleryFiles) {
+        final url = await _zoneIdService.uploadProfilePicture(file);
+        _serverGalleryPhotos.add({
+          'url': url,
+          'is_public': true // Por defecto público; se puede cambiar en la UI
+        });
+      }
+      _newGalleryFiles.clear();
+
       await _zoneIdService.updateProfile(
         displayName: _nameController.text.trim(),
         instagram: _igController.text.trim().isNotEmpty ? _igController.text.trim() : null,
@@ -154,9 +193,21 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         tiktok: _tiktokController.text.trim().isNotEmpty ? _tiktokController.text.trim() : null,
         tiktokVisible: _isTiktokVisible,
         avatarUrl: avatarUrl,
+        avatarIsPublic: _avatarIsPublic,
+        galleryPhotos: _serverGalleryPhotos.map((e) => e as Map<String, dynamic>).toList(),
       );
 
       await _zoneIdService.setStealthMode(_isStealthMode);
+      
+      // Actualizar Modo Timidez en el radar inmediatamente
+      final currentUid = _zoneIdService.uid;
+      if (currentUid != null) {
+        await NearbyService().initialize(currentUid);
+        if (NearbyService().isRadarActive) {
+          await NearbyService().stopRadar();
+          await NearbyService().startRadar();
+        }
+      }
 
       if (mounted) {
         setState(() => _isLoading = false);
@@ -340,6 +391,16 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
               _zoneIdService.zoneId ?? '',
               style: const TextStyle(color: Color(0xFF00D2FF), fontWeight: FontWeight.bold),
             ),
+            const SizedBox(height: 12),
+            SwitchListTile(
+              title: const Text('Hacer avatar público', style: TextStyle(color: Colors.white, fontSize: 13)),
+              value: _avatarIsPublic,
+              activeColor: const Color(0xFF00D2FF),
+              onChanged: (val) => setState(() => _avatarIsPublic = val),
+              contentPadding: EdgeInsets.zero,
+            ),
+            const SizedBox(height: 15),
+            _buildGallery(),
             const SizedBox(height: 30),
             _buildTextField(_nameController, 'Nombre público', Icons.badge),
             const SizedBox(height: 20),
@@ -421,6 +482,113 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
           contentPadding: EdgeInsets.zero,
         ),
         const SizedBox(height: 10),
+      ],
+    );
+  }
+
+  Widget _buildGallery() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Galería Privada / Pública', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 120,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            children: [
+              GestureDetector(
+                onTap: _pickGalleryImage,
+                child: Container(
+                  width: 100,
+                  margin: const EdgeInsets.only(right: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.white10,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFF00D2FF), width: 1, style: BorderStyle.solid),
+                  ),
+                  child: const Center(child: Icon(Icons.add_a_photo, color: Color(0xFF00D2FF), size: 30)),
+                ),
+              ),
+              ..._serverGalleryPhotos.map((photo) {
+                final isPublic = photo['is_public'] ?? true;
+                return Stack(
+                  children: [
+                    Container(
+                      width: 100,
+                      margin: const EdgeInsets.only(right: 12),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        image: DecorationImage(image: NetworkImage(photo['url']), fit: BoxFit.cover),
+                      ),
+                    ),
+                    Positioned(
+                      bottom: 4, right: 16,
+                      child: GestureDetector(
+                        onTap: () {
+                          setState(() => photo['is_public'] = !isPublic);
+                        },
+                        child: CircleAvatar(
+                          radius: 14,
+                          backgroundColor: Colors.black87,
+                          child: Icon(isPublic ? Icons.public : Icons.lock, color: isPublic ? Color(0xFF00D2FF) : Colors.redAccent, size: 16),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 4, right: 16,
+                      child: GestureDetector(
+                        onTap: () {
+                          setState(() => _serverGalleryPhotos.remove(photo));
+                        },
+                        child: const CircleAvatar(
+                          radius: 14,
+                          backgroundColor: Colors.black87,
+                          child: Icon(Icons.close, color: Colors.white, size: 16),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              }),
+              ..._newGalleryFiles.map((file) {
+                return Stack(
+                  children: [
+                    Container(
+                      width: 100,
+                      margin: const EdgeInsets.only(right: 12),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        image: DecorationImage(image: FileImage(file), fit: BoxFit.cover),
+                      ),
+                    ),
+                    Positioned(
+                      bottom: 4, right: 16,
+                      child: const CircleAvatar(
+                        radius: 14,
+                        backgroundColor: Colors.black87,
+                        child: Icon(Icons.cloud_upload, color: Colors.orangeAccent, size: 16),
+                      ),
+                    ),
+                    Positioned(
+                      top: 4, right: 16,
+                      child: GestureDetector(
+                        onTap: () {
+                          setState(() => _newGalleryFiles.remove(file));
+                        },
+                        child: const CircleAvatar(
+                          radius: 14,
+                          backgroundColor: Colors.black87,
+                          child: Icon(Icons.close, color: Colors.white, size: 16),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              }),
+            ],
+          ),
+        ),
       ],
     );
   }

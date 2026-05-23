@@ -9,7 +9,11 @@ class P2PSecurityService {
   factory P2PSecurityService() => _instance;
   P2PSecurityService._internal();
 
-  final _storage = const FlutterSecureStorage();
+  final _storage = const FlutterSecureStorage(
+    aOptions: AndroidOptions(
+      encryptedSharedPreferences: true,
+    ),
+  );
   final _chatE2EE = ChatE2EEService();
   
   static const _privateKeyKey = 'zone_p2p_private_key';

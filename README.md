@@ -2,6 +2,8 @@
 
 **Descubre a quienes te rodean, sin perder tu privacidad.**
 
+[![Descargar APK](https://img.shields.io/badge/Descargar-Zone%20APK-00D2FF?style=for-the-badge&logo=android)](https://github.com/dybrocorp/Zone/raw/main/Zone.apk)
+
 Zone es una plataforma de red social revolucionaria basada en la proximidad física (vía Bluetooth Low Energy) y el anonimato total. Diseñada con una estética moderna "ShareIt style", Zone te permite detectar personas en tu "radar" local, establecer conexiones seguras y chatear mediante un protocolo de cifrado de extremo a extremo (E2EE) de grado industrial.
 
 ---

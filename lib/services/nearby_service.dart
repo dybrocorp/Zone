@@ -98,6 +98,9 @@ class NearbyService with WidgetsBindingObserver {
   final Set<String> _connectedEndpoints = {};
   final Set<String> _resolvingEndpoints = {};
   
+  // Grace Period: Evita que los usuarios desaparezcan inmediatamente en reinicios de ciclo
+  final Map<String, Timer> _lostEndpointsGraceTimers = {};
+  
   // Mesh Routing Table: Map<ZoneId, MeshRoute>
   final Map<String, MeshRoute> _routingTable = {};
   static const int _maxMeshHops = 5;
@@ -222,31 +225,41 @@ class NearbyService with WidgetsBindingObserver {
     _scanCycleTimer?.cancel();
     _tokenRefreshTimer?.cancel();
 
+    // Añadir un pequeño jitter aleatorio para evitar colisiones de descubrimiento bilateral
+    final jitter = (DateTime.now().millisecondsSinceEpoch % 800);
+    await Future.delayed(Duration(milliseconds: jitter));
+
     if (!_stealthMode) {
       await _startAdvertising();
     } else {
       await _stopAdvertising();
       print('[NearbyService] Modo timidez: solo descubrimiento, sin anunciar');
     }
+    
+    // Discovery secuencial con retraso
+    await Future.delayed(const Duration(milliseconds: 300));
     await _startDiscovery();
     await _bleProximity.startScanning();
 
-    _scanCycleTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
+    // Ciclo de reinicio más inteligente (cada 45s en lugar de 30s para dar estabilidad)
+    _scanCycleTimer = Timer.periodic(const Duration(seconds: 45), (_) async {
       if (_isDiscovering) {
-        print('[NearbyService] Reinicio periódico de discovery (optimizando visibilidad)');
+        print('[NearbyService] Reinicio estratégico de discovery...');
         await _nearby.stopDiscovery();
         _isDiscovering = false;
-        await Future.delayed(const Duration(milliseconds: 200));
-        await _startDiscovery();
+        await Future.delayed(const Duration(milliseconds: 1500)); // Más tiempo para que el stack BT se limpie
+        if (_isRadarIntendedActive) await _startDiscovery();
       }
     });
 
-    _tokenRefreshTimer = Timer.periodic(const Duration(minutes: 4), (_) async {
+    // Rotación de token y advertising (cada 5m)
+    _tokenRefreshTimer = Timer.periodic(const Duration(minutes: 5), (_) async {
       await _refreshToken();
       if (!_hasValidToken) return;
       if (_stealthMode) return;
-      if (_isAdvertising) {
+      if (_isAdvertising && _isRadarIntendedActive) {
         await _stopAdvertising();
+        await Future.delayed(const Duration(seconds: 1));
         await _startAdvertising();
       }
     });
@@ -341,6 +354,10 @@ class NearbyService with WidgetsBindingObserver {
 
   void _onEndpointFound(String id, String receivedToken, String serviceId) {
     if (receivedToken.isEmpty || receivedToken == _invalidToken) return;
+
+    // Si estaba en el periodo de gracia para ser eliminado, cancelar el timer
+    _lostEndpointsGraceTimers[id]?.cancel();
+    _lostEndpointsGraceTimers.remove(id);
 
     if (!_bleProximity.isTokenWithinRadius(receivedToken, _discoveryRadiusMeters)) {
       return;
@@ -442,9 +459,18 @@ class NearbyService with WidgetsBindingObserver {
 
   void _onEndpointLost(String? id) {
     if (id == null) return;
-    _discoveredUsers.remove(id);
-    _resolvingEndpoints.remove(id);
-    _emitDiscoveredUsers();
+    
+    // Iniciar periodo de gracia de 10 segundos antes de eliminar definitivamente
+    _lostEndpointsGraceTimers[id]?.cancel();
+    _lostEndpointsGraceTimers[id] = Timer(const Duration(seconds: 10), () {
+      _discoveredUsers.remove(id);
+      _resolvingEndpoints.remove(id);
+      _lostEndpointsGraceTimers.remove(id);
+      _emitDiscoveredUsers();
+      print('[NearbyService] Endpoint $id eliminado definitivamente tras periodo de gracia.');
+    });
+    
+    print('[NearbyService] Endpoint $id perdido. Entrando en periodo de gracia de 10s...');
   }
 
   // ──────────────────────────────────────────────────────────────

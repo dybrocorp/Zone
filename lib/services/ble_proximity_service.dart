@@ -16,7 +16,7 @@ class BleProximityService {
   final Map<String, double> _tokenDistance = {};
   final Map<String, DateTime> _tokenUpdated = {};
 
-  static const Duration _staleAfter = Duration(seconds: 12);
+  static const Duration _staleAfter = Duration(seconds: 25);
 
   bool get isScanning => _scanSub != null;
 

@@ -165,12 +165,15 @@ class NearbyService with WidgetsBindingObserver {
       final token = await _supabaseService.generateBtToken(_userId);
       if (token != null && token.isNotEmpty) {
         _currentToken = token;
-        print('[NearbyService] Token BT renovado');
+        print('[NearbyService] Token BT renovado via Supabase');
       } else {
-        print('[NearbyService] Advertencia: No se pudo generar token BT');
+        // Fallback Offline: Usar ZoneID directamente si no hay internet
+        _currentToken = 'OFFLINE:$_myZoneId';
+        print('[NearbyService] Advertencia: Usando token OFFLINE ($_currentToken)');
       }
     } catch (e) {
-      print('[NearbyService] Error renovando token: $e');
+      _currentToken = 'OFFLINE:$_myZoneId';
+      print('[NearbyService] Error renovando token, usando fallback OFFLINE: $e');
     }
   }
 
@@ -372,6 +375,9 @@ class NearbyService with WidgetsBindingObserver {
       _emitDiscoveredUsers();
     }
 
+    // Iniciar conexión inmediatamente para resolver perfiles P2P (Offline-first)
+    requestConnection(id);
+
     _resolveTokenAsync(id, receivedToken);
   }
 
@@ -381,17 +387,56 @@ class NearbyService with WidgetsBindingObserver {
 
     try {
       Map<String, dynamic>? profile;
-      for (var attempt = 0; attempt < 3; attempt++) {
-        profile = await _supabaseService.resolveToken(token);
-        if (profile != null) break;
-        await Future.delayed(Duration(milliseconds: 400 * (attempt + 1)));
+      String? resolvedZoneId;
+
+      // 1. Manejo de tokens Offline directo
+      if (token.startsWith('OFFLINE:')) {
+        resolvedZoneId = token.replaceFirst('OFFLINE:', '');
+        print('[NearbyService] Token Offline detectado para $resolvedZoneId');
+      }
+
+      // 2. Intentar resolver vía Supabase si estamos online
+      if (resolvedZoneId == null && _connectivity.isOnline) {
+        for (var attempt = 0; attempt < 2; attempt++) {
+          profile = await _supabaseService.resolveToken(token);
+          if (profile != null) {
+            resolvedZoneId = profile['zone_id'];
+            break;
+          }
+          await Future.delayed(Duration(milliseconds: 300 * (attempt + 1)));
+        }
+      }
+
+      // 3. Fallback: Buscar en Isar (Caché Local)
+      if (resolvedZoneId != null && profile == null) {
+        final local = await _isar.getProfile(resolvedZoneId);
+        if (local != null) {
+          profile = {
+            'id': local.userId,
+            'zone_id': local.zoneId,
+            'display_name': local.displayName,
+            'avatar_url': local.avatarUrl,
+            'publicKey': local.publicKey,
+            'updatedAt': local.updatedAt.toIso8601String(),
+          };
+          print('[NearbyService] Perfil recuperado de Isar para $resolvedZoneId');
+        }
       }
 
       if (!_discoveredUsers.containsKey(endpointId)) return;
 
+      // Si no logramos resolver el perfil pero tenemos el ZoneID (por token offline),
+      // al menos mostramos el ZoneID para no dejarlo vacío.
+      if (profile == null && resolvedZoneId != null) {
+        profile = {
+          'zone_id': resolvedZoneId,
+          'display_name': resolvedZoneId,
+        };
+      }
+
+      // 4. Si falló todo, dependemos de la red P2P off-line.
       if (profile == null) {
-        _discoveredUsers.remove(endpointId);
-        _emitDiscoveredUsers();
+        print('[NearbyService] Perfil no resuelto vía servidor o caché local. Esperando intercambio P2P.');
         return;
       }
 
@@ -402,8 +447,10 @@ class NearbyService with WidgetsBindingObserver {
           (profileZoneId != null &&
               profileZoneId.isNotEmpty &&
               profileZoneId == _myZoneId)) {
+        print('[NearbyService] Somos nosotros mismos, descartando endpoint y desconectando.');
         _discoveredUsers.remove(endpointId);
         _emitDiscoveredUsers();
+        disconnectFrom(endpointId);
         return;
       }
 
@@ -414,27 +461,20 @@ class NearbyService with WidgetsBindingObserver {
       }
 
       final distance = _bleProximity.distanceMetersForToken(token);
-      
-      // Si tenemos distancia, validamos que esté en el radio. 
-      // Si es null, permitimos que aparezca (algunos dispositivos no reportan RSSI rápido)
       if (distance != null && !RadarConfig.isDistanceWithinRadius(distance, _discoveryRadiusMeters)) {
-        print('[NearbyService] Usuario ${profile['zone_id']} fuera de radio (${distance.toStringAsFixed(1)}m > ${_discoveryRadiusMeters}m)');
         _discoveredUsers.remove(endpointId);
         _emitDiscoveredUsers();
         return;
       }
 
       final user = _discoveredUsers[endpointId]!;
-      if (profile != null) {
-        user.userName = profile['display_name'] ?? 'Usuario';
-        user.zoneId = profile['zone_id'] ?? '';
-        user.profile = profile;
-      }
+      user.userName = profile['display_name'] ?? profile['zone_id'] ?? 'Usuario';
+      user.zoneId = profile['zone_id'] ?? '';
+      user.profile = profile;
 
       _discoveredUsers[endpointId] = user;
       _resolvingEndpoints.remove(endpointId);
       
-      // Notificación en segundo plano si es nuevo
       if (_isAppMinimized && !_notifiedUserIds.contains(user.zoneId)) {
         _notifiedUserIds.add(user.zoneId);
         NotificationService().showDiscoveryNotification(user.userName);
@@ -442,16 +482,19 @@ class NearbyService with WidgetsBindingObserver {
       
       _emitDiscoveredUsers();
       
-      // Registrar el encuentro en base de datos de manera silente
       if (user.zoneId.isNotEmpty) {
-        _supabaseService.registerEncounter(_userId, user.zoneId);
+        if (_connectivity.isOnline) {
+           _supabaseService.registerEncounter(_userId, user.zoneId);
+        }
         _isar.saveEncounter(userId: _userId, otherZoneId: user.zoneId, isSynced: _connectivity.isOnline);
-        _isar.saveProfile(profile);
+        if (profileId != null) _isar.saveProfile(profile);
       }
     } catch (e) {
       print('[NearbyService] Error al resolver token: $e');
-      _discoveredUsers.remove(endpointId);
-      _emitDiscoveredUsers();
+      if (_connectivity.isOnline) {
+        _discoveredUsers.remove(endpointId);
+        _emitDiscoveredUsers();
+      }
     } finally {
       _resolvingEndpoints.remove(endpointId);
     }
@@ -629,6 +672,15 @@ class NearbyService with WidgetsBindingObserver {
       otherZoneId: profileData['zone_id'],
       isSynced: _connectivity.isOnline,
     );
+
+    // Actualizar UI si el usuario está en el radar
+    if (_discoveredUsers.containsKey(endpointId)) {
+      final user = _discoveredUsers[endpointId]!;
+      user.userName = profileData['display_name'] ?? profileData['zone_id'] ?? 'Usuario';
+      user.zoneId = profileData['zone_id'] ?? '';
+      user.profile = profileData;
+      _emitDiscoveredUsers();
+    }
 
     // Mesh: Añadir ruta directa a nuestra tabla
     _updateRoutingTable(profileData['zone_id'], endpointId, 1);

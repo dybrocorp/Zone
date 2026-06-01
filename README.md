@@ -8,15 +8,15 @@ Zone es una plataforma de red social revolucionaria basada en la proximidad fís
 
 ---
 
-## 🏢 DYBROCORP
+## 🏢 DybroCorp
 
-Zone es un producto propiedad de **DYBROCORP**, una compañía tecnológica líder enfocada en el desarrollo de ecosistemas digitales, ciberseguridad y transformación digital.
+Zone es un producto propiedad de **DybroCorp**, una compañía tecnológica líder enfocada en el desarrollo de ecosistemas digitales, ciberseguridad y transformación digital.
 
 ### Misión
-Diseñar y operar productos tecnológicos propios como **ZONE** y **NovaApp**, ofreciendo experiencias modernas, escalables y confiables para usuarios, empresas y comunidades, bajo principios de protección de datos y cumplimiento normativo.
+Diseñar y operar productos tecnológicos propios como **Zone** y **NovaApp**, ofreciendo experiencias modernas, escalables y confiables para usuarios, empresas y comunidades, bajo principios de protección de datos y cumplimiento normativo.
 
 ### Visión
-Consolidar a DYBROCORP como una compañía tecnológica líder en Latinoamérica y con proyección internacional, reconocida por el desarrollo de plataformas digitales innovadoras, seguras y de alto impacto.
+Consolidar a DybroCorp como una compañía tecnológica líder en Latinoamérica y con proyección internacional, reconocida por el desarrollo de plataformas digitales innovadoras, seguras y de alto impacto.
 
 ---
 
@@ -55,6 +55,6 @@ flutter run
 
 ---
 
-Desarrollado con excelencia por **DYBROCORP**.
+Desarrollado con excelencia por **DybroCorp**.
 Todos los derechos reservados © 2026.
 Contacto Legal: `legal@dybrocorp.com` | Soporte: `contacto@dybrocorp.com`

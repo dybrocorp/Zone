@@ -2,15 +2,15 @@
 
 **Versión:** 1.0  
 **Fecha de actualización:** 10 de mayo de 2026  
-**Responsable:** DYBROCORP (legal@dybrocorp.com)
+**Responsable:** DybroCorp (legal@dybrocorp.com)
 
 ---
 
 ## 4.0 Responsable del Tratamiento
-DYBROCORP actuará como Responsable del Tratamiento de datos personales recolectados mediante sus plataformas digitales, incluyendo ZONE, NovaApp y demás productos tecnológicos asociados. La compañía garantiza obligaciones contractuales de confidencialidad y protección de datos.
+DybroCorp actuará como Responsable del Tratamiento de datos personales recolectados mediante sus plataformas digitales, incluyendo Zone, NovaApp y demás productos tecnológicos asociados. La compañía garantiza obligaciones contractuales de confidencialidad y protección de datos.
 
 ## 4.1 Introducción
-DYBROCORP reconoce la importancia de la privacidad y protección de los datos personales. Esta Política explica cómo recopilamos, utilizamos, almacenamos y protegemos su información.
+DybroCorp reconoce la importancia de la privacidad y protección de los datos personales. Esta Política explica cómo recopilamos, utilizamos, almacenamos y protegemos su información.
 
 ## 4.2 Normatividad Aplicable
 Esta política se fundamenta en:
@@ -58,5 +58,5 @@ La plataforma no está dirigida a menores sin autorización legal. Se adoptarán
 DYBROCORP podrá actualizar esta Política. La versión vigente será la publicada oficialmente en los canales de la empresa.
 
 ---
-**DYBROCORP - Privacidad y Transparencia.**
+**DybroCorp - Privacidad y Transparencia.**
 Soporte de Privacidad: `legal@dybrocorp.com`

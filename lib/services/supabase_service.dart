@@ -1,5 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:realtime_client/realtime_client.dart' as rc;
+import 'logger_service.dart';
 import 'notification_service.dart';
 import 'package:uuid/uuid.dart';
 
@@ -9,6 +9,8 @@ class SupabaseService {
   static final SupabaseService _instance = SupabaseService._internal();
   factory SupabaseService() => _instance;
   SupabaseService._internal();
+
+  final _logger = LoggerService();
 
   final _supabase = Supabase.instance.client;
   final _uuid = const Uuid();
@@ -34,7 +36,7 @@ class SupabaseService {
 
       return token;
     } catch (e) {
-      print('[SupabaseService] Error generando BT token: $e');
+      _logger.debug('[SupabaseService] Error generando BT token: $e');
       return null;
     }
   }
@@ -50,7 +52,7 @@ class SupabaseService {
         return Map<String, dynamic>.from(rpcResult as Map);
       }
     } catch (e) {
-      print('[SupabaseService] RPC resolve_bt_token no disponible, usando fallback: $e');
+      _logger.debug('[SupabaseService] RPC resolve_bt_token no disponible, usando fallback: $e');
     }
 
     try {
@@ -63,7 +65,7 @@ class SupabaseService {
 
       if (result == null) return null;
 
-      final user = result['users'] as Map<String, dynamic>;
+      final user = Map<String, dynamic>.from(result['users'] as Map);
       if (user['stealth_mode'] == true) return null;
       
       // Filtrar redes sociales según visibilidad
@@ -74,7 +76,7 @@ class SupabaseService {
       
       return filteredUser;
     } catch (e) {
-      print('[SupabaseService] Error resolviendo token: $e');
+      _logger.debug('[SupabaseService] Error resolviendo token: $e');
       return null;
     }
   }
@@ -88,7 +90,7 @@ class SupabaseService {
           .eq('blocker_id', userId);
       return result.map((r) => r['blocked_id'] as String).toSet();
     } catch (e) {
-      print('[SupabaseService] Error obteniendo bloqueos: $e');
+      _logger.debug('[SupabaseService] Error obteniendo bloqueos: $e');
       return {};
     }
   }
@@ -136,7 +138,7 @@ class SupabaseService {
       }).select('id').single();
       return result['id'] as String;
     } catch (e) {
-      print('[SupabaseService] Error solicitando match: $e');
+      _logger.debug('[SupabaseService] Error solicitando match: $e');
       return null;
     }
   }
@@ -152,7 +154,7 @@ class SupabaseService {
           .maybeSingle();
       return res;
     } catch (e) {
-      print('[SupabaseService] Error obteniendo status del match: $e');
+      _logger.debug('[SupabaseService] Error obteniendo status del match: $e');
       return null;
     }
   }
@@ -192,8 +194,8 @@ class SupabaseService {
 
       final enriched = <Map<String, dynamic>>[];
       for (final match in List<Map<String, dynamic>>.from(rows)) {
-        final requester = match['requester'] as Map<String, dynamic>?;
-        final receiver = match['receiver'] as Map<String, dynamic>?;
+        final requester = match['requester'] != null ? Map<String, dynamic>.from(match['requester'] as Map) : null;
+        final receiver = match['receiver'] != null ? Map<String, dynamic>.from(match['receiver'] as Map) : null;
         
         final otherUser = requester?['id'] == userId ? receiver : requester;
         
@@ -204,7 +206,7 @@ class SupabaseService {
       }
       return enriched;
     } catch (e) {
-      print('[SupabaseService] Error obteniendo matches: $e');
+      _logger.debug('[SupabaseService] Error obteniendo matches: $e');
       return [];
     }
   }
@@ -227,22 +229,8 @@ class SupabaseService {
       }
       return enriched;
     } catch (e) {
-      print('[SupabaseService] Error obteniendo solicitudes match: $e');
+      _logger.debug('[SupabaseService] Error obteniendo solicitudes match: $e');
       return [];
-    }
-  }
-
-  Future<Map<String, dynamic>?> _getUserPublicProfile(String userId) async {
-    try {
-      final row = await _supabase
-          .from('users')
-          .select('id, zone_id, display_name, avatar_url')
-          .eq('id', userId)
-          .eq('is_shadowbanned', false)
-          .maybeSingle();
-      return row;
-    } catch (e) {
-      return null;
     }
   }
 
@@ -272,14 +260,14 @@ class SupabaseService {
     // 1. Insertar en DB para persistencia (Segundo plano)
     // No esperamos al insert para el broadcast, así es más rápido
     _supabase.from('messages').insert(payload).then((_) {
-      print('[SupabaseService] Mensaje guardado en DB');
+      _logger.debug('[SupabaseService] Mensaje guardado en DB');
     }).catchError((e) {
-      print('[SupabaseService] Error guardando mensaje en DB: $e');
+      _logger.debug('[SupabaseService] Error guardando mensaje en DB: $e');
     });
 
     // 2. Enviar via Broadcast para inmediatez (WebSocket puro)
     final normalizedMatchId = matchId.trim().toLowerCase();
-    print('[SupabaseService] Enviando Broadcast a canal msgs:$normalizedMatchId');
+    _logger.debug('[SupabaseService] Enviando Broadcast a canal msgs:$normalizedMatchId');
     
     await _supabase
         .channel('msgs:$normalizedMatchId')
@@ -317,17 +305,22 @@ class SupabaseService {
         .onBroadcast(
           event: 'new_msg',
           callback: (eventPayload) {
-            print('[SupabaseService] Realtime (Broadcast): Mensaje recibido!');
-            // Supabase envuelve los datos en una propiedad "payload" de igual nombre
-            final data = eventPayload['payload'] as Map<String, dynamic>? ?? eventPayload;
-            onMessage(Map<String, dynamic>.from(data));
+            _logger.debug('[SupabaseService] Realtime (Broadcast): Mensaje recibido!');
+            final rawPayload = eventPayload['payload'];
+            final data = rawPayload != null 
+                ? Map<String, dynamic>.from(rawPayload as Map) 
+                : Map<String, dynamic>.from(eventPayload as Map);
+            onMessage(data);
           },
         )
         // 2. Escuchar EVENTOS DE ESCRITURA
         .onBroadcast(
           event: 'typing',
           callback: (eventPayload) {
-            final data = eventPayload['payload'] as Map<String, dynamic>? ?? eventPayload;
+            final rawPayload = eventPayload['payload'];
+            final data = rawPayload != null 
+                ? Map<String, dynamic>.from(rawPayload as Map) 
+                : Map<String, dynamic>.from(eventPayload as Map);
             final senderId = data['sender_id'];
             final isTyping = data['is_typing'] as bool? ?? false;
             if (senderId != myUid && onTypingChange != null) {
@@ -366,13 +359,13 @@ class SupabaseService {
         );
 
     channel.subscribe((status, [error]) async {
-      print('[SupabaseService] Estado suscripción mensajes ($normalizedMatchId): $status');
+      _logger.debug('[SupabaseService] Estado suscripción mensajes ($normalizedMatchId): $status');
       if (status == RealtimeSubscribeStatus.subscribed) {
         // Al conectarnos, trackeamos nuestra presencia
         await channel.track({'uid': myUid, 'online_at': DateTime.now().toIso8601String()});
       }
       if (error != null) {
-        print('[SupabaseService] ERROR suscripción mensajes: $error');
+        _logger.debug('[SupabaseService] ERROR suscripción mensajes: $error');
       }
     });
 
@@ -427,7 +420,7 @@ class SupabaseService {
           .eq('blocker_id', userId);
       return List<Map<String, dynamic>>.from(result);
     } catch (e) {
-      print('[SupabaseService] Error obteniendo usuarios bloqueados: $e');
+      _logger.debug('[SupabaseService] Error obteniendo usuarios bloqueados: $e');
       return [];
     }
   }
@@ -465,9 +458,62 @@ class SupabaseService {
     return filtered;
   }
 
+  /// Obtiene todos los usuarios activos recientemente (últimos 24h) para el radar global.
+  /// Esto permite descubrir usuarios incluso cuando no están en rango BLE directo.
+  Future<List<Map<String, dynamic>>> getActiveUsersForRadar() async {
+    try {
+      // Primero intentar usar la función optimizada RPC
+      try {
+        final rpcResult = await _supabase.rpc('get_active_users_for_radar', params: {'p_limit': 1000});
+        if (rpcResult != null && rpcResult is List) {
+          return List<Map<String, dynamic>>.from(rpcResult);
+        }
+      } catch (e) {
+        _logger.debug('[SupabaseService] RPC get_active_users_for_radar no disponible, usando fallback: $e');
+      }
+      
+      // Fallback: Consulta directa con índices optimizados
+      final since = DateTime.now().subtract(const Duration(hours: 24)).toUtc().toIso8601String();
+      final result = await _supabase
+          .from('users')
+          .select('id, zone_id, display_name, avatar_url, public_key, stealth_mode')
+          .eq('is_shadowbanned', false)
+          .eq('stealth_mode', false)
+          .gte('updated_at', since)
+          .order('updated_at', ascending: false)
+          .limit(1000);
+      return List<Map<String, dynamic>>.from(result);
+    } catch (e) {
+      _logger.debug('[SupabaseService] Error obteniendo usuarios activos: $e');
+      return [];
+    }
+  }
+
+  /// Actualiza la actividad de Bluetooth del usuario actual
+  Future<void> updateBtActivity() async {
+    try {
+      await _supabase.rpc('update_bt_activity');
+    } catch (e) {
+      _logger.debug('[SupabaseService] Error actualizando actividad BT: $e');
+    }
+  }
+
+  /// Obtiene estadísticas del radar para monitoreo
+  Future<Map<String, dynamic>?> getRadarStats() async {
+    try {
+      final result = await _supabase.rpc('get_radar_stats');
+      if (result != null) {
+        return Map<String, dynamic>.from(result as Map);
+      }
+    } catch (e) {
+      _logger.debug('[SupabaseService] Error obteniendo estadísticas: $e');
+    }
+    return null;
+  }
+
   /// Escucha notificaciones globales (mensajes y nuevos matches) para el usuario.
   void startGlobalNotificationListener(String myUid) {
-    print('[SupabaseService] Iniciando escucha global de notificaciones para $myUid');
+    _logger.debug('[SupabaseService] Iniciando escucha global de notificaciones para $myUid');
 
     // 1. Escuchar Nuevos Mensajes en cualquier match
     _supabase
@@ -477,24 +523,24 @@ class SupabaseService {
           schema: 'public',
           table: 'messages',
           callback: (payload) async {
-            print('[SupabaseService] Notificación Global: Mensaje detectado');
+            _logger.debug('[SupabaseService] Notificación Global: Mensaje detectado');
             final msg = payload.newRecord;
             final senderId = msg['sender_id'] as String?;
             final matchId = msg['match_id'] as String?;
 
             if (senderId != null && senderId != myUid) {
               if (NotificationService.currentActiveMatchId != matchId) {
-                print('[SupabaseService] Mostrando notificación de mensaje...');
+                _logger.debug('[SupabaseService] Mostrando notificación de mensaje...');
                 NotificationService().showMessageNotification('Alguien', 'Te ha enviado un mensaje seguro.');
               } else {
-                print('[SupabaseService] Notificación omitida (chat abierto)');
+                _logger.debug('[SupabaseService] Notificación omitida (chat abierto)');
               }
             }
           },
         )
         .subscribe((status, [error]) {
-          print('[SupabaseService] Estado canal global_messages: $status');
-          if (error != null) print('[SupabaseService] Error global_messages: $error');
+          _logger.debug('[SupabaseService] Estado canal global_messages: $status');
+          if (error != null) _logger.debug('[SupabaseService] Error global_messages: $error');
         });
 
     // 2. Escuchar Nuevos Matches (Solicitudes)
@@ -505,18 +551,18 @@ class SupabaseService {
           schema: 'public',
           table: 'matches',
           callback: (payload) {
-            print('[SupabaseService] Notificación Global: Match detectado');
+            _logger.debug('[SupabaseService] Notificación Global: Match detectado');
             final match = payload.newRecord;
             final receiverId = match['receiver_id'] as String?;
             if (receiverId == myUid) {
-              print('[SupabaseService] Mostrando notificación de solicitud...');
+              _logger.debug('[SupabaseService] Mostrando notificación de solicitud...');
               NotificationService().showMatchRequestNotification('Un usuario cercano');
             }
           },
         )
         .subscribe((status, [error]) {
-          print('[SupabaseService] Estado canal global_matches: $status');
-          if (error != null) print('[SupabaseService] Error global_matches: $error');
+          _logger.debug('[SupabaseService] Estado canal global_matches: $status');
+          if (error != null) _logger.debug('[SupabaseService] Error global_matches: $error');
         });
   }
 }

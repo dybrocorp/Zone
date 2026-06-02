@@ -112,7 +112,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
   }
 
   Widget _buildPendingItem(Map<String, dynamic> req) {
-    final sender = req['requester_user'] as Map<String, dynamic>?;
+    final sender = req['requester_user'] != null ? Map<String, dynamic>.from(req['requester_user'] as Map) : null;
     final name = sender?['display_name'] ?? sender?['zone_id'] ?? 'Usuario Zone';
     final avatarUrl = sender?['avatar_url'] as String?;
 
@@ -147,7 +147,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
   }
 
   Widget _buildMatchItem(Map<String, dynamic> match) {
-    final otherUser = match['other_user'] as Map<String, dynamic>?;
+    final otherUser = match['other_user'] != null ? Map<String, dynamic>.from(match['other_user'] as Map) : null;
     final name = otherUser?['display_name'] ?? otherUser?['zone_id'] ?? 'Usuario Zone';
     final avatarUrl = otherUser?['avatar_url'] as String?;
 

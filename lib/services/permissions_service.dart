@@ -1,6 +1,8 @@
 import 'package:permission_handler/permission_handler.dart';
+import 'logger_service.dart';
 
 class PermissionsService {
+  static final _logger = LoggerService();
   /// Solicita los permisos necesarios para Nearby Connections y BLE.
   static Future<bool> requestAllPermissions() async {
     try {
@@ -23,14 +25,14 @@ class PermissionsService {
       bool allGranted = true;
       statuses.forEach((permission, status) {
         if (!status.isGranted) {
-          print('Permiso fuertemente denegado en SO: $permission');
+          _logger.debug('Permiso fuertemente denegado en SO: $permission');
           allGranted = false;
         }
       });
 
       return allGranted;
     } catch (e) {
-      print('[PermissionsService] Error solicitando permisos: $e');
+      _logger.debug('[PermissionsService] Error solicitando permisos: $e');
       return false;
     }
   }

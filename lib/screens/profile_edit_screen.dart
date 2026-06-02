@@ -194,7 +194,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         tiktokVisible: _isTiktokVisible,
         avatarUrl: avatarUrl,
         avatarIsPublic: _avatarIsPublic,
-        galleryPhotos: _serverGalleryPhotos.map((e) => e as Map<String, dynamic>).toList(),
+        galleryPhotos: _serverGalleryPhotos.map((e) => Map<String, dynamic>.from(e as Map)).toList(),
       );
 
       await _zoneIdService.setStealthMode(_isStealthMode);

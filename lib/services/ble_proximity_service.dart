@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 import '../config/radar_config.dart';
+import 'logger_service.dart';
 
 /// Escaneo BLE auxiliar para estimar distancia por RSSI.
 /// Enlaza el token Nearby (nombre del endpoint) con la señal Bluetooth.
@@ -8,6 +9,8 @@ class BleProximityService {
   static final BleProximityService _instance = BleProximityService._internal();
   factory BleProximityService() => _instance;
   BleProximityService._internal();
+
+  final _logger = LoggerService();
 
   final FlutterReactiveBle _ble = FlutterReactiveBle();
   StreamSubscription<DiscoveredDevice>? _scanSub;
@@ -36,7 +39,7 @@ class BleProximityService {
         _recordDevice(device);
       },
       onError: (Object e) {
-        print('[BleProximity] Error escaneo: $e');
+        _logger.debug('[BleProximity] Error escaneo: $e');
       },
     );
   }

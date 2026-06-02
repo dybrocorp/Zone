@@ -280,7 +280,7 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'ID: ${widget.userId.substring(0, 8)}...',
+                      'ID: ${widget.userId.length >= 8 ? widget.userId.substring(0, 8) : widget.userId}...',
                       style: const TextStyle(color: Colors.white54, fontSize: 13),
                     ),
                   ],
@@ -310,7 +310,7 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
             const SizedBox(height: 30),
           ],
           
-          if (_galleryPhotos.where((p) => p['is_public'] == true || _connectionState == 3).isNotEmpty) ...[
+          if (_galleryPhotos.where((p) => p is Map && (p['is_public'] == true || _connectionState == 3)).isNotEmpty) ...[
             const Align(
               alignment: Alignment.centerLeft,
               child: Text('Galería', style: TextStyle(color: Colors.white70, fontSize: 16)),
@@ -321,7 +321,7 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 children: _galleryPhotos
-                    .where((p) => p['is_public'] == true || _connectionState == 3)
+                    .where((p) => p is Map && (p['is_public'] == true || _connectionState == 3))
                     .map((photo) {
                   return Container(
                     width: 100,

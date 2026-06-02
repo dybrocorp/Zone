@@ -33,7 +33,6 @@ class IsarService {
       
       // CRDT Logic: Last Write Wins (LWW)
       if (existing != null && existing.updatedAt.isAfter(newUpdatedAt)) {
-        print('[IsarService] Nota: Ignorando perfil entrante (ya existe una versión más reciente local)');
         return;
       }
 
@@ -57,6 +56,10 @@ class IsarService {
 
   Future<LocalProfile?> getProfile(String zoneId) async {
     return await isar.localProfiles.filter().zoneIdEqualTo(zoneId).findFirst();
+  }
+
+  Future<LocalProfile?> getProfileByUserId(String userId) async {
+    return await isar.localProfiles.filter().userIdEqualTo(userId).findFirst();
   }
 
   // ──────────────────────────────────────────────────────────
@@ -125,5 +128,19 @@ class IsarService {
 
   Future<List<LocalMessage>> getMessages(String matchId) async {
     return await isar.localMessages.filter().matchIdEqualTo(matchId).sortByCreatedAt().findAll();
+  }
+
+  Future<List<LocalMessage>> getUnsyncedMessages() async {
+    return await isar.localMessages.filter().isSyncedEqualTo(false).findAll();
+  }
+
+  Future<void> markMessageSynced(int id) async {
+    await isar.writeTxn(() async {
+      final message = await isar.localMessages.get(id);
+      if (message != null) {
+        message.isSynced = true;
+        await isar.localMessages.put(message);
+      }
+    });
   }
 }

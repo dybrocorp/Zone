@@ -1,4 +1,4 @@
-import 'package:supabase/supabase.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 import 'dart:math';
 import 'dart:async';
@@ -8,10 +8,6 @@ const String supabaseUrl = 'https://leejpxwctnubihacudik.supabase.co';
 const String supabaseAnonKey = 'sb_publishable_vl-aeN4Ior-GZ5YB45MFyA_KGxgfZjV';
 
 Future<void> main() async {
-  print('=============================================');
-  print('ZONE - MASSS-DEVICE LOAD TESTING AUDIT SCRIPT');
-  print('=============================================');
-
   // Inicializar cliente
   final client = SupabaseClient(supabaseUrl, supabaseAnonKey);
   
@@ -19,9 +15,6 @@ Future<void> main() async {
   // En este script usaremos un usuario test si no hay credenciales, 
   // pero la simulación radica en golpear la tabla reports / encounters
   final uid = const Uuid().v4();
-  final myZoneId = 'ZONE-TEST01';
-  
-  print('Generando ráfaga de 50 dispositivos simultáneos...');
 
   final stopwatch = Stopwatch()..start();
   final random = Random();
@@ -38,9 +31,8 @@ Future<void> main() async {
           'other_zone_id': fakeZoneId,
           'seen_at': DateTime.now().toIso8601String()
         });
-        print('[SUCCESS] Insertado $fakeZoneId');
       } catch (e) {
-        print('[ERROR] Error insertando $fakeZoneId: $e');
+        // Error handling
       }
     }));
   }
@@ -48,7 +40,4 @@ Future<void> main() async {
   await Future.wait(tasks);
 
   stopwatch.stop();
-  print('=============================================');
-  print('Auditoría completada. Tiempo total para 50 escrituras: ${stopwatch.elapsedMilliseconds} ms');
-  print('=============================================');
 }

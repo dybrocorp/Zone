@@ -117,12 +117,12 @@ class _ChatScreenState extends State<ChatScreen> {
       ]);
 
       final blockedList = results[0] as List<Map<String, dynamic>>;
-      final otherProfile = results[1] as Map<String, dynamic>?;
+      final otherProfile = results[1] != null ? Map<String, dynamic>.from(results[1] as Map) : null;
       final history = results[2] as List<Map<String, dynamic>>;
 
       final isBlockedByMe = blockedList.any((b) {
         final blockedId = b['blocked_id'] as String?;
-        final users = b['users'] as Map<String, dynamic>?;
+        final users = b['users'] != null ? Map<String, dynamic>.from(b['users'] as Map) : null;
         return blockedId == widget.otherUserId ||
             blockedId == widget.otherZoneId ||
             users?['zone_id'] == widget.otherZoneId;

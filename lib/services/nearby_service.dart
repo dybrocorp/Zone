@@ -15,6 +15,7 @@ import 'chat_e2ee_service.dart';
 import 'supabase_service.dart';
 import 'package:cryptography/cryptography.dart';
 import '../models/isar_models.dart';
+import 'logger_service.dart';
 
 /// Modelo de usuario descubierto por Nearby Connections.
 class NearbyUser {
@@ -60,6 +61,7 @@ class NearbyService with WidgetsBindingObserver {
   final _connectivity = ConnectivityService();
   final _security = P2PSecurityService();
   final _chatE2EE = ChatE2EEService();
+  final _logger = LoggerService();
 
   /// P2P_CLUSTER mejora alcance y descubrimiento bilateral en espacios abiertos.
   static const Strategy _strategy = Strategy.P2P_CLUSTER;
@@ -84,6 +86,7 @@ class NearbyService with WidgetsBindingObserver {
 
   Timer? _scanCycleTimer;
   Timer? _tokenRefreshTimer;
+  Timer? _globalDiscoveryTimer;
 
   final Map<String, NearbyUser> _discoveredUsers = {};
   final Set<String> _notifiedUserIds = {}; // Para no spamear notificaciones del mismo usuario
@@ -113,7 +116,7 @@ class NearbyService with WidgetsBindingObserver {
 
   Future<void> initialize(String userId) async {
     if (userId.isEmpty) {
-      print('[NearbyService] Error: Intentando inicializar con userId vacío');
+      _logger.debug('[NearbyService] Error: Intentando inicializar con userId vacío');
       return;
     }
     _userId = userId;
@@ -165,15 +168,15 @@ class NearbyService with WidgetsBindingObserver {
       final token = await _supabaseService.generateBtToken(_userId);
       if (token != null && token.isNotEmpty) {
         _currentToken = token;
-        print('[NearbyService] Token BT renovado via Supabase');
+        _logger.debug('[NearbyService] Token BT renovado via Supabase');
       } else {
         // Fallback Offline: Usar ZoneID directamente si no hay internet
         _currentToken = 'OFFLINE:$_myZoneId';
-        print('[NearbyService] Advertencia: Usando token OFFLINE ($_currentToken)');
+        _logger.debug('[NearbyService] Advertencia: Usando token OFFLINE ($_currentToken)');
       }
     } catch (e) {
       _currentToken = 'OFFLINE:$_myZoneId';
-      print('[NearbyService] Error renovando token, usando fallback OFFLINE: $e');
+      _logger.debug('[NearbyService] Error renovando token, usando fallback OFFLINE: $e');
     }
   }
 
@@ -221,7 +224,7 @@ class NearbyService with WidgetsBindingObserver {
     await _refreshToken();
 
     if (!_hasValidToken) {
-      print('[NearbyService] No se puede iniciar radar: token BT inválido');
+      _logger.debug('[NearbyService] No se puede iniciar radar: token BT inválido');
       return false;
     }
 
@@ -236,7 +239,7 @@ class NearbyService with WidgetsBindingObserver {
       await _startAdvertising();
     } else {
       await _stopAdvertising();
-      print('[NearbyService] Modo timidez: solo descubrimiento, sin anunciar');
+      _logger.debug('[NearbyService] Modo timidez: solo descubrimiento, sin anunciar');
     }
     
     // Discovery secuencial con retraso
@@ -247,7 +250,7 @@ class NearbyService with WidgetsBindingObserver {
     // Ciclo de reinicio más inteligente (cada 45s en lugar de 30s para dar estabilidad)
     _scanCycleTimer = Timer.periodic(const Duration(seconds: 45), (_) async {
       if (_isDiscovering) {
-        print('[NearbyService] Reinicio estratégico de discovery...');
+        _logger.debug('[NearbyService] Reinicio estratégico de discovery...');
         await _nearby.stopDiscovery();
         _isDiscovering = false;
         await Future.delayed(const Duration(milliseconds: 1500)); // Más tiempo para que el stack BT se limpie
@@ -267,6 +270,20 @@ class NearbyService with WidgetsBindingObserver {
       }
     });
 
+    // Descubrimiento global de usuarios activos (cada 2 minutos)
+    // Esto permite encontrar usuarios que no están en rango BLE directo
+    _globalDiscoveryTimer = Timer.periodic(const Duration(minutes: 2), (_) async {
+      if (_isRadarIntendedActive && _connectivity.isOnline) {
+        await _discoverGlobalUsers();
+        // Actualizar actividad BT en Supabase
+        await _supabaseService.updateBtActivity();
+      }
+      // También descubrir usuarios vía mesh routing
+      if (_isRadarIntendedActive) {
+        await _discoverMeshUsers();
+      }
+    });
+
     return true;
   }
 
@@ -277,6 +294,7 @@ class NearbyService with WidgetsBindingObserver {
 
     _scanCycleTimer?.cancel();
     _tokenRefreshTimer?.cancel();
+    _globalDiscoveryTimer?.cancel();
     await _stopAdvertising();
     await _stopDiscovery();
     _bleProximity.stopScanning();
@@ -306,7 +324,7 @@ class NearbyService with WidgetsBindingObserver {
       );
       _isAdvertising = true;
     } catch (e) {
-      print('[NearbyService] Error al iniciar advertising: $e');
+      _logger.debug('[NearbyService] Error al iniciar advertising: $e');
       _isAdvertising = false;
     }
   }
@@ -326,7 +344,7 @@ class NearbyService with WidgetsBindingObserver {
       );
       _isDiscovering = true;
     } catch (e) {
-      print('[NearbyService] Error al iniciar discovery: $e');
+      _logger.debug('[NearbyService] Error al iniciar discovery: $e');
       _isDiscovering = false;
     }
   }
@@ -336,7 +354,7 @@ class NearbyService with WidgetsBindingObserver {
     try {
       await _nearby.stopAdvertising();
     } catch (e) {
-      print('[NearbyService] Error al detener advertising: $e');
+      _logger.debug('[NearbyService] Error al detener advertising: $e');
     }
     _isAdvertising = false;
   }
@@ -346,7 +364,7 @@ class NearbyService with WidgetsBindingObserver {
     try {
       await _nearby.stopDiscovery();
     } catch (e) {
-      print('[NearbyService] Error al detener discovery: $e');
+      _logger.debug('[NearbyService] Error al detener discovery: $e');
     }
     _isDiscovering = false;
   }
@@ -392,7 +410,7 @@ class NearbyService with WidgetsBindingObserver {
       // 1. Manejo de tokens Offline directo
       if (token.startsWith('OFFLINE:')) {
         resolvedZoneId = token.replaceFirst('OFFLINE:', '');
-        print('[NearbyService] Token Offline detectado para $resolvedZoneId');
+        _logger.debug('[NearbyService] Token Offline detectado para $resolvedZoneId');
       }
 
       // 2. Intentar resolver vía Supabase si estamos online
@@ -419,7 +437,7 @@ class NearbyService with WidgetsBindingObserver {
             'publicKey': local.publicKey,
             'updatedAt': local.updatedAt.toIso8601String(),
           };
-          print('[NearbyService] Perfil recuperado de Isar para $resolvedZoneId');
+          _logger.debug('[NearbyService] Perfil recuperado de Isar para $resolvedZoneId');
         }
       }
 
@@ -434,10 +452,47 @@ class NearbyService with WidgetsBindingObserver {
         };
       }
 
-      // 4. Si falló todo, dependemos de la red P2P off-line.
+      // 4. Si falló todo, intentamos descubrir vía mesh routing
       if (profile == null) {
-        print('[NearbyService] Perfil no resuelto vía servidor o caché local. Esperando intercambio P2P.');
-        return;
+        _logger.debug('[NearbyService] Perfil no resuelto vía servidor o caché local. Intentando descubrir vía mesh routing.');
+        
+        // Intentar obtener perfil de la tabla de rutas mesh
+        for (final routeEntry in _routingTable.entries) {
+          final zoneId = routeEntry.key;
+          final route = routeEntry.value;
+          
+          // Si tenemos una ruta a este zoneId, intentar obtener perfil local
+          if (zoneId.isNotEmpty && route.distance <= _maxMeshHops) {
+            final meshProfile = await _isar.getProfile(zoneId);
+            if (meshProfile != null) {
+              profile = {
+                'id': meshProfile.userId,
+                'zone_id': meshProfile.zoneId,
+                'display_name': meshProfile.displayName,
+                'avatar_url': meshProfile.avatarUrl,
+                'publicKey': meshProfile.publicKey,
+                'updatedAt': meshProfile.updatedAt.toIso8601String(),
+              };
+              resolvedZoneId = zoneId;
+              _logger.debug('[NearbyService] Perfil recuperado de mesh routing para $zoneId');
+              break;
+            }
+          }
+        }
+        
+        // Si aún no tenemos perfil, mostrar como usuario desconocido pero mantener en radar
+        if (profile == null && _discoveredUsers.containsKey(endpointId)) {
+          final user = _discoveredUsers[endpointId]!;
+          user.userName = 'Usuario Mesh';
+          user.zoneId = token; // Usar el token como identificador temporal
+          _emitDiscoveredUsers();
+          return;
+        }
+        
+        if (profile == null) {
+          _logger.debug('[NearbyService] Perfil no resuelto vía servidor, caché local o mesh. Esperando intercambio P2P.');
+          return;
+        }
       }
 
       final profileId = profile['id'] as String?;
@@ -447,7 +502,7 @@ class NearbyService with WidgetsBindingObserver {
           (profileZoneId != null &&
               profileZoneId.isNotEmpty &&
               profileZoneId == _myZoneId)) {
-        print('[NearbyService] Somos nosotros mismos, descartando endpoint y desconectando.');
+        _logger.debug('[NearbyService] Somos nosotros mismos, descartando endpoint y desconectando.');
         _discoveredUsers.remove(endpointId);
         _emitDiscoveredUsers();
         disconnectFrom(endpointId);
@@ -490,7 +545,7 @@ class NearbyService with WidgetsBindingObserver {
         if (profileId != null) _isar.saveProfile(profile);
       }
     } catch (e) {
-      print('[NearbyService] Error al resolver token: $e');
+      _logger.debug('[NearbyService] Error al resolver token: $e');
       if (_connectivity.isOnline) {
         _discoveredUsers.remove(endpointId);
         _emitDiscoveredUsers();
@@ -510,10 +565,10 @@ class NearbyService with WidgetsBindingObserver {
       _resolvingEndpoints.remove(id);
       _lostEndpointsGraceTimers.remove(id);
       _emitDiscoveredUsers();
-      print('[NearbyService] Endpoint $id eliminado definitivamente tras periodo de gracia.');
+      _logger.debug('[NearbyService] Endpoint $id eliminado definitivamente tras periodo de gracia.');
     });
     
-    print('[NearbyService] Endpoint $id perdido. Entrando en periodo de gracia de 10s...');
+    _logger.debug('[NearbyService] Endpoint $id perdido. Entrando en periodo de gracia de 10s...');
   }
 
   // ──────────────────────────────────────────────────────────────
@@ -537,6 +592,9 @@ class NearbyService with WidgetsBindingObserver {
         
         // Mesh: Compartir nuestra tabla de rutas
         _shareRoutingTable(id);
+        
+        // Descubrir usuarios mesh después de establecer conexión
+        _discoverMeshUsers();
       }
     } else {
       _pendingConnections.remove(id);
@@ -563,7 +621,7 @@ class NearbyService with WidgetsBindingObserver {
         onDisconnected: _onDisconnected,
       );
     } catch (e) {
-      print('[NearbyService] Error al solicitar conexión: $e');
+      _logger.debug('[NearbyService] Error al solicitar conexión: $e');
     }
   }
 
@@ -575,7 +633,7 @@ class NearbyService with WidgetsBindingObserver {
         onPayloadTransferUpdate: _onPayloadTransferUpdate,
       );
     } catch (e) {
-      print('[NearbyService] Error al aceptar conexión: $e');
+      _logger.debug('[NearbyService] Error al aceptar conexión: $e');
     }
   }
 
@@ -584,7 +642,7 @@ class NearbyService with WidgetsBindingObserver {
       await _nearby.rejectConnection(endpointId);
       _pendingConnections.remove(endpointId);
     } catch (e) {
-      print('[NearbyService] Error al rechazar conexión: $e');
+      _logger.debug('[NearbyService] Error al rechazar conexión: $e');
     }
   }
 
@@ -602,7 +660,7 @@ class NearbyService with WidgetsBindingObserver {
     try {
       await _nearby.sendBytesPayload(endpointId, utf8.encode(message));
     } catch (e) {
-      print('[NearbyService] Error al enviar mensaje: $e');
+      _logger.debug('[NearbyService] Error al enviar mensaje: $e');
     }
   }
 
@@ -650,16 +708,16 @@ class NearbyService with WidgetsBindingObserver {
   }
 
   void _handleProfileExchange(String endpointId, Map<String, dynamic> profileData) async {
-    print('[NearbyService] Perfil P2P recibido de $endpointId: ${profileData['zone_id']}');
+    _logger.debug('[NearbyService] Perfil P2P recibido de $endpointId: ${profileData['zone_id']}');
     
     // Derivación de llave de sesión si viene clave pública
     final remotePublicKey = profileData['publicKey'] as String?;
     if (remotePublicKey != null) {
-      print('[NearbyService] Derivando llave de sesión P2P...');
+      _logger.debug('[NearbyService] Derivando llave de sesión P2P...');
       final sessionKey = await _security.deriveSessionKey(remotePublicKey);
       if (sessionKey != null) {
         profileData['sessionKey'] = sessionKey;
-        print('[NearbyService] Llave de sesión establecida con éxito.');
+        _logger.debug('[NearbyService] Llave de sesión establecida con éxito.');
       }
     }
 
@@ -711,7 +769,7 @@ class NearbyService with WidgetsBindingObserver {
   }
 
   void _handleRoutingTableUpdate(String fromEndpointId, List<dynamic> routes) {
-    print('[NearbyService] Actualización de tabla Mesh desde $fromEndpointId');
+    _logger.debug('[NearbyService] Actualización de tabla Mesh desde $fromEndpointId');
     for (final r in routes) {
       final zoneId = r['zoneId'] as String;
       final distance = r['distance'] as int;
@@ -735,7 +793,7 @@ class NearbyService with WidgetsBindingObserver {
     
     _routingTable[zoneId] = route;
     _isar.updateRoute(zoneId, nextHop, distance);
-    print('[NearbyService] Ruta Mesh actualizada: $zoneId vía $nextHop (saltos: $distance)');
+    _logger.debug('[NearbyService] Ruta Mesh actualizada: $zoneId vía $nextHop (saltos: $distance)');
   }
 
   Future<void> sendMeshMessage(String targetZoneId, String message) async {
@@ -763,18 +821,18 @@ class NearbyService with WidgetsBindingObserver {
         packet['nonce'] = encrypted['nonce'];
         packet['mac'] = encrypted['mac'];
         packet['isEncrypted'] = true;
-        print('[NearbyService] Mensaje Mesh cifrado para $targetZoneId');
+        _logger.debug('[NearbyService] Mensaje Mesh cifrado para $targetZoneId');
       } catch (e) {
-        print('[NearbyService] Error cifrando mensaje Mesh: $e');
+        _logger.debug('[NearbyService] Error cifrando mensaje Mesh: $e');
       }
     }
 
     if (route != null) {
-      print('[NearbyService] Enviando mensaje Mesh a $targetZoneId vía ${route.nextHopEndpointId}');
+      _logger.debug('[NearbyService] Enviando mensaje Mesh a $targetZoneId vía ${route.nextHopEndpointId}');
       sendMessage(route.nextHopEndpointId, jsonEncode(packet));
     } else {
       // Flood: Si no hay ruta, enviar a todos los vecinos
-      print('[NearbyService] No hay ruta para $targetZoneId, inundando red...');
+      _logger.debug('[NearbyService] No hay ruta para $targetZoneId, inundando red...');
       for (final endpoint in _connectedEndpoints) {
         sendMessage(endpoint, jsonEncode(packet));
       }
@@ -784,7 +842,6 @@ class NearbyService with WidgetsBindingObserver {
   void _handleMeshMessage(String fromEndpointId, Map<String, dynamic> packet) async {
     final target = packet['target'] as String;
     final source = packet['source'] as String;
-    final msgId = packet['msgId'] as String;
     final hops = (packet['hops'] as int) + 1;
 
     if (target == _myZoneId) {
@@ -793,7 +850,7 @@ class NearbyService with WidgetsBindingObserver {
       if (profile != null) {
         _processIncomingMeshMessage(source, packet, fromEndpointId);
       } else {
-        print('[NearbyService] Mensaje Mesh ignorado: No hay perfil/match previo con $source');
+        _logger.debug('[NearbyService] Mensaje Mesh ignorado: No hay perfil/match previo con $source');
       }
       return;
     }
@@ -835,17 +892,17 @@ class NearbyService with WidgetsBindingObserver {
             packet['mac'] as String,
             sharedSecret,
           );
-          print('[NearbyService] Mensaje Mesh descifrado de $sourceZoneId');
+          _logger.debug('[NearbyService] Mensaje Mesh descifrado de $sourceZoneId');
         } catch (e) {
           text = '[Error de descifrado: la llave de sesión podría ser inválida]';
-          print('[NearbyService] Error descifrando mensaje Mesh: $e');
+          _logger.debug('[NearbyService] Error descifrando mensaje Mesh: $e');
         }
       } else {
         text = '[Mensaje cifrado recibido pero no se tiene la llave de sesión]';
       }
     }
 
-    print('[NearbyService] Mensaje Mesh procesado de $sourceZoneId: $text');
+    _logger.debug('[NearbyService] Mensaje Mesh procesado de $sourceZoneId: $text');
     _incomingMessagesController.add(
       NearbyMessage(fromEndpointId: fromEndpointId, text: text, sourceZoneId: sourceZoneId),
     );
@@ -861,15 +918,112 @@ class NearbyService with WidgetsBindingObserver {
     return _routingTable.containsKey(zoneId);
   }
 
+  /// Agrega usuarios de la tabla de rutas mesh al radar.
+  /// Esto permite descubrir usuarios que están conectados vía mesh pero no en rango BLE directo.
+  Future<void> _discoverMeshUsers() async {
+    try {
+      _logger.debug('[NearbyService] Descubriendo usuarios vía mesh routing...');
+      
+      for (final routeEntry in _routingTable.entries) {
+        final zoneId = routeEntry.key;
+        final route = routeEntry.value;
+        
+        // Ignorar ourselves
+        if (zoneId == _myZoneId) continue;
+        
+        // Verificar si ya está en discoveredUsers
+        final alreadyDiscovered = _discoveredUsers.values.any((u) => u.zoneId == zoneId);
+        if (alreadyDiscovered) continue;
+        
+        // Obtener perfil de Isar
+        final profile = await _isar.getProfile(zoneId);
+        if (profile != null) {
+          final meshEndpointId = 'MESH:$zoneId';
+          
+          if (!_discoveredUsers.containsKey(meshEndpointId)) {
+            _discoveredUsers[meshEndpointId] = NearbyUser(
+              endpointId: meshEndpointId,
+              token: 'MESH:$zoneId',
+              userName: profile.displayName ?? zoneId,
+              zoneId: zoneId,
+              isConnected: route.distance == 1,
+              distanceMeters: null, // Sin distancia BLE para mesh
+              profile: {
+                'id': profile.userId,
+                'zone_id': profile.zoneId,
+                'display_name': profile.displayName,
+                'avatar_url': profile.avatarUrl,
+                'publicKey': profile.publicKey,
+              },
+            );
+            
+            _logger.debug('[NearbyService] Usuario mesh agregado al radar: $zoneId (saltos: ${route.distance})');
+          }
+        }
+      }
+      
+      _emitDiscoveredUsers();
+    } catch (e) {
+      _logger.debug('[NearbyService] Error descubriendo usuarios mesh: $e');
+    }
+  }
+
   void _onPayloadTransferUpdate(String endpointId, PayloadTransferUpdate update) {}
 
   // ──────────────────────────────────────────────────────────────
   //  STRESS TESTING & SIMULATION
   // ──────────────────────────────────────────────────────────────
 
+  /// Descubre usuarios activos globalmente desde Supabase y los agrega al radar.
+  /// Esto permite encontrar usuarios que no están en rango BLE directo.
+  Future<void> _discoverGlobalUsers() async {
+    try {
+      _logger.debug('[NearbyService] Iniciando descubrimiento global de usuarios activos...');
+      final activeUsers = await _supabaseService.getActiveUsersForRadar();
+      
+      for (final userData in activeUsers) {
+        final zoneId = userData['zone_id'] as String?;
+        final userId = userData['id'] as String?;
+        
+        if (zoneId == null || userId == null) continue;
+        if (zoneId == _myZoneId || userId == _userId) continue;
+        if (_blockedUserIds.contains(userId)) continue;
+        
+        // Verificar si ya tenemos este usuario en el radar
+        final alreadyDiscovered = _discoveredUsers.values.any((u) => u.zoneId == zoneId);
+        if (alreadyDiscovered) continue;
+        
+        // Crear un endpoint virtual para usuarios globales
+        final virtualEndpointId = 'GLOBAL:$zoneId';
+        
+        if (!_discoveredUsers.containsKey(virtualEndpointId)) {
+          _discoveredUsers[virtualEndpointId] = NearbyUser(
+            endpointId: virtualEndpointId,
+            token: 'GLOBAL:$zoneId',
+            userName: userData['display_name'] ?? zoneId,
+            zoneId: zoneId,
+            isConnected: false,
+            distanceMeters: null, // Sin distancia BLE
+            profile: userData,
+          );
+          
+          // Guardar en Isar para caché local
+          _isar.saveProfile(userData);
+          
+          _logger.debug('[NearbyService] Usuario global agregado al radar: $zoneId');
+        }
+      }
+      
+      _emitDiscoveredUsers();
+      _logger.debug('[NearbyService] Descubrimiento global completado. Total usuarios: ${_discoveredUsers.length}');
+    } catch (e) {
+      _logger.debug('[NearbyService] Error en descubrimiento global: $e');
+    }
+  }
+
   /// Simula el recibimiento de múltiples mensajes Mesh para pruebas de estrés.
   void simulateMeshTraffic(int messageCount) {
-    print('[NearbyService] Iniciando simulación de estrés: $messageCount mensajes...');
+    _logger.debug('[NearbyService] Iniciando simulación de estrés: $messageCount mensajes...');
     for (int i = 0; i < messageCount; i++) {
        final mockPacket = {
         'type': 'mesh_msg',

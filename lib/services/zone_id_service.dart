@@ -3,8 +3,8 @@ import 'dart:io';
 import 'dart:math';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:uuid/uuid.dart';
 import 'chat_e2ee_service.dart';
+import 'logger_service.dart';
 import 'package:path/path.dart' as p;
 
 /// Servicio que gestiona el ID único ZONE- del usuario.
@@ -25,10 +25,10 @@ class ZoneIdService {
 
   final _supabase = Supabase.instance.client;
   final _e2ee = ChatE2EEService();
+  final _logger = LoggerService();
 
   String? _zoneId;
   String? _uid;
-  bool _needPublicKeyUpdate = false;
 
   String? get zoneId => _zoneId;
   String? get uid => _uid;
@@ -48,12 +48,12 @@ class ZoneIdService {
     try {
       return await _storage.read(key: key);
     } catch (e) {
-      print('[ZoneIdService] Error leyendo $key: $e');
+      _logger.debug('[ZoneIdService] Error leyendo $key: $e');
       // Si hay un error de cifrado (KeyStore corrupto), borramos la clave para permitir recuperación
       try {
         await _storage.delete(key: key);
       } catch (e2) {
-        print('[ZoneIdService] Falló el borrado de clave corrupta: $e2');
+        _logger.debug('[ZoneIdService] Falló el borrado de clave corrupta: $e2');
       }
       return null;
     }
@@ -66,7 +66,7 @@ class ZoneIdService {
       return await _getOrCreateInternal();
     } catch (e) {
       if (e.toString().contains('BadPaddingException') || e.toString().contains('decryption')) {
-        print('[ZoneIdService] Corrupción de almacenamiento detectada. Limpiando todo y reintentando...');
+        _logger.debug('[ZoneIdService] Corrupción de almacenamiento detectada. Limpiando todo y reintentando...');
         await _storage.deleteAll();
         return await _getOrCreateInternal();
       }
@@ -91,7 +91,7 @@ class ZoneIdService {
     try {
       await _registerInSupabase();
     } catch (e) {
-      print('[ZoneIdService] Error crítico en registro: $e');
+      _logger.debug('[ZoneIdService] Error crítico en registro: $e');
       rethrow;
     }
 
@@ -105,7 +105,7 @@ class ZoneIdService {
       return await _loginWithExistingIDInternal(zoneId);
     } catch (e) {
        if (e.toString().contains('BadPaddingException') || e.toString().contains('decryption')) {
-        print('[ZoneIdService] Corrupción de almacenamiento detectada en login. Limpiando...');
+        _logger.debug('[ZoneIdService] Corrupción de almacenamiento detectada en login. Limpiando...');
         await _storage.deleteAll();
         return await _loginWithExistingIDInternal(zoneId);
       }
@@ -128,7 +128,7 @@ class ZoneIdService {
       await _storage.write(key: _keySupabaseSession, value: _uid);
 
       // 4. Obtener datos del perfil previo para no perderlos (Nombre, Avatar)
-      print('[ZoneIdService] Intentando recuperar perfil previo para $zoneId');
+      _logger.debug('[ZoneIdService] Intentando recuperar perfil previo para $zoneId');
       final profileQuery = await _supabase.from('users').select().eq('zone_id', zoneId).maybeSingle();
       
       // 5. Actualizar la base de datos para que este dispositivo sea el nuevo "dueño" del ZONE-ID
@@ -141,7 +141,7 @@ class ZoneIdService {
       
       // 6. Si teníamos perfil previo, migrarlo al nuevo UID
       if (profileQuery != null && (profileQuery['display_name'] != null || profileQuery['avatar_url'] != null)) {
-        print('[ZoneIdService] Migrando perfil de ID previo a nuevo UID...');
+        _logger.debug('[ZoneIdService] Migrando perfil de ID previo a nuevo UID...');
         await _supabase.from('users').update({
           'display_name': profileQuery['display_name'],
           'avatar_url': profileQuery['avatar_url'],
@@ -156,7 +156,7 @@ class ZoneIdService {
       
       return true;
     } catch (e) {
-      print('[ZoneIdService] Error en loginWithExistingID: $e');
+      _logger.debug('[ZoneIdService] Error en loginWithExistingID: $e');
       rethrow;
     }
   }
@@ -181,7 +181,7 @@ class ZoneIdService {
       final publicKeyBase64 = _bytesToBase64(keyPairData.publicKey.bytes);
       final privateKeyBase64 = _bytesToBase64(await keyPair.extractPrivateKeyBytes());
 
-      print('[ZoneIdService] Registrando usuario en public.users: $_uid ($_zoneId)');
+      _logger.debug('[ZoneIdService] Registrando usuario en public.users: $_uid ($_zoneId)');
       
       // Guardar en Supabase (usamos upsert para evitar errores si ya existe)
       await _supabase.from('users').upsert({
@@ -200,16 +200,16 @@ class ZoneIdService {
       // Persistir claves localmente
       await _storage.write(key: _keyPublicKey, value: publicKeyBase64);
       await _storage.write(key: _keyPrivateKey, value: privateKeyBase64);
-      print('[ZoneIdService] Registro exitoso para $_zoneId');
+      _logger.debug('[ZoneIdService] Registro exitoso para $_zoneId');
     } catch (e) {
-      print('[ZoneIdService] ERROR CRÍTICO EN REGISTRO: $e');
+      _logger.debug('[ZoneIdService] ERROR CRÍTICO EN REGISTRO: $e');
       rethrow;
     }
   }
 
   /// Asegura que el UID y la sesión de Auth estén listos.
   Future<void> ensureAuth() async {
-    final oldUid = await _safeRead(_keySupabaseSession);
+    await _safeRead(_keySupabaseSession);
 
     // 1. Verificar sesión de Supabase Auth
     final session = _supabase.auth.currentSession;
@@ -238,7 +238,7 @@ class ZoneIdService {
     
     // SI NO TENEMOS CLAVE LOCAL (usuario existente de antes de la persistencia o re-instalación)
     if (privateKeyBase64 == null) {
-      print('[ZoneIdService] Clave privada no encontrada localmente. Generando una nueva...');
+      _logger.debug('[ZoneIdService] Clave privada no encontrada localmente. Generando una nueva...');
       final keyPair = await _e2ee.generateKeyPair();
       final keyPairData = await keyPair.extract();
       privateKeyBase64 = _bytesToBase64(await keyPair.extractPrivateKeyBytes());
@@ -249,21 +249,19 @@ class ZoneIdService {
         await _storage.write(key: _keyPrivateKey, value: privateKeyBase64);
         await _storage.write(key: _keyPublicKey, value: publicKeyBase64);
       } catch(e) {
-        print('[ZoneIdService] Error escribiendo en keystore corrupto: $e. Forzando borrado.');
+        _logger.debug('[ZoneIdService] Error escribiendo en keystore corrupto: $e. Forzando borrado.');
         try {
           await _storage.deleteAll();
           await _storage.write(key: _keyPrivateKey, value: privateKeyBase64);
           await _storage.write(key: _keyPublicKey, value: publicKeyBase64);
         } catch(e2) {
-          print('[ZoneIdService] No se pudo recuperar almacenamiento seguro: $e2');
+          _logger.debug('[ZoneIdService] No se pudo recuperar almacenamiento seguro: $e2');
         }
       }
       
       // Marcar que necesitamos actualizar la pública en Supabase
-      _needPublicKeyUpdate = true;
     } else {
       await _e2ee.initFromPrivateBase64(privateKeyBase64);
-      _needPublicKeyUpdate = false;
     }
 
     // 2. Si tenemos un ZONE-ID, nos aseguramos de que el UID actual sea el dueño en Supabase.
@@ -275,9 +273,9 @@ class ZoneIdService {
           'p_zone_id': currentZoneId,
           'p_public_key': pubKey,
         });
-        print('[ZoneIdService] Reclamo exitoso para $currentZoneId con llave ${pubKey?.substring(0, 5)}...');
+        _logger.debug('[ZoneIdService] Reclamo exitoso para $currentZoneId con llave ${pubKey?.substring(0, 5)}...');
       } catch (e) {
-        print('[ZoneIdService] Aviso: Error al reclamar Zone ID en el inicio: $e');
+        _logger.debug('[ZoneIdService] Aviso: Error al reclamar Zone ID en el inicio: $e');
       }
     }
   }
@@ -287,7 +285,7 @@ class ZoneIdService {
       await ensureAuth();
       await checkAndFixRegistration(); // Auto-sanación si falta la fila en DB
     } catch (e) {
-      print('[ZoneIdService] Error al restaurar sesión: $e');
+      _logger.debug('[ZoneIdService] Error al restaurar sesión: $e');
     }
   }
 
@@ -304,7 +302,7 @@ class ZoneIdService {
       
       // Si no tenemos clave local, generamos una ahora
       if (publicKeyBase64 == null) {
-        print('[ZoneIdService] Clave pública local no encontrada. Generando...');
+        _logger.debug('[ZoneIdService] Clave pública local no encontrada. Generando...');
         final keyPair = await _e2ee.generateKeyPair();
         final keyPairData = await keyPair.extract();
         publicKeyBase64 = _bytesToBase64(keyPairData.publicKey.bytes);
@@ -315,31 +313,30 @@ class ZoneIdService {
       }
 
       if (res == null) {
-        print('[ZoneIdService] Alerta: Fila de usuario no encontrada. Recreando...');
+        _logger.debug('[ZoneIdService] Alerta: Fila de usuario no encontrada. Recreando...');
         await _supabase.from('users').upsert({
           'id': _uid,
           'zone_id': _zoneId,
           'public_key': publicKeyBase64,
           'stealth_mode': false,
         });
-        print('[ZoneIdService] Fila de usuario recreada con éxito.');
+        _logger.debug('[ZoneIdService] Fila de usuario recreada con éxito.');
       } else {
         // SIEMPRE sincronizar la clave pública con Supabase
         final dbKey = res['public_key']?.toString();
         if (dbKey != publicKeyBase64) {
-          print('[ZoneIdService] ⚠️ Clave en Supabase NO coincide con la local. Sincronizando...');
-          print('[ZoneIdService] DB: ${dbKey?.substring(0, 8)}... vs Local: ${publicKeyBase64.substring(0, 8)}...');
+          _logger.debug('[ZoneIdService] ⚠️ Clave en Supabase NO coincide con la local. Sincronizando...');
+          _logger.debug('[ZoneIdService] DB: ${dbKey?.substring(0, 8)}... vs Local: ${publicKeyBase64.substring(0, 8)}...');
           await _supabase.from('users').update({
             'public_key': publicKeyBase64,
           }).eq('id', _uid!);
-          print('[ZoneIdService] ✅ Clave pública sincronizada con Supabase.');
+          _logger.debug('[ZoneIdService] ✅ Clave pública sincronizada con Supabase.');
         } else {
-          print('[ZoneIdService] ✅ Clave pública ya sincronizada.');
+          _logger.debug('[ZoneIdService] ✅ Clave pública ya sincronizada.');
         }
       }
-      _needPublicKeyUpdate = false;
     } catch (e) {
-      print('[ZoneIdService] Error en checkAndFixRegistration: $e');
+      _logger.debug('[ZoneIdService] Error en checkAndFixRegistration: $e');
     }
   }
 
@@ -431,7 +428,7 @@ class ZoneIdService {
       final res = await _supabase.from('users').select().eq('id', _uid!).single();
       return res;
     } catch (e) {
-      print('[ZoneIdService] Error en getMyProfile: $e');
+      _logger.debug('[ZoneIdService] Error en getMyProfile: $e');
       return null;
     }
   }
@@ -467,7 +464,7 @@ class ZoneIdService {
         await _supabase.storage.from('profiles').remove(pathsToDelete);
       }
     } catch (e) {
-      print('Aviso: Fallo borrando storage, continuando con el perfil... \$e');
+      _logger.debug('Aviso: Fallo borrando storage, continuando con el perfil... $e');
     }
 
     // 2. Llamar a la función de borrado total en Supabase (RPC)

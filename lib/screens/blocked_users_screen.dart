@@ -79,7 +79,7 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                   itemCount: _blockedUsers.length,
                   itemBuilder: (context, index) {
                     final item = _blockedUsers[index];
-                    final user = item['users'];
+                    final user = item['users'] != null ? Map<String, dynamic>.from(item['users'] as Map) : <String, dynamic>{};
                     return Container(
                       margin: const EdgeInsets.only(bottom: 12),
                       decoration: BoxDecoration(

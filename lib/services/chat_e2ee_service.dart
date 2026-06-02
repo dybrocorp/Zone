@@ -1,22 +1,32 @@
 import 'dart:convert';
 import 'package:cryptography/cryptography.dart';
+import 'logger_service.dart';
 
 class ChatE2EEService {
   static final ChatE2EEService _instance = ChatE2EEService._internal();
   factory ChatE2EEService() => _instance;
   ChatE2EEService._internal();
 
+  final _logger = LoggerService();
+
   final _x25519 = X25519();
   final _algorithm = Chacha20.poly1305Aead();
   
   SimpleKeyPair? _myKeyPair;
   bool get isInitialized => _myKeyPair != null;
+  SimpleKeyPair? get myKeyPair => _myKeyPair;
 
   /// Genera las claves públicas y privadas locales para este cliente.
   /// La política dicta que el secreto privado nunca abandona el dispositivo.
   Future<SimpleKeyPair> generateKeyPair() async {
     _myKeyPair = await _x25519.newKeyPair();
     return _myKeyPair!;
+  }
+
+  /// Recupera o genera un par de claves.
+  Future<SimpleKeyPair> getOrCreateKeyPair() async {
+    if (_myKeyPair != null) return _myKeyPair!;
+    return await generateKeyPair();
   }
 
   /// Inicializa el par de claves desde un secreto privado guardado (base64).
@@ -42,7 +52,6 @@ class ChatE2EEService {
         type: KeyPairType.x25519,
       );
     } catch (e) {
-      print('[ChatE2EEService] Error importando clave pública: $e');
       return null;
     }
   }
@@ -60,7 +69,7 @@ class ChatE2EEService {
     final mContent = base64Encode(secretBox.mac.bytes);
     
     // VALIDACÍON LOCAL PARA CONFIRMAR QUE EL MAC NO ES TRUNCADO
-    print('[DEBUG-CRYPTO] Encrypted Len: ${eContent.length}, Nonce: ${nContent.length}, Mac: ${mContent.length}');
+    _logger.debug('[DEBUG-CRYPTO] Encrypted Len: ${eContent.length}, Nonce: ${nContent.length}, Mac: ${mContent.length}');
 
     return {
       'encrypted_content': eContent,
@@ -94,7 +103,6 @@ class ChatE2EEService {
 
       return utf8.decode(clearTextBytes);
     } catch (e) {
-      print('[ChatE2EEService] Error al desencriptar: $e');
       return 'Error de cifrado ($e)';
     }
   }

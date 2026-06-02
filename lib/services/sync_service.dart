@@ -2,6 +2,7 @@ import 'dart:async';
 import 'supabase_service.dart';
 import 'isar_service.dart';
 import 'connectivity_service.dart';
+import 'logger_service.dart';
 
 /// Servicio para sincronizar datos locales con Supabase cuando hay conexión.
 class SyncService {
@@ -12,6 +13,7 @@ class SyncService {
   final _supabase = SupabaseService();
   final _isar = IsarService();
   final _connectivity = ConnectivityService();
+  final _logger = LoggerService();
   
   bool _isSyncing = false;
   Timer? _syncTimer;
@@ -20,7 +22,7 @@ class SyncService {
     // Escuchar cambios de conectividad
     _connectivity.statusStream.listen((isOnline) {
       if (isOnline) {
-        print('[SyncService] Detectado ONLINE: Iniciando sincronización...');
+        _logger.debug('[SyncService] Detectado ONLINE: Iniciando sincronización...');
         syncNow();
       }
     });
@@ -36,14 +38,14 @@ class SyncService {
   Future<void> syncNow() async {
     if (_isSyncing || !_connectivity.isOnline) return;
     _isSyncing = true;
-    print('[SyncService] Iniciando ciclo de sincronización...');
+    _logger.debug('[SyncService] Iniciando ciclo de sincronización...');
 
     try {
       await _syncEncounters();
       await _syncMessages();
-      print('[SyncService] Sincronización completada con éxito.');
+      _logger.debug('[SyncService] Sincronización completada con éxito.');
     } catch (e) {
-      print('[SyncService] Error durante la sincronización: $e');
+      _logger.debug('[SyncService] Error durante la sincronización: $e');
     } finally {
       _isSyncing = false;
     }
@@ -53,7 +55,7 @@ class SyncService {
     final unsynced = await _isar.getUnsyncedEncounters();
     if (unsynced.isEmpty) return;
 
-    print('[SyncService] Sincronizando ${unsynced.length} encuentros...');
+    _logger.debug('[SyncService] Sincronizando ${unsynced.length} encuentros...');
     for (final enc in unsynced) {
       try {
         final userId = enc.userId;
@@ -62,14 +64,34 @@ class SyncService {
         await _supabase.registerEncounter(userId, otherZoneId);
         await _isar.markEncounterSynced(enc.id);
       } catch (e) {
-        print('[SyncService] Error sincronizando encuentro ${enc.id}: $e');
+        _logger.debug('[SyncService] Error sincronizando encuentro ${enc.id}: $e');
       }
     }
   }
 
   Future<void> _syncMessages() async {
-    // TODO: Implementar lógica de sincronización de mensajes P2P hacia la nube
-    // Por ahora el enfoque principal son los encuentros (radar).
+    final unsynced = await _isar.getUnsyncedMessages();
+    if (unsynced.isEmpty) return;
+
+    _logger.debug('[SyncService] Sincronizando ${unsynced.length} mensajes...');
+    for (final msg in unsynced) {
+      try {
+        // Los mensajes P2P se sincronizan cuando hay conexión a Supabase
+        // Se asume que hay un match_id válido en Supabase
+        if (msg.matchId.isNotEmpty) {
+          await _supabase.sendMessage(
+            matchId: msg.matchId,
+            senderId: msg.senderId,
+            encryptedContent: msg.encryptedContent,
+            nonce: msg.nonce,
+            mac: msg.mac,
+          );
+          await _isar.markMessageSynced(msg.id);
+        }
+      } catch (e) {
+        _logger.debug('[SyncService] Error sincronizando mensaje ${msg.id}: $e');
+      }
+    }
   }
 
   void dispose() {

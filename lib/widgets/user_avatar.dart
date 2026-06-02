@@ -60,7 +60,7 @@ class UserAvatar extends StatelessWidget {
               ),
             ),
           ),
-          loadingBuilder: (context, child, progress) {
+          loadingBuilder: (_, child, progress) {
             if (progress == null) return child;
             return Center(
               child: SizedBox(

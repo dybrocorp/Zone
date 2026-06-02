@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/premium_service.dart';
+import '../config/radar_config.dart';
 
 class DonationsScreen extends StatefulWidget {
   const DonationsScreen({Key? key}) : super(key: key);
@@ -104,10 +105,10 @@ class _DonationsScreenState extends State<DonationsScreen> {
               color: const Color(0xFFF59E0B),
             ),
             const SizedBox(height: 48),
-            const Text(
-              'Al adquirir una membresía eliminas el límite de 15 metros en el radar y apoyas el desarrollo de Zone.',
+            Text(
+              'Al adquirir una membresía eliminas el límite de ${RadarConfig.maxFreeDiscoveryRadiusMeters.round()} metros en el radar y apoyas el desarrollo de Zone.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white54, fontSize: 13),
+              style: const TextStyle(color: Colors.white54, fontSize: 13),
             ),
             const SizedBox(height: 24),
           ],
@@ -140,7 +141,7 @@ class _DonationsScreenState extends State<DonationsScreen> {
           Text(
             _isPremium 
               ? 'Disfrutas de alcance ilimitado' 
-              : 'La versión gratuita está limitada a 15 metros',
+              : 'La versión gratuita está limitada a ${RadarConfig.maxFreeDiscoveryRadiusMeters.round()} metros',
             style: const TextStyle(color: Colors.white70, fontSize: 14),
           ),
         ],

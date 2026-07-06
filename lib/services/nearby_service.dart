@@ -273,7 +273,7 @@ class NearbyService with WidgetsBindingObserver {
     // Descubrimiento global de usuarios activos (cada 2 minutos)
     // Esto permite encontrar usuarios que no están en rango BLE directo
     _globalDiscoveryTimer = Timer.periodic(const Duration(minutes: 2), (_) async {
-      if (_isRadarIntendedActive && _connectivity.isOnline) {
+      if (_isRadarIntendedActive && _connectivity.hasRealInternet) {
         await _discoverGlobalUsers();
         // Actualizar actividad BT en Supabase
         await _supabaseService.updateBtActivity();
@@ -413,8 +413,8 @@ class NearbyService with WidgetsBindingObserver {
         _logger.debug('[NearbyService] Token Offline detectado para $resolvedZoneId');
       }
 
-      // 2. Intentar resolver vía Supabase si estamos online
-      if (resolvedZoneId == null && _connectivity.isOnline) {
+      // 2. Intentar resolver vía Supabase si tenemos internet real
+      if (resolvedZoneId == null && _connectivity.hasRealInternet) {
         for (var attempt = 0; attempt < 2; attempt++) {
           profile = await _supabaseService.resolveToken(token);
           if (profile != null) {
@@ -538,18 +538,15 @@ class NearbyService with WidgetsBindingObserver {
       _emitDiscoveredUsers();
       
       if (user.zoneId.isNotEmpty) {
-        if (_connectivity.isOnline) {
+        if (_connectivity.hasRealInternet) {
            _supabaseService.registerEncounter(_userId, user.zoneId);
         }
-        _isar.saveEncounter(userId: _userId, otherZoneId: user.zoneId, isSynced: _connectivity.isOnline);
+        _isar.saveEncounter(userId: _userId, otherZoneId: user.zoneId, isSynced: _connectivity.hasRealInternet);
         if (profileId != null) _isar.saveProfile(profile);
       }
     } catch (e) {
       _logger.debug('[NearbyService] Error al resolver token: $e');
-      if (_connectivity.isOnline) {
-        _discoveredUsers.remove(endpointId);
-        _emitDiscoveredUsers();
-      }
+      // No eliminar usuario si falla la resolución - puede funcionar offline
     } finally {
       _resolvingEndpoints.remove(endpointId);
     }
@@ -728,7 +725,7 @@ class NearbyService with WidgetsBindingObserver {
     _isar.saveEncounter(
       userId: _userId,
       otherZoneId: profileData['zone_id'],
-      isSynced: _connectivity.isOnline,
+      isSynced: _connectivity.hasRealInternet,
     );
 
     // Actualizar UI si el usuario está en el radar

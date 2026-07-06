@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/connectivity_service.dart';
 import '../services/isar_service.dart';
@@ -28,6 +29,9 @@ class _InitialLoadingScreenState extends State<InitialLoadingScreen> {
     print('[Startup] Iniciando carga de servicios a las ${start.toIso8601String()}');
 
     try {
+      // 0. Cargar variables de entorno
+      await dotenv.load(fileName: '.env');
+
       // 1. Conectividad
       setState(() {
         _loadingText = 'Verificando red...';
@@ -58,8 +62,8 @@ class _InitialLoadingScreenState extends State<InitialLoadingScreen> {
         _progress = 0.8;
       });
       await Supabase.initialize(
-        url: 'https://leejpxwctnubihacudik.supabase.co',
-        anonKey: 'sb_publishable_vl-aeN4Ior-GZ5YB45MFyA_KGxgfZjV',
+        url: dotenv.env['SUPABASE_URL']!,
+        anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
       );
        print('[Startup] Supabase OK (${DateTime.now().difference(start).inMilliseconds}ms)');
 

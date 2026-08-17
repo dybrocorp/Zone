@@ -17,6 +17,15 @@
 .dart_tool/
 .pub-cache/
 .build/
+build/
+
+# Build outputs
+*.apk
+*.aab
+*.ipa
+*.app
+*.so
+*.dylib
 
 # Test and temp files
 tmp_*.dart
@@ -26,3 +35,9 @@ test_*.dart
 .env
 *.key
 lib/config/*.dart
+
+# Generated files
+*.g.dart
+ios/Pods/
+ios/.symlinks/
+macos/Pods/

@@ -87,7 +87,7 @@ class ChatE2EEService {
   ) async {
     try {
       if (cipherTextBase64.isEmpty || nonceBase64.isEmpty || macBase64.isEmpty) {
-        return '[Mensaje vacío o corrupto]';
+        return '[🔒 Mensaje vacío o corrupto]';
       }
 
       final secretBox = SecretBox(
@@ -102,8 +102,14 @@ class ChatE2EEService {
       );
 
       return utf8.decode(clearTextBytes);
+    } on SecretBoxAuthenticationError {
+      // El MAC no coincide: la clave pública del otro usuario cambió (reinstalación / nuevo dispositivo)
+      // o el mensaje fue cifrado con llaves antiguas. No es un error de la app.
+      _logger.debug('[E2EE] MAC no válido: el mensaje fue cifrado con unas llaves distintas a las actuales.');
+      return '🔒 Mensaje cifrado con llaves anteriores';
     } catch (e) {
-      return 'Error de cifrado ($e)';
+      _logger.debug('[E2EE] Error descifrando: $e');
+      return '[🔒 No se pudo descifrar]';
     }
   }
 }

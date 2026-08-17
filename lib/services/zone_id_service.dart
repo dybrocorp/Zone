@@ -4,8 +4,8 @@ import 'dart:math';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'chat_e2ee_service.dart';
+import 'isar_service.dart';
 import 'logger_service.dart';
-import 'package:path/path.dart' as p;
 
 /// Servicio que gestiona el ID único ZONE- del usuario.
 /// Lo genera, persiste localmente y lo registra en Supabase.
@@ -25,6 +25,7 @@ class ZoneIdService {
 
   final _supabase = Supabase.instance.client;
   final _e2ee = ChatE2EEService();
+  final _isar = IsarService();
   final _logger = LoggerService();
 
   String? _zoneId;
@@ -53,7 +54,9 @@ class ZoneIdService {
       try {
         await _storage.delete(key: key);
       } catch (e2) {
-        _logger.debug('[ZoneIdService] Falló el borrado de clave corrupta: $e2');
+        _logger.debug(
+          '[ZoneIdService] Falló el borrado de clave corrupta: $e2',
+        );
       }
       return null;
     }
@@ -65,8 +68,11 @@ class ZoneIdService {
     try {
       return await _getOrCreateInternal();
     } catch (e) {
-      if (e.toString().contains('BadPaddingException') || e.toString().contains('decryption')) {
-        _logger.debug('[ZoneIdService] Corrupción de almacenamiento detectada. Limpiando todo y reintentando...');
+      if (e.toString().contains('BadPaddingException') ||
+          e.toString().contains('decryption')) {
+        _logger.debug(
+          '[ZoneIdService] Corrupción de almacenamiento detectada. Limpiando todo y reintentando...',
+        );
         await _storage.deleteAll();
         return await _getOrCreateInternal();
       }
@@ -104,8 +110,11 @@ class ZoneIdService {
     try {
       return await _loginWithExistingIDInternal(zoneId);
     } catch (e) {
-       if (e.toString().contains('BadPaddingException') || e.toString().contains('decryption')) {
-        _logger.debug('[ZoneIdService] Corrupción de almacenamiento detectada en login. Limpiando...');
+      if (e.toString().contains('BadPaddingException') ||
+          e.toString().contains('decryption')) {
+        _logger.debug(
+          '[ZoneIdService] Corrupción de almacenamiento detectada en login. Limpiando...',
+        );
         await _storage.deleteAll();
         return await _loginWithExistingIDInternal(zoneId);
       }
@@ -128,32 +137,45 @@ class ZoneIdService {
       await _storage.write(key: _keySupabaseSession, value: _uid);
 
       // 4. Obtener datos del perfil previo para no perderlos (Nombre, Avatar)
-      _logger.debug('[ZoneIdService] Intentando recuperar perfil previo para $zoneId');
-      final profileQuery = await _supabase.from('users').select().eq('zone_id', zoneId).maybeSingle();
-      
+      _logger.debug(
+        '[ZoneIdService] Intentando recuperar perfil previo para $zoneId',
+      );
+      final profileQuery = await _supabase
+          .from('users')
+          .select()
+          .eq('zone_id', zoneId)
+          .maybeSingle();
+
       // 5. Actualizar la base de datos para que este dispositivo sea el nuevo "dueño" del ZONE-ID
       // Usamos RPC para saltarnos el bloqueo de RLS en el handover de ID
       final pubKey = await _storage.read(key: _keyPublicKey);
-      await _supabase.rpc('claim_zone_id', params: {
-        'p_zone_id': zoneId,
-        'p_public_key': pubKey,
-      });
-      
+      await _supabase.rpc(
+        'claim_zone_id',
+        params: {'p_zone_id': zoneId, 'p_public_key': pubKey},
+      );
+
       // 6. Si teníamos perfil previo, migrarlo al nuevo UID
-      if (profileQuery != null && (profileQuery['display_name'] != null || profileQuery['avatar_url'] != null)) {
-        _logger.debug('[ZoneIdService] Migrando perfil de ID previo a nuevo UID...');
-        await _supabase.from('users').update({
-          'display_name': profileQuery['display_name'],
-          'avatar_url': profileQuery['avatar_url'],
-          'instagram_handle': profileQuery['instagram_handle'],
-          'facebook_handle': profileQuery['facebook_handle'],
-          'tiktok_handle': profileQuery['tiktok_handle'],
-        }).eq('id', _uid!);
+      if (profileQuery != null &&
+          (profileQuery['display_name'] != null ||
+              profileQuery['avatar_url'] != null)) {
+        _logger.debug(
+          '[ZoneIdService] Migrando perfil de ID previo a nuevo UID...',
+        );
+        await _supabase
+            .from('users')
+            .update({
+              'display_name': profileQuery['display_name'],
+              'avatar_url': profileQuery['avatar_url'],
+              'instagram_handle': profileQuery['instagram_handle'],
+              'facebook_handle': profileQuery['facebook_handle'],
+              'tiktok_handle': profileQuery['tiktok_handle'],
+            })
+            .eq('id', _uid!);
       }
 
       // 7. ASEGURAR que las llaves E2EE se restauren o generen para esta nueva sesión
       await ensureAuth();
-      
+
       return true;
     } catch (e) {
       _logger.debug('[ZoneIdService] Error en loginWithExistingID: $e');
@@ -170,7 +192,9 @@ class ZoneIdService {
       // Auth anónimo (Supabase genera JWT sin email ni teléfono)
       final response = await _supabase.auth.signInAnonymously();
       final user = response.user;
-      if (user == null) throw Exception('No se pudo iniciar sesión anónima en Supabase Auth');
+      if (user == null) {
+        throw Exception('No se pudo iniciar sesión anónima en Supabase Auth');
+      }
 
       _uid = user.id;
       await _storage.write(key: _keySupabaseSession, value: _uid);
@@ -179,10 +203,14 @@ class ZoneIdService {
       final keyPair = await _e2ee.generateKeyPair();
       final keyPairData = await keyPair.extract();
       final publicKeyBase64 = _bytesToBase64(keyPairData.publicKey.bytes);
-      final privateKeyBase64 = _bytesToBase64(await keyPair.extractPrivateKeyBytes());
+      final privateKeyBase64 = _bytesToBase64(
+        await keyPair.extractPrivateKeyBytes(),
+      );
 
-      _logger.debug('[ZoneIdService] Registrando usuario en public.users: $_uid ($_zoneId)');
-      
+      _logger.debug(
+        '[ZoneIdService] Registrando usuario en public.users: $_uid ($_zoneId)',
+      );
+
       // Guardar en Supabase (usamos upsert para evitar errores si ya existe)
       await _supabase.from('users').upsert({
         'id': _uid,
@@ -192,9 +220,15 @@ class ZoneIdService {
       });
 
       // Verificar que realmente se insertó
-      final check = await _supabase.from('users').select().eq('id', _uid!).maybeSingle();
+      final check = await _supabase
+          .from('users')
+          .select()
+          .eq('id', _uid!)
+          .maybeSingle();
       if (check == null) {
-        throw Exception('El registro en public.users falló. Verifica las políticas RLS o conexión.');
+        throw Exception(
+          'El registro en public.users falló. Verifica las políticas RLS o conexión.',
+        );
       }
 
       // Persistir claves localmente
@@ -227,7 +261,7 @@ class ZoneIdService {
     }
 
     _uid = newUid;
-    
+
     await _storage.write(key: _keySupabaseSession, value: _uid);
 
     final currentZoneId = _zoneId ?? await _storage.read(key: _keyZoneId);
@@ -235,30 +269,36 @@ class ZoneIdService {
 
     // Restaurar par de claves E2EE
     String? privateKeyBase64 = await _safeRead(_keyPrivateKey);
-    
+
     // SI NO TENEMOS CLAVE LOCAL (usuario existente de antes de la persistencia o re-instalación)
     if (privateKeyBase64 == null) {
-      _logger.debug('[ZoneIdService] Clave privada no encontrada localmente. Generando una nueva...');
+      _logger.debug(
+        '[ZoneIdService] Clave privada no encontrada localmente. Generando una nueva...',
+      );
       final keyPair = await _e2ee.generateKeyPair();
       final keyPairData = await keyPair.extract();
       privateKeyBase64 = _bytesToBase64(await keyPair.extractPrivateKeyBytes());
-      
+
       final publicKeyBase64 = _bytesToBase64(keyPairData.publicKey.bytes);
-      
+
       try {
         await _storage.write(key: _keyPrivateKey, value: privateKeyBase64);
         await _storage.write(key: _keyPublicKey, value: publicKeyBase64);
-      } catch(e) {
-        _logger.debug('[ZoneIdService] Error escribiendo en keystore corrupto: $e. Forzando borrado.');
+      } catch (e) {
+        _logger.debug(
+          '[ZoneIdService] Error escribiendo en keystore corrupto: $e. Forzando borrado.',
+        );
         try {
           await _storage.deleteAll();
           await _storage.write(key: _keyPrivateKey, value: privateKeyBase64);
           await _storage.write(key: _keyPublicKey, value: publicKeyBase64);
-        } catch(e2) {
-          _logger.debug('[ZoneIdService] No se pudo recuperar almacenamiento seguro: $e2');
+        } catch (e2) {
+          _logger.debug(
+            '[ZoneIdService] No se pudo recuperar almacenamiento seguro: $e2',
+          );
         }
       }
-      
+
       // Marcar que necesitamos actualizar la pública en Supabase
     } else {
       await _e2ee.initFromPrivateBase64(privateKeyBase64);
@@ -269,13 +309,17 @@ class ZoneIdService {
     if (currentZoneId != null) {
       try {
         final pubKey = await _storage.read(key: _keyPublicKey);
-        await _supabase.rpc('claim_zone_id', params: {
-          'p_zone_id': currentZoneId,
-          'p_public_key': pubKey,
-        });
-        _logger.debug('[ZoneIdService] Reclamo exitoso para $currentZoneId con llave ${pubKey?.substring(0, 5)}...');
+        await _supabase.rpc(
+          'claim_zone_id',
+          params: {'p_zone_id': currentZoneId, 'p_public_key': pubKey},
+        );
+        _logger.debug(
+          '[ZoneIdService] Reclamo exitoso para $currentZoneId con llave ${pubKey?.substring(0, 5)}...',
+        );
       } catch (e) {
-        _logger.debug('[ZoneIdService] Aviso: Error al reclamar Zone ID en el inicio: $e');
+        _logger.debug(
+          '[ZoneIdService] Aviso: Error al reclamar Zone ID en el inicio: $e',
+        );
       }
     }
   }
@@ -296,24 +340,32 @@ class ZoneIdService {
     if (_uid == null || _zoneId == null) return;
 
     try {
-      final res = await _supabase.from('users').select().eq('id', _uid!).maybeSingle();
-      
+      final res = await _supabase
+          .from('users')
+          .select()
+          .eq('id', _uid!)
+          .maybeSingle();
+
       String? publicKeyBase64 = await _safeRead(_keyPublicKey);
-      
+
       // Si no tenemos clave local, generamos una ahora
       if (publicKeyBase64 == null) {
-        _logger.debug('[ZoneIdService] Clave pública local no encontrada. Generando...');
+        _logger.debug(
+          '[ZoneIdService] Clave pública local no encontrada. Generando...',
+        );
         final keyPair = await _e2ee.generateKeyPair();
         final keyPairData = await keyPair.extract();
         publicKeyBase64 = _bytesToBase64(keyPairData.publicKey.bytes);
         final privKey = _bytesToBase64(await keyPair.extractPrivateKeyBytes());
-        
+
         await _storage.write(key: _keyPublicKey, value: publicKeyBase64);
         await _storage.write(key: _keyPrivateKey, value: privKey);
       }
 
       if (res == null) {
-        _logger.debug('[ZoneIdService] Alerta: Fila de usuario no encontrada. Recreando...');
+        _logger.debug(
+          '[ZoneIdService] Alerta: Fila de usuario no encontrada. Recreando...',
+        );
         await _supabase.from('users').upsert({
           'id': _uid,
           'zone_id': _zoneId,
@@ -325,12 +377,19 @@ class ZoneIdService {
         // SIEMPRE sincronizar la clave pública con Supabase
         final dbKey = res['public_key']?.toString();
         if (dbKey != publicKeyBase64) {
-          _logger.debug('[ZoneIdService] ⚠️ Clave en Supabase NO coincide con la local. Sincronizando...');
-          _logger.debug('[ZoneIdService] DB: ${dbKey?.substring(0, 8)}... vs Local: ${publicKeyBase64.substring(0, 8)}...');
-          await _supabase.from('users').update({
-            'public_key': publicKeyBase64,
-          }).eq('id', _uid!);
-          _logger.debug('[ZoneIdService] ✅ Clave pública sincronizada con Supabase.');
+          _logger.debug(
+            '[ZoneIdService] ⚠️ Clave en Supabase NO coincide con la local. Sincronizando...',
+          );
+          _logger.debug(
+            '[ZoneIdService] DB: ${dbKey?.substring(0, 8)}... vs Local: ${publicKeyBase64.substring(0, 8)}...',
+          );
+          await _supabase
+              .from('users')
+              .update({'public_key': publicKeyBase64})
+              .eq('id', _uid!);
+          _logger.debug(
+            '[ZoneIdService] ✅ Clave pública sincronizada con Supabase.',
+          );
         } else {
           _logger.debug('[ZoneIdService] ✅ Clave pública ya sincronizada.');
         }
@@ -358,10 +417,10 @@ class ZoneIdService {
   }) async {
     // Entrar a asegurar la sesión
     await ensureAuth();
-    
+
     // Obtener la clave pública guardada localmente
     String? publicKey = await _safeRead(_keyPublicKey);
-    
+
     // Si no hay clave (caso extremo de pérdida local), generamos una nueva para no violar el NOT NULL
     if (publicKey == null) {
       final keyPair = await _e2ee.generateKeyPair();
@@ -369,10 +428,10 @@ class ZoneIdService {
       publicKey = _bytesToBase64(pubKeyBytes.bytes);
       await _storage.write(key: 'public_key', value: publicKey);
     }
-    
+
     // Usamos UPSERT de forma defensiva por si el registro inicial en public.users falló.
     // Incluir public_key es obligatorio porque tiene restricción NOT NULL en la DB.
-    await _supabase.from('users').upsert({
+    final profileData = {
       'id': _uid,
       'zone_id': _zoneId,
       'display_name': displayName,
@@ -386,31 +445,67 @@ class ZoneIdService {
       'avatar_url': avatarUrl,
       'avatar_is_public': avatarIsPublic,
       'gallery_photos': galleryPhotos,
-    });
+      'updatedAt': DateTime.now().toIso8601String(),
+    };
+
+    await _supabase.from('users').upsert(profileData);
+    await _isar.saveProfile(profileData);
+  }
+
+  Future<Map<String, dynamic>?> getMyLocalProfile() async {
+    final currentZoneId = _zoneId ?? await _safeRead(_keyZoneId);
+    if (currentZoneId == null || currentZoneId.isEmpty) return null;
+    try {
+      final profile = await _isar.getProfile(currentZoneId);
+      if (profile == null) return null;
+      return {
+        'id': profile.userId,
+        'zone_id': profile.zoneId,
+        'display_name': profile.displayName,
+        'avatar_url': profile.avatarUrl,
+        'bio': profile.bio,
+        'instagram_handle': profile.instagramHandle,
+        'facebook_handle': profile.facebookHandle,
+        'tiktok_handle': profile.tiktokHandle,
+        'public_key': profile.publicKey,
+      };
+    } catch (e) {
+      _logger.debug('[ZoneIdService] Error leyendo perfil local: $e');
+      return null;
+    }
   }
 
   /// Sube una imagen al bucket 'profiles' y devuelve la URL pública.
   Future<String> uploadProfilePicture(File file) async {
     await ensureAuth();
-    
-    final extension = p.extension(file.path);
-    final fileName = '$_uid/avatar${DateTime.now().millisecondsSinceEpoch}$extension';
-    
+
+    final lastDot = file.path.lastIndexOf('.');
+    final extension = lastDot == -1 ? '.jpg' : file.path.substring(lastDot);
+    final fileName =
+        '$_uid/avatar${DateTime.now().millisecondsSinceEpoch}$extension';
+
     // Subir archivo (sobrescribe si existe en la misma ruta, pero usamos timestamp para evitar cache)
-    await _supabase.storage.from('profiles').upload(
-      fileName,
-      file,
-      fileOptions: const FileOptions(cacheControl: '3600', upsert: true),
-    );
-    
+    await _supabase.storage
+        .from('profiles')
+        .upload(
+          fileName,
+          file,
+          fileOptions: const FileOptions(cacheControl: '3600', upsert: true),
+        );
+
     // Obtener URL pública
-    final String publicUrl = _supabase.storage.from('profiles').getPublicUrl(fileName);
+    final String publicUrl = _supabase.storage
+        .from('profiles')
+        .getPublicUrl(fileName);
     return publicUrl;
   }
 
   Future<void> setStealthMode(bool enabled) async {
     if (_uid == null) return;
-    await _supabase.from('users').update({'stealth_mode': enabled}).eq('id', _uid!);
+    await _supabase
+        .from('users')
+        .update({'stealth_mode': enabled})
+        .eq('id', _uid!);
   }
 
   // ──────────────────────────────────────────────────────────
@@ -422,15 +517,33 @@ class ZoneIdService {
       await ensureAuth();
       // Asegurarse de que si el UID es nuevo o la fila falta, se intente recuperar/recrear
       await checkAndFixRegistration();
-      
+
       if (_uid == null) return null;
-      
-      final res = await _supabase.from('users').select().eq('id', _uid!).single();
+
+      final res = await _supabase
+          .from('users')
+          .select()
+          .eq('id', _uid!)
+          .single();
+      await _isar.saveProfile({
+        ...res,
+        'updatedAt': DateTime.now().toIso8601String(),
+      });
       return res;
     } catch (e) {
       _logger.debug('[ZoneIdService] Error en getMyProfile: $e');
-      return null;
+      return await getMyLocalProfile();
     }
+  }
+
+  Future<void> endRuntimeSession() async {
+    try {
+      await _supabase.auth.signOut();
+    } catch (e) {
+      _logger.debug('[ZoneIdService] Error cerrando sesiÃ³n runtime: $e');
+    }
+    await _storage.delete(key: _keySupabaseSession);
+    _uid = null;
   }
 
   // ──────────────────────────────────────────────────────────
@@ -453,24 +566,30 @@ class ZoneIdService {
   Future<void> deleteAccount() async {
     await ensureAuth();
     if (_uid == null) return;
-    
+
     // 1. Eliminar archivos de almacenamiento (Storage API oficial)
     try {
       final userFolder = _uid!;
       // Listamos los archivos del usuario para borrarlos
-      final files = await _supabase.storage.from('profiles').list(path: userFolder);
+      final files = await _supabase.storage
+          .from('profiles')
+          .list(path: userFolder);
       if (files.isNotEmpty) {
-        final pathsToDelete = files.map((f) => '$userFolder/${f.name}').toList();
+        final pathsToDelete = files
+            .map((f) => '$userFolder/${f.name}')
+            .toList();
         await _supabase.storage.from('profiles').remove(pathsToDelete);
       }
     } catch (e) {
-      _logger.debug('Aviso: Fallo borrando storage, continuando con el perfil... $e');
+      _logger.debug(
+        'Aviso: Fallo borrando storage, continuando con el perfil... $e',
+      );
     }
 
     // 2. Llamar a la función de borrado total en Supabase (RPC)
     // Esto borra datos en public (usuarios, chats, tokens) y auth.
     await _supabase.rpc('delete_own_account');
-    
+
     // 2. Limpiar todo el estado local
     await clearAuth();
   }

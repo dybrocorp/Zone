@@ -1,18 +1,18 @@
 import 'package:flutter/material.dart';
+
 import 'profile_setup_screen.dart';
 import 'radar_screen.dart';
-import 'dart:math';
 import 'login_screen.dart';
 import '../services/zone_id_service.dart';
 
 class AuthScreen extends StatefulWidget {
-  const AuthScreen({Key? key}) : super(key: key);
+  const AuthScreen({super.key});
 
   @override
-  _AuthScreenState createState() => _AuthScreenState();
+  AuthScreenState createState() => AuthScreenState();
 }
 
-class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateMixin {
+class AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateMixin {
   bool _isLoading = false;
   String? _generatedId;
 
@@ -44,12 +44,12 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
       if (hasLocal) {
         // Timeout de 10 segundos para restaurar sesión, de lo contrario ir al menú
         await _zoneIdService.getOrCreate().timeout(
-          const Duration(seconds: 10),
+          const Duration(seconds: 5),
         );
         restoreSuccess = true;
       }
     } catch (e) {
-      print('[AuthScreen] Error o timeout restaurando sesión: $e');
+      debugPrint('[AuthScreen] Error o timeout restaurando sesión: $e');
     }
 
     // Esperar a que la animación termine (mínimo de tiempo visual)

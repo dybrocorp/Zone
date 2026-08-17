@@ -269,20 +269,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: () => _showDocument('Política de Privacidad', _privacyContent),
           ),
 
-          const SizedBox(height: 24),
-          _buildSectionHeader('MODO DESARROLLADOR'),
-          _buildTile(
-            icon: Icons.speed,
-            title: 'Prueba de Estrés Mesh',
-            subtitle: 'Simula 50 mensajes entrantes en la malla',
-            onTap: () {
-              _nearbyService.simulateMeshTraffic(50);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Simulación de red mesh iniciada (50 nodos)')),
-              );
-            },
-          ),
-
           const SizedBox(height: 60),
           Center(
             child: Opacity(

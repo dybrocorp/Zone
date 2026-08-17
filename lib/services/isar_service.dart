@@ -13,10 +13,12 @@ class IsarService {
 
   Future<void> initialize() async {
     final dir = await getApplicationDocumentsDirectory();
-    isar = await Isar.open(
-      [LocalProfileSchema, LocalEncounterSchema, LocalMessageSchema, MeshRouteSchema],
-      directory: dir.path,
-    );
+    isar = await Isar.open([
+      LocalProfileSchema,
+      LocalEncounterSchema,
+      LocalMessageSchema,
+      MeshRouteSchema,
+    ], directory: dir.path);
   }
 
   // ──────────────────────────────────────────────────────────
@@ -26,11 +28,16 @@ class IsarService {
   Future<void> saveProfile(Map<String, dynamic> data) async {
     final userId = data['id'] ?? data['userId'];
     final updatedAtStr = data['updatedAt'] as String?;
-    final newUpdatedAt = updatedAtStr != null ? DateTime.parse(updatedAtStr) : DateTime.now();
+    final newUpdatedAt = updatedAtStr != null
+        ? DateTime.parse(updatedAtStr)
+        : DateTime.now();
 
     await isar.writeTxn(() async {
-      final existing = await isar.localProfiles.filter().userIdEqualTo(userId).findFirst();
-      
+      final existing = await isar.localProfiles
+          .filter()
+          .userIdEqualTo(userId)
+          .findFirst();
+
       // CRDT Logic: Last Write Wins (LWW)
       if (existing != null && existing.updatedAt.isAfter(newUpdatedAt)) {
         return;
@@ -45,7 +52,8 @@ class IsarService {
         ..instagramHandle = data['instagram_handle']
         ..facebookHandle = data['facebook_handle']
         ..tiktokHandle = data['tiktok_handle']
-        ..publicKey = data['publicKey'] ?? existing?.publicKey
+        ..publicKey =
+            data['public_key'] ?? data['publicKey'] ?? existing?.publicKey
         ..sessionKey = data['sessionKey'] ?? existing?.sessionKey
         ..lastSeen = DateTime.now()
         ..updatedAt = newUpdatedAt;
@@ -100,7 +108,11 @@ class IsarService {
   //  MESH ROUTES
   // ──────────────────────────────────────────────────────────
 
-  Future<void> updateRoute(String targetZoneId, String nextHop, int distance) async {
+  Future<void> updateRoute(
+    String targetZoneId,
+    String nextHop,
+    int distance,
+  ) async {
     final route = MeshRoute()
       ..targetZoneId = targetZoneId
       ..nextHopEndpointId = nextHop
@@ -113,7 +125,20 @@ class IsarService {
   }
 
   Future<MeshRoute?> getRoute(String targetZoneId) async {
-    return await isar.meshRoutes.filter().targetZoneIdEqualTo(targetZoneId).findFirst();
+    return await isar.meshRoutes
+        .filter()
+        .targetZoneIdEqualTo(targetZoneId)
+        .findFirst();
+  }
+
+  Future<List<MeshRoute>> getRecentRoutes({
+    Duration maxAge = const Duration(minutes: 30),
+  }) async {
+    final cutoff = DateTime.now().subtract(maxAge);
+    return await isar.meshRoutes
+        .filter()
+        .lastUpdateGreaterThan(cutoff)
+        .findAll();
   }
 
   // ──────────────────────────────────────────────────────────
@@ -127,7 +152,11 @@ class IsarService {
   }
 
   Future<List<LocalMessage>> getMessages(String matchId) async {
-    return await isar.localMessages.filter().matchIdEqualTo(matchId).sortByCreatedAt().findAll();
+    return await isar.localMessages
+        .filter()
+        .matchIdEqualTo(matchId)
+        .sortByCreatedAt()
+        .findAll();
   }
 
   Future<List<LocalMessage>> getUnsyncedMessages() async {

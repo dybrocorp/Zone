@@ -267,14 +267,17 @@ class SupabaseService {
 
     // 2. Enviar via Broadcast para inmediatez (WebSocket puro)
     final normalizedMatchId = matchId.trim().toLowerCase();
-    _logger.debug('[SupabaseService] Enviando Broadcast a canal msgs:$normalizedMatchId');
+    final channelName = 'msgs:$normalizedMatchId';
     
-    await _supabase
-        .channel('msgs:$normalizedMatchId')
-        .sendBroadcastMessage(
-          event: 'new_msg',
-          payload: payload,
-        );
+    if (_activeChatChannels.containsKey(channelName)) {
+      _logger.debug('[SupabaseService] Enviando Broadcast a canal activo $channelName');
+      await _activeChatChannels[channelName]!.sendBroadcastMessage(
+        event: 'new_msg',
+        payload: payload,
+      );
+    } else {
+      _logger.debug('[SupabaseService] Broadcast falló: Canal no suscrito ($channelName)');
+    }
   }
 
   /// Obtiene mensajes de un match, ordernados por fecha.
@@ -287,6 +290,8 @@ class SupabaseService {
     return List<Map<String, dynamic>>.from(result);
   }
 
+  final Map<String, RealtimeChannel> _activeChatChannels = {};
+
   /// Escucha mensajes en tiempo real para un match activo.
   RealtimeChannel subscribeToMessages(
     String matchId,
@@ -296,9 +301,12 @@ class SupabaseService {
     void Function(bool isTyping)? onTypingChange,
   ) {
     final normalizedMatchId = matchId.trim().toLowerCase();
+    final channelName = 'msgs:$normalizedMatchId';
     
     final channel = _supabase
-        .channel('msgs:$normalizedMatchId', opts: const RealtimeChannelConfig(self: true));
+        .channel(channelName, opts: const RealtimeChannelConfig(self: true));
+        
+    _activeChatChannels[channelName] = channel;
         
     channel
         // 1. Escuchar BROADCAST (Mensajes instantáneos)
@@ -498,7 +506,8 @@ class SupabaseService {
     }
   }
 
-  /// Obtiene estadísticas del radar para monitoreo
+  /// Obtiene estadísticas del radar para monitoreo interno/debugging.
+  /// No es llamado desde ninguna pantalla — disponible para herramientas de diagnóstico.
   Future<Map<String, dynamic>?> getRadarStats() async {
     try {
       final result = await _supabase.rpc('get_radar_stats');

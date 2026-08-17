@@ -2,19 +2,18 @@ import 'dart:math';
 
 /// Parámetros del radar de proximidad (Bluetooth / Nearby Connections).
 ///
-/// Ajusta [discoveryRadiusMeters] para cambiar desde qué distancia aparecen usuarios.
-/// Valores típicos: 10–15 m interior, hasta 30 m exterior / línea de vista.
+/// Gratis: hasta 15 m. Premium: 20–100 m.
 class RadarConfig {
   RadarConfig._();
 
-  /// Distancia máxima (metros) para mostrar un usuario en el radar.
-  static const double discoveryRadiusMeters = 20.0;
+  /// Distancia máxima por defecto (metros).
+  static const double discoveryRadiusMeters = 15.0;
 
-  /// Límite superior permitido en ajustes (metros). Solo Zone Premium.
-  static const double maxDiscoveryRadiusMeters = 50.0;
+  /// Límite superior permitido con Zone Premium.
+  static const double maxDiscoveryRadiusMeters = 100.0;
 
-  /// Máximo sin premium (más de 30 m requiere compra).
-  static const double maxFreeDiscoveryRadiusMeters = 30.0;
+  /// Máximo gratis (más de 15 m requiere premium).
+  static const double maxFreeDiscoveryRadiusMeters = 15.0;
 
   /// Distancia mínima (metros).
   static const double minDiscoveryRadiusMeters = 5.0;

@@ -26,57 +26,39 @@ class _InitialLoadingScreenState extends State<InitialLoadingScreen> {
 
   Future<void> _startInitialization() async {
     final start = DateTime.now();
-    print('[Startup] Iniciando carga de servicios a las ${start.toIso8601String()}');
+    debugPrint('[Startup] Iniciando a las ${start.toIso8601String()}');
 
     try {
-      // 0. Cargar variables de entorno
+      // 0. Variables de entorno
       await dotenv.load(fileName: '.env');
 
-      // 1. Conectividad
-      setState(() {
-        _loadingText = 'Verificando red...';
-        _progress = 0.2;
-      });
+      // 1. Conectividad (rápida, no requiere I/O)
+      setState(() { _loadingText = 'Verificando red...'; _progress = 0.15; });
       await ConnectivityService().initialize();
-      print('[Startup] Connectivity OK (${DateTime.now().difference(start).inMilliseconds}ms)');
 
-      // 2. Isar Database
-      setState(() {
-        _loadingText = 'Cargando base de datos local...';
-        _progress = 0.4;
-      });
-      await IsarService().initialize();
-      print('[Startup] Isar OK (${DateTime.now().difference(start).inMilliseconds}ms)');
-
-      // 3. Seguridad P2P
-      setState(() {
-        _loadingText = 'Asegurando identidad P2P...';
-        _progress = 0.6;
-      });
-      await P2PSecurityService().initialize();
-      print('[Startup] Security OK (${DateTime.now().difference(start).inMilliseconds}ms)');
+      // 2 + 3. Isar y Seguridad P2P en PARALELO para ahorrar tiempo
+      setState(() { _loadingText = 'Preparando identidad segura...'; _progress = 0.45; });
+      await Future.wait([
+        IsarService().initialize(),
+        P2PSecurityService().initialize(),
+      ]);
+      debugPrint('[Startup] Isar + P2P OK (${DateTime.now().difference(start).inMilliseconds}ms)');
 
       // 4. Supabase
-      setState(() {
-        _loadingText = 'Conectando con la nube...';
-        _progress = 0.8;
-      });
+      setState(() { _loadingText = 'Conectando con la nube...'; _progress = 0.8; });
       await Supabase.initialize(
         url: dotenv.env['SUPABASE_URL']!,
         anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
       );
-       print('[Startup] Supabase OK (${DateTime.now().difference(start).inMilliseconds}ms)');
+      debugPrint('[Startup] Supabase OK (${DateTime.now().difference(start).inMilliseconds}ms)');
 
-      // 5. Sync
+      // 5. Sync en background (no bloquea la UI)
       SyncService().initialize();
-      
-      setState(() {
-        _loadingText = 'Listo';
-        _progress = 1.0;
-      });
+
+      setState(() { _loadingText = 'Listo'; _progress = 1.0; });
 
       // Breve retraso para suavidad visual
-      await Future.delayed(const Duration(milliseconds: 500));
+      await Future.delayed(const Duration(milliseconds: 200));
 
       if (mounted) {
         Navigator.of(context).pushReplacement(
@@ -84,10 +66,11 @@ class _InitialLoadingScreenState extends State<InitialLoadingScreen> {
         );
       }
     } catch (e) {
-      print('[Startup] ERROR CRÍTICO durante la carga: $e');
+      debugPrint('[Startup] ERROR CRÍTICO: $e');
       if (mounted) {
         setState(() {
           _loadingText = 'Error al iniciar. Reintenta por favor.';
+          _progress = 0.0;
         });
       }
     }
@@ -102,7 +85,7 @@ class _InitialLoadingScreenState extends State<InitialLoadingScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Image.asset(
-              'assets/logo.png', // Asegúrate de que existe o usa un Icon como fallback
+              'assets/logo.png',
               width: 120,
               errorBuilder: (context, error, stackTrace) => const Icon(
                 Icons.radar,
@@ -116,15 +99,30 @@ class _InitialLoadingScreenState extends State<InitialLoadingScreen> {
               style: const TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.w500),
             ),
             const SizedBox(height: 20),
-            SizedBox(
-              width: 200,
-              height: 4,
-              child: LinearProgressIndicator(
-                value: _progress,
-                backgroundColor: Colors.white10,
-                valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF00D2FF)),
+            if (_progress > 0 && _progress < 1.0)
+              SizedBox(
+                width: 200,
+                height: 4,
+                child: LinearProgressIndicator(
+                  value: _progress,
+                  backgroundColor: Colors.white10,
+                  valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF00D2FF)),
+                ),
+              )
+            else if (_progress == 0.0 && _loadingText.contains('Error'))
+              Padding(
+                padding: const EdgeInsets.only(top: 20),
+                child: ElevatedButton.icon(
+                  onPressed: _startInitialization,
+                  icon: const Icon(Icons.refresh, color: Colors.black),
+                  label: const Text('Reintentar', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00D2FF),
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
               ),
-            ),
           ],
         ),
       ),

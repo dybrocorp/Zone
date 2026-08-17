@@ -6,6 +6,7 @@ import '../services/zone_id_service.dart';
 import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'chat_screen.dart';
+import '../widgets/user_avatar.dart';
 
 class PublicProfileSheet extends StatefulWidget {
   final String userId; // El zone_id público
@@ -27,7 +28,8 @@ class PublicProfileSheet extends StatefulWidget {
     this.avatarUrl,
   });
 
-  static void show(BuildContext context, {
+  static void show(
+    BuildContext context, {
     required String userId,
     String? realUid,
     required String userName,
@@ -59,12 +61,12 @@ class PublicProfileSheet extends StatefulWidget {
 class _PublicProfileSheetState extends State<PublicProfileSheet> {
   final _supabaseService = SupabaseService();
   final _zoneIdService = ZoneIdService();
-  
+
   // 0: Initial, 1: Requesting, 2: Sent/Pending, 3: Accepted
   int _connectionState = 0;
   String? _currentMatchId;
   StreamSubscription<List<Map<String, dynamic>>>? _matchSubscription;
-  
+
   bool _avatarIsPublic = true;
   List<dynamic> _galleryPhotos = [];
 
@@ -95,9 +97,29 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
           _avatarIsPublic = res['avatar_is_public'] ?? true;
           _galleryPhotos = List<dynamic>.from(res['gallery_photos'] ?? []);
         });
+        _precacheVisibleImages();
       }
     } catch (e) {
-      print('Error fetching privacy settings: $e');
+      debugPrint('Error fetching privacy settings: $e');
+    }
+  }
+
+  void _precacheVisibleImages() {
+    final urls = <String>[
+      if (widget.avatarUrl != null &&
+          widget.avatarUrl!.trim().isNotEmpty &&
+          (_avatarIsPublic || _connectionState == 3))
+        widget.avatarUrl!,
+      ..._galleryPhotos
+          .where(
+            (p) =>
+                p is Map && (p['is_public'] == true || _connectionState == 3),
+          )
+          .map((photo) => (photo as Map)['url']?.toString() ?? '')
+          .where((url) => url.trim().isNotEmpty),
+    ];
+    for (final url in urls) {
+      precacheImage(NetworkImage(url), context).catchError((Object _) {});
     }
   }
 
@@ -120,9 +142,10 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
             _connectionState = 0; // Rejected or other
           }
         });
+        _precacheVisibleImages();
       }
     }
-    
+
     _listenToMatchChanges(myId, theirId);
   }
 
@@ -131,36 +154,41 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
         .from('matches')
         .stream(primaryKey: ['id'])
         .listen((data) {
-      final relevantMatches = data.where((m) => 
-        (m['requester_id'] == myId && m['receiver_id'] == theirId) ||
-        (m['requester_id'] == theirId && m['receiver_id'] == myId)
-      ).toList();
+          final relevantMatches = data
+              .where(
+                (m) =>
+                    (m['requester_id'] == myId &&
+                        m['receiver_id'] == theirId) ||
+                    (m['requester_id'] == theirId && m['receiver_id'] == myId),
+              )
+              .toList();
 
-      if (relevantMatches.isNotEmpty) {
-        final match = relevantMatches.first;
-        final status = match['status'];
-        if (mounted) {
-          setState(() {
-            _currentMatchId = match['id'];
-            if (status == 'pending') {
-              _connectionState = 2;
-            } else if (status == 'accepted') {
-              _connectionState = 3;
-            } else {
-              _connectionState = 0;
+          if (relevantMatches.isNotEmpty) {
+            final match = relevantMatches.first;
+            final status = match['status'];
+            if (mounted) {
+              setState(() {
+                _currentMatchId = match['id'];
+                if (status == 'pending') {
+                  _connectionState = 2;
+                } else if (status == 'accepted') {
+                  _connectionState = 3;
+                } else {
+                  _connectionState = 0;
+                }
+              });
+              _precacheVisibleImages();
             }
-          });
-        }
-      }
-    });
+          }
+        });
   }
 
   Future<void> _launchUrl(String platform, String? handle) async {
     if (handle == null || handle.isEmpty) return;
-    
+
     String url = '';
     String sanitizedHandle = handle.replaceAll('@', '');
-    
+
     if (platform == 'Instagram') {
       url = 'https://instagram.com/$sanitizedHandle';
     } else if (platform == 'Facebook') {
@@ -172,9 +200,9 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
     final uri = Uri.parse(url);
     if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('No se pudo abrir $url')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('No se pudo abrir $url')));
       }
     }
   }
@@ -192,6 +220,7 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
               otherUserId: widget.realUid!,
               otherUserName: widget.userName,
               otherZoneId: widget.userId,
+              otherAvatarUrl: widget.avatarUrl,
             ),
           ),
         );
@@ -202,16 +231,18 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
     if (_connectionState == 0) {
       final myId = _zoneIdService.uid;
       final theirId = widget.realUid;
-      
+
       if (myId == null || theirId == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Error: No se pudo identificar al usuario.')),
+          const SnackBar(
+            content: Text('Error: No se pudo identificar al usuario.'),
+          ),
         );
         return;
       }
 
       setState(() => _connectionState = 1);
-      
+
       try {
         final matchId = await _supabaseService.requestMatch(myId, theirId);
         if (mounted) {
@@ -233,9 +264,12 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final hasIg = widget.instagramHandle != null && widget.instagramHandle!.isNotEmpty;
-    final hasFb = widget.facebookHandle != null && widget.facebookHandle!.isNotEmpty;
-    final hasTiktok = widget.tiktokHandle != null && widget.tiktokHandle!.isNotEmpty;
+    final hasIg =
+        widget.instagramHandle != null && widget.instagramHandle!.isNotEmpty;
+    final hasFb =
+        widget.facebookHandle != null && widget.facebookHandle!.isNotEmpty;
+    final hasTiktok =
+        widget.tiktokHandle != null && widget.tiktokHandle!.isNotEmpty;
 
     return Container(
       decoration: const BoxDecoration(
@@ -255,19 +289,16 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
             ),
           ),
           const SizedBox(height: 30),
-          
+
           Row(
             children: [
-              CircleAvatar(
-                radius: 40,
-                backgroundColor: Colors.grey.shade800,
-                backgroundImage: widget.avatarUrl != null && (_avatarIsPublic || _connectionState == 3) ? NetworkImage(widget.avatarUrl!) : null,
-                child: widget.avatarUrl == null || (!_avatarIsPublic && _connectionState != 3)
-                    ? Text(
-                        widget.userName.isNotEmpty ? widget.userName[0].toUpperCase() : '?',
-                        style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white54),
-                      )
+              UserAvatar(
+                avatarUrl: _avatarIsPublic || _connectionState == 3
+                    ? widget.avatarUrl
                     : null,
+                displayName: widget.userName,
+                radius: 40,
+                fallbackColor: Colors.grey.shade800,
               ),
               const SizedBox(width: 20),
               Expanded(
@@ -276,12 +307,19 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
                   children: [
                     Text(
                       widget.userName,
-                      style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       'ID: ${widget.userId.length >= 8 ? widget.userId.substring(0, 8) : widget.userId}...',
-                      style: const TextStyle(color: Colors.white54, fontSize: 13),
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 13,
+                      ),
                     ),
                   ],
                 ),
@@ -289,31 +327,64 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
             ],
           ),
           const SizedBox(height: 30),
-          
+
           if (hasIg || hasFb || hasTiktok) ...[
             const Align(
               alignment: Alignment.centerLeft,
-              child: Text('Redes Públicas', style: TextStyle(color: Colors.white70, fontSize: 16)),
+              child: Text(
+                'Redes Públicas',
+                style: TextStyle(color: Colors.white70, fontSize: 16),
+              ),
             ),
             const SizedBox(height: 16),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                _buildSocialIcon(Icons.camera_alt, 'Instagram', hasIg, () => _launchUrl('Instagram', widget.instagramHandle)),
-                _buildSocialIcon(Icons.facebook, 'Facebook', hasFb, () => _launchUrl('Facebook', widget.facebookHandle)),
-                _buildSocialIcon(Icons.music_note, 'TikTok', hasTiktok, () => _launchUrl('TikTok', widget.tiktokHandle)),
+                _buildSocialIcon(
+                  Icons.camera_alt,
+                  'Instagram',
+                  hasIg,
+                  () => _launchUrl('Instagram', widget.instagramHandle),
+                ),
+                _buildSocialIcon(
+                  Icons.facebook,
+                  'Facebook',
+                  hasFb,
+                  () => _launchUrl('Facebook', widget.facebookHandle),
+                ),
+                _buildSocialIcon(
+                  Icons.music_note,
+                  'TikTok',
+                  hasTiktok,
+                  () => _launchUrl('TikTok', widget.tiktokHandle),
+                ),
               ],
             ),
             const SizedBox(height: 40),
           ] else ...[
-            const Text('Este usuario no ha compartido redes públicas.', style: TextStyle(color: Colors.white54, fontStyle: FontStyle.italic)),
+            const Text(
+              'Este usuario no ha compartido redes públicas.',
+              style: TextStyle(
+                color: Colors.white54,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
             const SizedBox(height: 30),
           ],
-          
-          if (_galleryPhotos.where((p) => p is Map && (p['is_public'] == true || _connectionState == 3)).isNotEmpty) ...[
+
+          if (_galleryPhotos
+              .where(
+                (p) =>
+                    p is Map &&
+                    (p['is_public'] == true || _connectionState == 3),
+              )
+              .isNotEmpty) ...[
             const Align(
               alignment: Alignment.centerLeft,
-              child: Text('Galería', style: TextStyle(color: Colors.white70, fontSize: 16)),
+              child: Text(
+                'Galería',
+                style: TextStyle(color: Colors.white70, fontSize: 16),
+              ),
             ),
             const SizedBox(height: 16),
             SizedBox(
@@ -321,49 +392,97 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 children: _galleryPhotos
-                    .where((p) => p is Map && (p['is_public'] == true || _connectionState == 3))
+                    .where(
+                      (p) =>
+                          p is Map &&
+                          (p['is_public'] == true || _connectionState == 3),
+                    )
                     .map((photo) {
-                  return Container(
-                    width: 100,
-                    margin: const EdgeInsets.only(right: 12),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
-                      image: DecorationImage(image: NetworkImage(photo['url']), fit: BoxFit.cover),
-                    ),
-                  );
-                }).toList(),
+                      return Container(
+                        width: 100,
+                        height: 120,
+                        margin: const EdgeInsets.only(right: 12),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: Image.network(
+                            photo['url'].toString(),
+                            fit: BoxFit.cover,
+                            gaplessPlayback: true,
+                            errorBuilder: (_, _, _) => Container(
+                              color: Colors.white10,
+                              alignment: Alignment.center,
+                              child: const Icon(
+                                Icons.broken_image,
+                                color: Colors.white38,
+                              ),
+                            ),
+                            loadingBuilder: (_, child, progress) {
+                              if (progress == null) return child;
+                              return Container(
+                                color: Colors.white10,
+                                alignment: Alignment.center,
+                                child: const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      );
+                    })
+                    .toList(),
               ),
             ),
             const SizedBox(height: 30),
           ],
-          
+
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
-              backgroundColor: _connectionState == 3 
-                  ? Colors.greenAccent 
-                  : (_connectionState == 0 ? const Color(0xFF00D2FF) : Colors.grey.shade600),
+              backgroundColor: _connectionState == 3
+                  ? Colors.greenAccent
+                  : (_connectionState == 0
+                        ? const Color(0xFF00D2FF)
+                        : Colors.grey.shade600),
               minimumSize: const Size(double.infinity, 55),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-            icon: _connectionState == 1 
-              ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-              : Icon(
-                  _connectionState == 3 ? Icons.chat : Icons.lock, 
-                  color: _connectionState == 1 ? Colors.white : Colors.black, 
-                  size: 20
-                ),
-            label: Text(
-              _connectionState == 0 ? 'Conectar' 
-              : _connectionState == 1 ? 'Enviando...' 
-              : _connectionState == 2 ? 'Solicitud enviada, a la espera'
-              : 'Entrar al Chat',
-              style: TextStyle(
-                color: _connectionState == 1 ? Colors.white : Colors.black, 
-                fontWeight: FontWeight.bold, 
-                fontSize: 16
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
               ),
             ),
-            onPressed: (_connectionState == 1 || _connectionState == 2) ? null : _handleConnectPressed,
+            icon: _connectionState == 1
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2,
+                    ),
+                  )
+                : Icon(
+                    _connectionState == 3 ? Icons.chat : Icons.lock,
+                    color: _connectionState == 1 ? Colors.white : Colors.black,
+                    size: 20,
+                  ),
+            label: Text(
+              _connectionState == 0
+                  ? 'Conectar'
+                  : _connectionState == 1
+                  ? 'Enviando...'
+                  : _connectionState == 2
+                  ? 'Solicitud enviada, a la espera'
+                  : 'Entrar al Chat',
+              style: TextStyle(
+                color: _connectionState == 1 ? Colors.white : Colors.black,
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+              ),
+            ),
+            onPressed: (_connectionState == 1 || _connectionState == 2)
+                ? null
+                : _handleConnectPressed,
           ),
           const SizedBox(height: 20),
         ],
@@ -371,7 +490,12 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
     );
   }
 
-  Widget _buildSocialIcon(IconData icon, String name, bool isVisible, VoidCallback onTap) {
+  Widget _buildSocialIcon(
+    IconData icon,
+    String name,
+    bool isVisible,
+    VoidCallback onTap,
+  ) {
     if (!isVisible) return const SizedBox.shrink();
     return GestureDetector(
       onTap: onTap,
@@ -383,7 +507,10 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
             child: Icon(icon, color: const Color(0xFF00D2FF)),
           ),
           const SizedBox(height: 8),
-          Text(name, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+          Text(
+            name,
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
+          ),
         ],
       ),
     );

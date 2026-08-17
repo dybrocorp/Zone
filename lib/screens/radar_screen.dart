@@ -15,10 +15,10 @@ import 'public_profile_sheet.dart';
 import 'settings_screen.dart';
 
 class RadarScreen extends StatefulWidget {
-  const RadarScreen({Key? key}) : super(key: key);
+  const RadarScreen({super.key});
 
   @override
-  _RadarScreenState createState() => _RadarScreenState();
+  State<RadarScreen> createState() => _RadarScreenState();
 }
 
 class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin, WidgetsBindingObserver {
@@ -79,7 +79,7 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
     if (uid != null && uid.isNotEmpty) {
       await _nearbyService.initialize(uid);
     } else {
-      print('[RadarScreen] Error: No se pudo obtener el UID del usuario.');
+      debugPrint('[RadarScreen] Error: No se pudo obtener el UID del usuario.');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Error de perfil. Por favor, reinicia la app.')),
@@ -352,6 +352,30 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
               final offsetY = screenSize.height / 2 + radius * sin(angle) - 24;
 
               final isLocked = !_isPremium && (user.distanceMeters ?? 0) > RadarConfig.maxFreeDiscoveryRadiusMeters;
+              
+              // Tipo de usuario: activo (Nearby directo), mesh, caché offline o global
+              final isCacheUser = user.endpointId.startsWith('CACHE:');
+              final isGlobalUser = user.endpointId.startsWith('GLOBAL:');
+              final isMeshUser = user.endpointId.startsWith('MESH:');
+              final isActiveNearby = !isCacheUser && !isGlobalUser && !isMeshUser;
+
+              // Los usuarios del caché se muestran más tenues
+              final displayOpacity = isCacheUser ? 0.45 : (isGlobalUser ? 0.65 : 1.0);
+              
+              // Color del dot según tipo
+              final dotColors = isLocked
+                  ? [Colors.grey, Colors.blueGrey]
+                  : isCacheUser
+                      ? [const Color(0xFF607D8B), const Color(0xFF455A64)]
+                      : isGlobalUser
+                          ? [const Color(0xFF7E57C2), const Color(0xFF4A148C)]
+                          : [const Color(0xFF00D2FF), const Color(0xFF3A7BD5)];
+
+              // Icono de badge según tipo
+              IconData? badgeIcon;
+              if (isCacheUser) badgeIcon = Icons.history;
+              if (isGlobalUser) badgeIcon = Icons.public;
+              if (isMeshUser && !isActiveNearby) badgeIcon = Icons.hub;
 
               return Positioned(
                 left: offsetX,
@@ -359,43 +383,65 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
                 child: GestureDetector(
                   onTap: () => _onUserTapped(user),
                   child: AnimatedOpacity(
-                    opacity: _isScanning ? 1.0 : 0.0,
+                    opacity: _isScanning ? displayOpacity : 0.0,
                     duration: const Duration(milliseconds: 500),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Container(
-                          width: 48,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: isLocked 
-                              ? const RadialGradient(colors: [Colors.grey, Colors.blueGrey])
-                              : const RadialGradient(colors: [Color(0xFF00D2FF), Color(0xFF3A7BD5)]),
-                            boxShadow: [
-                              BoxShadow(
-                                color: (isLocked ? Colors.white10 : const Color(0xFF00D2FF)).withOpacity(0.5),
-                                blurRadius: 12,
-                                spreadRadius: 2,
+                        Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Container(
+                              width: 48,
+                              height: 48,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: RadialGradient(colors: dotColors),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: (isLocked ? Colors.white10 : dotColors[0]).withValues(alpha: isActiveNearby ? 0.5 : 0.25),
+                                    blurRadius: isActiveNearby ? 12 : 6,
+                                    spreadRadius: isActiveNearby ? 2 : 0,
+                                  ),
+                                ],
+                                image: (user.profile?['avatar_url'] != null && !isLocked)
+                                  ? DecorationImage(
+                                      image: NetworkImage(user.profile!['avatar_url']),
+                                      fit: BoxFit.cover,
+                                      colorFilter: isCacheUser
+                                          ? const ColorFilter.mode(Colors.black38, BlendMode.darken)
+                                          : null,
+                                    )
+                                  : null,
                               ),
-                            ],
-                            image: (user.profile?['avatar_url'] != null && !isLocked)
-                              ? DecorationImage(
-                                  image: NetworkImage(user.profile!['avatar_url']),
-                                  fit: BoxFit.cover,
-                                )
-                              : null,
-                          ),
-                          child: (user.profile?['avatar_url'] == null || isLocked)
-                            ? Center(
-                                child: isLocked 
-                                  ? const Icon(Icons.lock, color: Colors.white, size: 20)
-                                  : Text(
-                                      user.userName.isNotEmpty ? user.userName[0].toUpperCase() : '?',
-                                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
-                                    ),
-                              )
-                            : null,
+                              child: (user.profile?['avatar_url'] == null || isLocked)
+                                ? Center(
+                                    child: isLocked 
+                                      ? const Icon(Icons.lock, color: Colors.white, size: 20)
+                                      : Text(
+                                          user.userName.isNotEmpty ? user.userName[0].toUpperCase() : '?',
+                                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+                                        ),
+                                  )
+                                : null,
+                            ),
+                            // Badge de tipo (caché / global / mesh)
+                            if (badgeIcon != null)
+                              Positioned(
+                                right: -4,
+                                bottom: -4,
+                                child: Container(
+                                  width: 18,
+                                  height: 18,
+                                  decoration: BoxDecoration(
+                                    color: isCacheUser ? Colors.grey[700] : const Color(0xFF1E293B),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: Colors.white24, width: 1),
+                                  ),
+                                  child: Icon(badgeIcon, size: 10, color: Colors.white60),
+                                ),
+                              ),
+                          ],
                         ),
                         const SizedBox(height: 4),
                         Container(
@@ -417,6 +463,11 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
                                   RadarConfig.formatDistance(user.distanceMeters),
                                   style: const TextStyle(color: Color(0xFF00D2FF), fontSize: 9),
                                 ),
+                              // Indicador de origen para usuarios no-activos
+                              if (isCacheUser)
+                                const Text('• visto antes', style: TextStyle(color: Colors.white38, fontSize: 8)),
+                              if (isGlobalUser && !isCacheUser)
+                                const Text('• en línea', style: TextStyle(color: Color(0xFF7E57C2), fontSize: 8)),
                             ],
                           ),
                         ),
@@ -441,7 +492,7 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
                   boxShadow: [
                     if (_isScanning)
                       BoxShadow(
-                        color: const Color(0xFF00D2FF).withOpacity(0.5),
+                        color: const Color(0xFF00D2FF).withValues(alpha: 0.5),
                         blurRadius: 40,
                         spreadRadius: 10,
                       )
@@ -502,7 +553,7 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
             ),
             const SizedBox(height: 12),
             Text(
-              'La versión gratuita solo permite ver perfiles a menos de ${RadarConfig.maxFreeDiscoveryRadiusMeters.round()} metros. ¡Pásate a Premium para desbloquear todo el radar!',
+              'La versión gratuita solo permite ver perfiles a menos de ${RadarConfig.maxFreeDiscoveryRadiusMeters.round()} metros. ¡Pásate a Premium para alcanzar hasta ${RadarConfig.maxDiscoveryRadiusMeters.round()} metros y ampliar la malla Bluetooth!',
               textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.white70, fontSize: 14),
             ),
@@ -551,14 +602,14 @@ class RadarPainter extends CustomPainter {
       final Paint ringPaint = Paint()
         ..shader = RadialGradient(
           colors: [
-            const Color(0xFF00D2FF).withOpacity(opacity * 0.3),
-            const Color(0xFF00D2FF).withOpacity(0.0),
+            const Color(0xFF00D2FF).withValues(alpha: opacity * 0.3),
+            const Color(0xFF00D2FF).withValues(alpha: 0.0),
           ],
         ).createShader(Rect.fromCircle(center: center, radius: maxRadius * currentProgress))
         ..style = PaintingStyle.fill;
 
       final Paint strokePaint = Paint()
-        ..color = const Color(0xFF00D2FF).withOpacity(opacity * 0.4)
+        ..color = const Color(0xFF00D2FF).withValues(alpha: opacity * 0.4)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.0 + (1.0 - currentProgress) * 2.0;
 
@@ -582,13 +633,13 @@ class MeshLinkPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
     final paint = Paint()
-      ..color = const Color(0xFF00D2FF).withOpacity(0.2)
+      ..color = const Color(0xFF00D2FF).withValues(alpha: 0.2)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0
       ..strokeCap = StrokeCap.round;
 
     final dashPaint = Paint()
-      ..color = const Color(0xFF00D2FF).withOpacity(0.1)
+      ..color = const Color(0xFF00D2FF).withValues(alpha: 0.1)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 0.5;
 
@@ -618,7 +669,7 @@ class MeshLinkPainter extends CustomPainter {
 }
 
 class MeshHealthDashboard extends StatelessWidget {
-  const MeshHealthDashboard({Key? key}) : super(key: key);
+  const MeshHealthDashboard({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -627,12 +678,12 @@ class MeshHealthDashboard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E293B).withOpacity(0.8),
+        color: const Color(0xFF1E293B).withValues(alpha: 0.8),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFF00D2FF).withOpacity(0.2)),
+        border: Border.all(color: const Color(0xFF00D2FF).withValues(alpha: 0.2)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.2),
+            color: Colors.black.withValues(alpha: 0.2),
             blurRadius: 10,
             spreadRadius: 2,
           ),

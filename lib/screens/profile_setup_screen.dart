@@ -10,7 +10,7 @@ class ProfileSetupScreen extends StatefulWidget {
   const ProfileSetupScreen({super.key, required this.generatedId});
 
   @override
-  _ProfileSetupScreenState createState() => _ProfileSetupScreenState();
+  State<ProfileSetupScreen> createState() => _ProfileSetupScreenState();
 }
 
 class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
@@ -77,7 +77,6 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
 
   Future<void> _pickImage(ImageSource source) async {
     try {
-      // Solicitar permisos antes de intentar abrir cámara/galería
       await PermissionsService.requestCameraAndGalleryPermissions();
 
       final XFile? pickedFile = await _picker.pickImage(
@@ -86,12 +85,14 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
         maxHeight: 1000,
         imageQuality: 85,
       );
+      if (!mounted) return;
       if (pickedFile != null) {
         setState(() {
           _imageFile = File(pickedFile.path);
         });
       }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error al seleccionar imagen: $e')),
       );

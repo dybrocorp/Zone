@@ -4,24 +4,24 @@ import '../services/zone_id_service.dart';
 import '../services/permissions_service.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
-import '../services/supabase_service.dart';
 import '../services/nearby_service.dart';
+import '../widgets/user_avatar.dart';
 
 class ProfileEditScreen extends StatefulWidget {
-  const ProfileEditScreen({Key? key}) : super(key: key);
+  const ProfileEditScreen({super.key});
 
   @override
-  _ProfileEditScreenState createState() => _ProfileEditScreenState();
+  State<ProfileEditScreen> createState() => _ProfileEditScreenState();
 }
 
 class _ProfileEditScreenState extends State<ProfileEditScreen> {
   final ZoneIdService _zoneIdService = ZoneIdService();
-  
+
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _igController = TextEditingController();
   final TextEditingController _fbController = TextEditingController();
   final TextEditingController _tiktokController = TextEditingController();
-  
+
   bool _isIgVisible = true;
   bool _isFbVisible = true;
   bool _isTiktokVisible = true;
@@ -30,9 +30,9 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   bool _isLoading = true;
   File? _imageFile;
   String? _serverAvatarUrl;
-  
+
   List<dynamic> _serverGalleryPhotos = [];
-  List<File> _newGalleryFiles = [];
+  final List<File> _newGalleryFiles = [];
   final ImagePicker _picker = ImagePicker();
 
   @override
@@ -56,15 +56,20 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
           _isStealthMode = profile['stealth_mode'] ?? false;
           _serverAvatarUrl = profile['avatar_url'];
           _avatarIsPublic = profile['avatar_is_public'] ?? true;
-          _serverGalleryPhotos = List<dynamic>.from(profile['gallery_photos'] ?? []);
+          _serverGalleryPhotos = List<dynamic>.from(
+            profile['gallery_photos'] ?? [],
+          );
         });
+        _precacheProfileImages();
       }
     } catch (e) {
-      print('[ProfileEditScreen] Error cargando perfil: $e');
+      debugPrint('[ProfileEditScreen] Error cargando perfil: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Tus datos de perfil no se pudieron cargar. Es posible que debas configurarlos de nuevo debido a un error de seguridad en el almacenamiento de tu dispositivo.'),
+            content: Text(
+              'Tus datos de perfil no se pudieron cargar. Es posible que debas configurarlos de nuevo debido a un error de seguridad en el almacenamiento de tu dispositivo.',
+            ),
             duration: Duration(seconds: 5),
             backgroundColor: Colors.orangeAccent,
           ),
@@ -74,6 +79,20 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
       if (mounted) {
         setState(() => _isLoading = false);
       }
+    }
+  }
+
+  void _precacheProfileImages() {
+    final urls = <String>[
+      if (_serverAvatarUrl != null && _serverAvatarUrl!.trim().isNotEmpty)
+        _serverAvatarUrl!,
+      ..._serverGalleryPhotos
+          .whereType<Map>()
+          .map((photo) => photo['url']?.toString() ?? '')
+          .where((url) => url.trim().isNotEmpty),
+    ];
+    for (final url in urls) {
+      precacheImage(NetworkImage(url), context).catchError((Object _) {});
     }
   }
 
@@ -88,12 +107,14 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         maxHeight: 1000,
         imageQuality: 85,
       );
+      if (!mounted) return;
       if (pickedFile != null) {
         setState(() {
           _imageFile = File(pickedFile.path);
         });
       }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error al seleccionar imagen: $e')),
       );
@@ -109,12 +130,14 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         maxHeight: 1000,
         imageQuality: 85,
       );
+      if (!mounted) return;
       if (pickedFile != null) {
         setState(() {
           _newGalleryFiles.add(File(pickedFile.path));
         });
       }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error al seleccionar foto de galería: $e')),
       );
@@ -134,15 +157,24 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
           children: [
             ListTile(
               leading: const Icon(Icons.camera_alt, color: Color(0xFF00D2FF)),
-              title: const Text('Cámara', style: TextStyle(color: Colors.white)),
+              title: const Text(
+                'Cámara',
+                style: TextStyle(color: Colors.white),
+              ),
               onTap: () {
                 Navigator.pop(context);
                 _pickImage(ImageSource.camera);
               },
             ),
             ListTile(
-              leading: const Icon(Icons.photo_library, color: Color(0xFF00D2FF)),
-              title: const Text('Galería', style: TextStyle(color: Colors.white)),
+              leading: const Icon(
+                Icons.photo_library,
+                color: Color(0xFF00D2FF),
+              ),
+              title: const Text(
+                'Galería',
+                style: TextStyle(color: Colors.white),
+              ),
               onTap: () {
                 Navigator.pop(context);
                 _pickImage(ImageSource.gallery);
@@ -165,9 +197,9 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
 
   Future<void> _saveProfile() async {
     if (_nameController.text.trim().isEmpty) return;
-    
+
     setState(() => _isLoading = true);
-    
+
     try {
       String? avatarUrl = _serverAvatarUrl;
       if (_imageFile != null) {
@@ -179,26 +211,34 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         final url = await _zoneIdService.uploadProfilePicture(file);
         _serverGalleryPhotos.add({
           'url': url,
-          'is_public': true // Por defecto público; se puede cambiar en la UI
+          'is_public': true, // Por defecto público; se puede cambiar en la UI
         });
       }
       _newGalleryFiles.clear();
 
       await _zoneIdService.updateProfile(
         displayName: _nameController.text.trim(),
-        instagram: _igController.text.trim().isNotEmpty ? _igController.text.trim() : null,
+        instagram: _igController.text.trim().isNotEmpty
+            ? _igController.text.trim()
+            : null,
         igVisible: _isIgVisible,
-        facebook: _fbController.text.trim().isNotEmpty ? _fbController.text.trim() : null,
+        facebook: _fbController.text.trim().isNotEmpty
+            ? _fbController.text.trim()
+            : null,
         fbVisible: _isFbVisible,
-        tiktok: _tiktokController.text.trim().isNotEmpty ? _tiktokController.text.trim() : null,
+        tiktok: _tiktokController.text.trim().isNotEmpty
+            ? _tiktokController.text.trim()
+            : null,
         tiktokVisible: _isTiktokVisible,
         avatarUrl: avatarUrl,
         avatarIsPublic: _avatarIsPublic,
-        galleryPhotos: _serverGalleryPhotos.map((e) => Map<String, dynamic>.from(e as Map)).toList(),
+        galleryPhotos: _serverGalleryPhotos
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList(),
       );
 
       await _zoneIdService.setStealthMode(_isStealthMode);
-      
+
       // Actualizar Modo Timidez en el radar inmediatamente
       final currentUid = _zoneIdService.uid;
       if (currentUid != null) {
@@ -220,7 +260,10 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
       if (mounted) {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al guardar cambios: $e'), backgroundColor: Colors.redAccent),
+          SnackBar(
+            content: Text('Error al guardar cambios: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
         );
       }
     }
@@ -231,7 +274,10 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E293B),
-        title: const Text('Cerrar Sesión', style: TextStyle(color: Colors.white)),
+        title: const Text(
+          'Cerrar Sesión',
+          style: TextStyle(color: Colors.white),
+        ),
         content: const Text(
           'Se borrarán tus datos locales. Necesitarás tu ZONE-ID para volver a entrar en este u otro dispositivo.',
           style: TextStyle(color: Colors.white70),
@@ -239,17 +285,24 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+            child: const Text(
+              'CANCELAR',
+              style: TextStyle(color: Colors.white54),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('CERRAR SESIÓN', style: TextStyle(color: Colors.redAccent)),
+            child: const Text(
+              'CERRAR SESIÓN',
+              style: TextStyle(color: Colors.redAccent),
+            ),
           ),
         ],
       ),
     );
 
     if (confirm == true) {
+      await NearbyService().stopRadar();
       await _zoneIdService.clearAuth();
       if (mounted) {
         Navigator.of(context).pushAndRemoveUntil(
@@ -269,7 +322,13 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
           children: [
             Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
             SizedBox(width: 8),
-            Text('¡ATENCIÓN!', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            Text(
+              '¡ATENCIÓN!',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ],
         ),
         content: const Column(
@@ -277,7 +336,10 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
           children: [
             Text(
               'Estás a punto de eliminar tu perfil definitivamente de toda la base de datos, tanto de la nube como de esta aplicación.',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             SizedBox(height: 12),
             Text(
@@ -287,18 +349,30 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
             SizedBox(height: 12),
             Text(
               '¿Deseas proceder con el borrado total?',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('CANCELAR', style: TextStyle(color: Colors.white54)),
+            child: const Text(
+              'CANCELAR',
+              style: TextStyle(color: Colors.white54),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('ELIMINAR TODO', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+            child: const Text(
+              'ELIMINAR TODO',
+              style: TextStyle(
+                color: Colors.redAccent,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ),
         ],
       ),
@@ -318,7 +392,10 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         if (mounted) {
           Navigator.pop(context); // Close loading overlay
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error al eliminar cuenta: $e'), backgroundColor: Colors.redAccent),
+            SnackBar(
+              content: Text('Error al eliminar cuenta: $e'),
+              backgroundColor: Colors.redAccent,
+            ),
           );
         }
       }
@@ -340,7 +417,9 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     if (_isLoading) {
       return const Scaffold(
         backgroundColor: Color(0xFF0F172A),
-        body: Center(child: CircularProgressIndicator(color: Color(0xFF00D2FF))),
+        body: Center(
+          child: CircularProgressIndicator(color: Color(0xFF00D2FF)),
+        ),
       );
     }
 
@@ -353,7 +432,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
           IconButton(
             icon: const Icon(Icons.check, color: Color(0xFF00D2FF)),
             onPressed: _saveProfile,
-          )
+          ),
         ],
       ),
       body: SingleChildScrollView(
@@ -365,37 +444,52 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
               child: Stack(
                 alignment: Alignment.bottomRight,
                 children: [
-                  CircleAvatar(
-                    radius: 50,
-                    backgroundColor: Colors.black45,
-                    backgroundImage: _imageFile != null 
-                        ? FileImage(_imageFile!) 
-                        : (_serverAvatarUrl != null ? NetworkImage(_serverAvatarUrl!) : null) as ImageProvider?,
-                    child: _imageFile == null && _serverAvatarUrl == null
-                        ? const Icon(Icons.person, size: 50, color: Colors.white54)
-                        : null,
-                  ),
+                  if (_imageFile != null)
+                    CircleAvatar(
+                      radius: 50,
+                      backgroundColor: Colors.black45,
+                      backgroundImage: FileImage(_imageFile!),
+                    )
+                  else
+                    UserAvatar(
+                      avatarUrl: _serverAvatarUrl,
+                      displayName: _nameController.text.trim().isEmpty
+                          ? 'Usuario'
+                          : _nameController.text.trim(),
+                      radius: 50,
+                      fallbackColor: Colors.black45,
+                    ),
                   Container(
                     padding: const EdgeInsets.all(6),
                     decoration: const BoxDecoration(
                       shape: BoxShape.circle,
                       color: Color(0xFF00D2FF),
                     ),
-                    child: const Icon(Icons.edit, color: Colors.black, size: 20),
-                  )
+                    child: const Icon(
+                      Icons.edit,
+                      color: Colors.black,
+                      size: 20,
+                    ),
+                  ),
                 ],
               ),
             ),
             const SizedBox(height: 12),
             Text(
               _zoneIdService.zoneId ?? '',
-              style: const TextStyle(color: Color(0xFF00D2FF), fontWeight: FontWeight.bold),
+              style: const TextStyle(
+                color: Color(0xFF00D2FF),
+                fontWeight: FontWeight.bold,
+              ),
             ),
             const SizedBox(height: 12),
             SwitchListTile(
-              title: const Text('Hacer avatar público', style: TextStyle(color: Colors.white, fontSize: 13)),
+              title: const Text(
+                'Hacer avatar público',
+                style: TextStyle(color: Colors.white, fontSize: 13),
+              ),
               value: _avatarIsPublic,
-              activeColor: const Color(0xFF00D2FF),
+              activeThumbColor: const Color(0xFF00D2FF),
               onChanged: (val) => setState(() => _avatarIsPublic = val),
               contentPadding: EdgeInsets.zero,
             ),
@@ -404,48 +498,92 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
             const SizedBox(height: 30),
             _buildTextField(_nameController, 'Nombre público', Icons.badge),
             const SizedBox(height: 20),
-            
-            _buildSocialSwitch('Instagram', _igController, _isIgVisible, (v) => setState(() => _isIgVisible = v)),
-            _buildSocialSwitch('Facebook', _fbController, _isFbVisible, (v) => setState(() => _isFbVisible = v)),
-            _buildSocialSwitch('TikTok', _tiktokController, _isTiktokVisible, (v) => setState(() => _isTiktokVisible = v)),
-            
+
+            _buildSocialSwitch(
+              'Instagram',
+              _igController,
+              _isIgVisible,
+              (v) => setState(() => _isIgVisible = v),
+            ),
+            _buildSocialSwitch(
+              'Facebook',
+              _fbController,
+              _isFbVisible,
+              (v) => setState(() => _isFbVisible = v),
+            ),
+            _buildSocialSwitch(
+              'TikTok',
+              _tiktokController,
+              _isTiktokVisible,
+              (v) => setState(() => _isTiktokVisible = v),
+            ),
+
             const Divider(color: Colors.white10, height: 40),
-            
+
             SwitchListTile(
-              title: const Text('Modo Timidez', style: TextStyle(color: Colors.white)),
-              subtitle: const Text('No aparecerás en el radar de otros, pero podrás seguir buscando.', style: TextStyle(color: Colors.white54, fontSize: 12)),
+              title: const Text(
+                'Modo Timidez',
+                style: TextStyle(color: Colors.white),
+              ),
+              subtitle: const Text(
+                'No aparecerás en el radar de otros, pero podrás seguir buscando.',
+                style: TextStyle(color: Colors.white54, fontSize: 12),
+              ),
               value: _isStealthMode,
-              activeColor: const Color(0xFF00D2FF),
+              activeThumbColor: const Color(0xFF00D2FF),
               onChanged: (val) => setState(() => _isStealthMode = val),
             ),
-            
+
             const SizedBox(height: 40),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF00D2FF),
                 minimumSize: const Size(double.infinity, 50),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
               onPressed: _saveProfile,
-              child: const Text('Guardar Cambios', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 16)),
+              child: const Text(
+                'Guardar Cambios',
+                style: TextStyle(
+                  color: Colors.black,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
             ),
-            
+
             const SizedBox(height: 16),
             OutlinedButton.icon(
               onPressed: _signOut,
               icon: const Icon(Icons.logout, color: Colors.redAccent),
-              label: const Text('Cerrar Sesión', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+              label: const Text(
+                'Cerrar Sesión',
+                style: TextStyle(
+                  color: Colors.redAccent,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               style: OutlinedButton.styleFrom(
                 minimumSize: const Size(double.infinity, 48),
                 side: const BorderSide(color: Colors.redAccent),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             ),
             const SizedBox(height: 12),
             TextButton.icon(
               onPressed: _confirmDeleteAccount,
               icon: const Icon(Icons.delete_forever, color: Colors.redAccent),
-              label: const Text('Eliminar Perfil Definitivamente', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+              label: const Text(
+                'Eliminar Perfil Definitivamente',
+                style: TextStyle(
+                  color: Colors.redAccent,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               style: TextButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 12),
               ),
@@ -456,7 +594,11 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     );
   }
 
-  Widget _buildTextField(TextEditingController controller, String label, IconData icon) {
+  Widget _buildTextField(
+    TextEditingController controller,
+    String label,
+    IconData icon,
+  ) {
     return TextField(
       controller: controller,
       style: const TextStyle(color: Colors.white),
@@ -464,20 +606,32 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         labelText: label,
         labelStyle: const TextStyle(color: Colors.white54),
         prefixIcon: Icon(icon, color: Colors.white54),
-        enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.grey.shade700)),
-        focusedBorder: const OutlineInputBorder(borderSide: BorderSide(color: Color(0xFF00D2FF))),
+        enabledBorder: OutlineInputBorder(
+          borderSide: BorderSide(color: Colors.grey.shade700),
+        ),
+        focusedBorder: const OutlineInputBorder(
+          borderSide: BorderSide(color: Color(0xFF00D2FF)),
+        ),
       ),
     );
   }
 
-  Widget _buildSocialSwitch(String label, TextEditingController controller, bool isVisible, Function(bool) onToggle) {
+  Widget _buildSocialSwitch(
+    String label,
+    TextEditingController controller,
+    bool isVisible,
+    Function(bool) onToggle,
+  ) {
     return Column(
       children: [
         _buildTextField(controller, label, Icons.alternate_email),
         SwitchListTile(
-          title: Text('Visible en perfil', style: const TextStyle(color: Colors.white70, fontSize: 12)),
+          title: const Text(
+            'Visible en perfil',
+            style: TextStyle(color: Colors.white70, fontSize: 12),
+          ),
           value: isVisible,
-          activeColor: const Color(0xFF00D2FF),
+          activeThumbColor: const Color(0xFF00D2FF),
           onChanged: onToggle,
           contentPadding: EdgeInsets.zero,
         ),
@@ -490,7 +644,10 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Galería Privada / Pública', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        const Text(
+          'Galería Privada / Pública',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
         const SizedBox(height: 8),
         SizedBox(
           height: 120,
@@ -505,9 +662,19 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                   decoration: BoxDecoration(
                     color: Colors.white10,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFF00D2FF), width: 1, style: BorderStyle.solid),
+                    border: Border.all(
+                      color: const Color(0xFF00D2FF),
+                      width: 1,
+                      style: BorderStyle.solid,
+                    ),
                   ),
-                  child: const Center(child: Icon(Icons.add_a_photo, color: Color(0xFF00D2FF), size: 30)),
+                  child: const Center(
+                    child: Icon(
+                      Icons.add_a_photo,
+                      color: Color(0xFF00D2FF),
+                      size: 30,
+                    ),
+                  ),
                 ),
               ),
               ..._serverGalleryPhotos.map((photo) {
@@ -516,14 +683,42 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                   children: [
                     Container(
                       width: 100,
+                      height: 100,
                       margin: const EdgeInsets.only(right: 12),
-                      decoration: BoxDecoration(
+                      child: ClipRRect(
                         borderRadius: BorderRadius.circular(12),
-                        image: DecorationImage(image: NetworkImage(photo['url']), fit: BoxFit.cover),
+                        child: Image.network(
+                          photo['url'].toString(),
+                          fit: BoxFit.cover,
+                          gaplessPlayback: true,
+                          errorBuilder: (_, _, _) => Container(
+                            color: Colors.white10,
+                            alignment: Alignment.center,
+                            child: const Icon(
+                              Icons.broken_image,
+                              color: Colors.white38,
+                            ),
+                          ),
+                          loadingBuilder: (_, child, progress) {
+                            if (progress == null) return child;
+                            return Container(
+                              color: Colors.white10,
+                              alignment: Alignment.center,
+                              child: const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
                       ),
                     ),
                     Positioned(
-                      bottom: 4, right: 16,
+                      bottom: 4,
+                      right: 16,
                       child: GestureDetector(
                         onTap: () {
                           setState(() => photo['is_public'] = !isPublic);
@@ -531,12 +726,19 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                         child: CircleAvatar(
                           radius: 14,
                           backgroundColor: Colors.black87,
-                          child: Icon(isPublic ? Icons.public : Icons.lock, color: isPublic ? Color(0xFF00D2FF) : Colors.redAccent, size: 16),
+                          child: Icon(
+                            isPublic ? Icons.public : Icons.lock,
+                            color: isPublic
+                                ? Color(0xFF00D2FF)
+                                : Colors.redAccent,
+                            size: 16,
+                          ),
                         ),
                       ),
                     ),
                     Positioned(
-                      top: 4, right: 16,
+                      top: 4,
+                      right: 16,
                       child: GestureDetector(
                         onTap: () {
                           setState(() => _serverGalleryPhotos.remove(photo));
@@ -544,7 +746,11 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                         child: const CircleAvatar(
                           radius: 14,
                           backgroundColor: Colors.black87,
-                          child: Icon(Icons.close, color: Colors.white, size: 16),
+                          child: Icon(
+                            Icons.close,
+                            color: Colors.white,
+                            size: 16,
+                          ),
                         ),
                       ),
                     ),
@@ -556,22 +762,33 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                   children: [
                     Container(
                       width: 100,
+                      height: 100,
                       margin: const EdgeInsets.only(right: 12),
-                      decoration: BoxDecoration(
+                      child: ClipRRect(
                         borderRadius: BorderRadius.circular(12),
-                        image: DecorationImage(image: FileImage(file), fit: BoxFit.cover),
+                        child: Image.file(
+                          file,
+                          fit: BoxFit.cover,
+                          gaplessPlayback: true,
+                        ),
                       ),
                     ),
                     Positioned(
-                      bottom: 4, right: 16,
+                      bottom: 4,
+                      right: 16,
                       child: const CircleAvatar(
                         radius: 14,
                         backgroundColor: Colors.black87,
-                        child: Icon(Icons.cloud_upload, color: Colors.orangeAccent, size: 16),
+                        child: Icon(
+                          Icons.cloud_upload,
+                          color: Colors.orangeAccent,
+                          size: 16,
+                        ),
                       ),
                     ),
                     Positioned(
-                      top: 4, right: 16,
+                      top: 4,
+                      right: 16,
                       child: GestureDetector(
                         onTap: () {
                           setState(() => _newGalleryFiles.remove(file));
@@ -579,7 +796,11 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                         child: const CircleAvatar(
                           radius: 14,
                           backgroundColor: Colors.black87,
-                          child: Icon(Icons.close, color: Colors.white, size: 16),
+                          child: Icon(
+                            Icons.close,
+                            color: Colors.white,
+                            size: 16,
+                          ),
                         ),
                       ),
                     ),

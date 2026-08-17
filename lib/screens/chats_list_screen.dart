@@ -1,18 +1,20 @@
 import 'package:flutter/material.dart';
+
 import 'package:shared_preferences/shared_preferences.dart';
 import 'chat_screen.dart';
+import 'public_profile_sheet.dart';
 import '../services/supabase_service.dart';
 import '../services/zone_id_service.dart';
 import '../widgets/user_avatar.dart';
 
 class ChatsListScreen extends StatefulWidget {
-  const ChatsListScreen({Key? key}) : super(key: key);
+  const ChatsListScreen({super.key});
 
   @override
-  _ChatsListScreenState createState() => _ChatsListScreenState();
+  ChatsListScreenState createState() => ChatsListScreenState();
 }
 
-class _ChatsListScreenState extends State<ChatsListScreen> {
+class ChatsListScreenState extends State<ChatsListScreen> {
   final _supabaseService = SupabaseService();
   final _zoneIdService = ZoneIdService();
   
@@ -58,7 +60,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
         });
       }
     } catch (e) {
-      print('[ChatsListScreen] Error cargando chats: $e');
+      debugPrint('[ChatsListScreen] Error cargando chats: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error al cargar mensajes: $e')),
@@ -154,7 +156,23 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     final isMuted = _mutedMatchIds.contains(match['id']);
 
     return ListTile(
-      leading: UserAvatar(avatarUrl: avatarUrl, displayName: name, radius: 24),
+      leading: GestureDetector(
+        onTap: () {
+          if (otherUser != null) {
+            PublicProfileSheet.show(
+              context,
+              userId: otherUser['zone_id'] ?? '',
+              realUid: otherUser['id'] as String?,
+              userName: name,
+              avatarUrl: avatarUrl,
+              instagramHandle: otherUser['instagram_handle'],
+              facebookHandle: otherUser['facebook_handle'],
+              tiktokHandle: otherUser['tiktok_handle'],
+            );
+          }
+        },
+        child: UserAvatar(avatarUrl: avatarUrl, displayName: name, radius: 24),
+      ),
       title: Row(
         children: [
           Expanded(child: Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
@@ -185,7 +203,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
       context: context,
       backgroundColor: const Color(0xFF1E293B),
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (context) => SafeArea(
+      builder: (sheetContext) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -198,6 +216,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
               title: _mutedMatchIds.contains(id) ? 'Desactivar Silencio' : 'Silenciar Chat',
               onTap: () async {
                 final prefs = await SharedPreferences.getInstance();
+                if (!mounted) return;
                 setState(() {
                   if (_mutedMatchIds.contains(id)) {
                     _mutedMatchIds.remove(id);
@@ -206,7 +225,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                   }
                 });
                 await prefs.setStringList('muted_chats', _mutedMatchIds.toList());
-                Navigator.pop(context);
+                if (mounted) Navigator.pop(sheetContext);
               },
             ),
             _buildOptionTile(
@@ -214,7 +233,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
               title: 'Eliminar Chat',
               color: Colors.orangeAccent,
               onTap: () async {
-                Navigator.pop(context);
+                Navigator.pop(sheetContext);
                 final confirm = await _showConfirmDialog('¿Eliminar Chat?', 'Se borrará toda la conversación.');
                 if (confirm == true) {
                   await _supabaseService.deleteMatch(id);
@@ -227,7 +246,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
               title: 'Bloquear Usuario',
               color: Colors.redAccent,
               onTap: () async {
-                Navigator.pop(context);
+                Navigator.pop(sheetContext);
                 final confirm = await _showConfirmDialog('¿Bloquear a $name?', 'No podrá escribirte ni aparecerás en su radar.');
                 if (confirm == true) {
                   await _supabaseService.blockUser(_zoneIdService.uid!, otherUserId);
@@ -240,7 +259,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
               title: 'Reportar Usuario',
               color: Colors.redAccent,
               onTap: () async {
-                Navigator.pop(context);
+                Navigator.pop(sheetContext);
                 final reason = await _showReportDialog(name);
                 if (reason != null && reason.isNotEmpty) {
                   await _supabaseService.reportUser(_zoneIdService.uid!, otherUserId, reason);

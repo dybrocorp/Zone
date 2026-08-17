@@ -3,10 +3,10 @@ import '../services/premium_service.dart';
 import '../config/radar_config.dart';
 
 class DonationsScreen extends StatefulWidget {
-  const DonationsScreen({Key? key}) : super(key: key);
+  const DonationsScreen({super.key});
 
   @override
-  _DonationsScreenState createState() => _DonationsScreenState();
+  State<DonationsScreen> createState() => _DonationsScreenState();
 }
 
 class _DonationsScreenState extends State<DonationsScreen> {
@@ -26,29 +26,32 @@ class _DonationsScreenState extends State<DonationsScreen> {
 
   void _buyPremium(String plan, int price) async {
     // Implementación simulada de compra
+    if (!mounted) return;
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         backgroundColor: const Color(0xFF1E293B),
         title: Text('Suscribirse a $plan', style: const TextStyle(color: Colors.white)),
         content: Text('¿Deseas activar el plan de \$${price.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}?',
             style: const TextStyle(color: Colors.white70)),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
           ),
           ElevatedButton(
             onPressed: () async {
               await _premiumService.setPremium(true);
-              Navigator.pop(context);
-              _loadStatus();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('¡Gracias por tu apoyo! Ahora eres Zone Premium.'),
-                  backgroundColor: Color(0xFF00D2FF),
-                ),
-              );
+              if (mounted) {
+                Navigator.pop(dialogContext);
+                _loadStatus();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('¡Gracias por tu apoyo! Ahora eres Zone Premium.'),
+                    backgroundColor: Color(0xFF00D2FF),
+                  ),
+                );
+              }
             },
             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00D2FF)),
             child: const Text('Confirmar', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
@@ -163,7 +166,7 @@ class _DonationsScreenState extends State<DonationsScreen> {
         color: const Color(0xFF1E293B),
         borderRadius: BorderRadius.circular(16),
         border: isRecommended ? Border.all(color: color, width: 2) : null,
-        boxShadow: isRecommended ? [BoxShadow(color: color.withOpacity(0.2), blurRadius: 10)] : null,
+        boxShadow: isRecommended ? [BoxShadow(color: color.withValues(alpha: 0.2), blurRadius: 10)] : null,
       ),
       child: InkWell(
         onTap: () => _buyPremium(title, price),
@@ -175,7 +178,7 @@ class _DonationsScreenState extends State<DonationsScreen> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
+                  color: color.withValues(alpha: 0.1),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(icon, color: color, size: 28),

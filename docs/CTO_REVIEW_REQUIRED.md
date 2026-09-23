@@ -4,8 +4,10 @@
 > autorización, RLS, SECURITY DEFINER, esquema remoto de Supabase o protocolo de
 > mensajería **no se implementa sin decisión explícita del CTO**.
 >
-> **Hallazgo:** Z-001 — `claim_zone_id` inseguro.
-> **Fecha:** 2026-09-22 · **Estado:** ✔️ DECIDIDO (Opción 3) → **Fase A implementada localmente** · Fase B pendiente de diseño.
+> **Hallazgo:** Z-001 — `claim_zone_id` inseguro. **Hallazgo:** Z-002 — RLS `users`.
+> **Fecha:** 2026-09-22 · **Estado:** ✔️ Z-001 DECIDIDO (Opción 3) → **Fase A implementada localmente** · Fase B pendiente de diseño.
+> **Fecha:** 2026-09-23 · **Estado:** ✔️ Z-002 DECIDIDO (A estricto + vista `v_profile`) → implementado localmente.
+> **⚠️ Remoto (sonda 2026-09-23):** producción VULNERABLE (2-arg GRANT anon viva; oráculo verify anon) → migraciones 1.2 y 1.3 pendientes de APLICAR en remoto.
 
 ## 0. Resolución del CTO (2026-09-22)
 
@@ -148,19 +150,62 @@ GRANT EXECUTE ON FUNCTION public.claim_zone_id(text, text) TO authenticated;
 
 ---
 
+## 8. Z-002 — Exposición RLS de `users` · Decisiones CTO (2026-09-23)
+
+**Hallazgo:** la policy `"Ver perfiles públicos"` (`FOR SELECT TO authenticated USING (is_shadowbanned = FALSE)`)
+expone TODO el perfil de cualquier usuario autenticado (handles privados, galería, `public_key`).
+El filtrado de visibilidad vivía solo en el cliente.
+
+**Decisiones tomadas:**
+1. **Visibilidad avatar/galería:** **A. ESTRICTO SERVER-SIDE.** `avatar_url` y `gallery_photos` se devuelven
+   NULL en `v_profile` cuando `avatar_is_public = false`; se elimina el bypass por conexión mesh en
+   `public_profile_sheet.dart` (ya no se muestra avatar/galería "privados" por estado de conexión).
+2. **Mecanismo server-side:** **VISTA `public.v_profile`** como ÚNICO camino de lectura de terceros +
+   `claim_zone_id` **devuelve el perfil completo (jsonb)** al reclamar (el login no vuelve a releer `users`).
+   Se descartó "solo RPC `get_public_profile`" (menos superficie PostgREST pero obliga a migrar todas las queries a RPC).
+3. RLS `users` SELECT → self-scoped (`auth.uid() = id`). La vista usa semántica de dueño (security definer)
+   y aplica sus propios filtros (shadowban, bloqueos bidireccionales, gating de privacidad) — NO `security_invoker`
+   (re-aplicaría el RLS self-scoped y rompería el radar).
+
+**Aprobado implícitamente (acotado en el mismo lote):**
+- `users.updated_at` (columna; el remoto YA la tiene — solo se alinea schema/deploy). Sin trigger por ahora (Z-109).
+- Cliente: `updateProfile` escribe `updated_at` en vez del `updatedAt` camelCase (que daba 400 contra el remoto).
+- `verify_zone_id` gating de `avatar_url` por `avatar_is_public` (coherencia con A).
+
+**Pendientes nuevos para revisión del CTO (NO aplicadas en este lote):**
+1. **Aplicar en remoto** `secure_claim_zone_id.sql` (Fase 1.2) y luego `z002_profile_visibility.sql` (Fase 1.3)
+   vía **SQL Editor** (recomendado; sin Docker local no funciona `db diff`) o `supabase db push` con la password de la DB.
+2. **Drift SOLO-REMOTO:** `get_active_users_for_radar`, `update_bt_activity`, `get_radar_stats` existen en producción
+   pero no tienen definición canónica en el repo → requiere dump (`\df` + bodies) para consolidarlas (Z-109).
+3. **`bio`: no existe en remoto** — columna a añadir SOLO cuando la feature de bio avance (pull-sync ya no la consulta).
+4. **Z-104 (`resolve_bt_token`):** sigue con GRANT anon y devuelve `avatar_url` sin gating de `avatar_is_public`.
+   No se toca en este lote (batch propio); asignar prioridad (es el próximo conductor de fugas).
+5. **Z-111 (`profiles` bucket público):** sigue abierto (avatares "privados" descargables por URL). Depende del gating de Z-002 ya implementado.
+
+---
+
 ## Estado
 
 **✔️ DECISIÓN CTO REGISTRADA (Opción 3). Fase A implementada y verificada localmente
-(Z-001 + Z-103). Estado remoto: REQUIRES_REMOTE_VERIFICATION.**
+(Z-001 + Z-103). Estado remoto: REQUIRES_APPLICATION_EN_REMOTO — sonda REST 2026-09-23
+confirmó GRANT anon VIVO (2-arg) y oráculo verify anon en producción.**
 
 - Migración: `supabase_migrations/secure_claim_zone_id.sql` (idempotente).
 - Baselines actualizados: `supabase_schema.sql`, `supabase_deploy.sql`.
 - Cliente: `lib/services/zone_id_service.dart` (sin `p_public_key`; sin rotación silenciosa;
   preserva `public_key` archivada; `isValidZoneIdFormat` fail-fast) + `test/zone_id_format_test.dart`.
 - Verificación local: `flutter test` 5/5, `flutter analyze` 0 nuevos.
-- Verificación remota pendiente: aplicar migración vía supabase CLI (se requieren
-  `SUPABASE_ACCESS_TOKEN` y project ref del CTO) y ejecutar las 7 pruebas SQL del archivo
-  (anon → 403, formato, rate-limit, claim no altera public_key, idempotencia, sin oráculo).
+- Verificación remota: CLI enlazado (`tdacwsbghmjnrbawxhjk`); Docker local no disponible para
+  `db diff` → aplicar migración por SQL Editor y ejecutar las 7 pruebas SQL.
+
+**✔️ DECISIÓN CTO Z-002 REGISTRADA (A estricto + vista `v_profile`). Implementada y verificada
+localmente (FASE 1.3). Estado remoto: REQUIRES_REMOTE_VERIFICATION (aplicar `z002_profile_visibility.sql`).**
+
+- Migración: `supabase_migrations/z002_profile_visibility.sql` (idempotente, builds sobre 1.2).
+- Baselines: `supabase_schema.sql`, `supabase_deploy.sql`; cliente: `zone_id_service`,
+  `supabase_service` (lecturas de terceros → `v_profile`), `public_profile_sheet` (sin bypass mesh).
+- Verificación local: `flutter test` 5/5, `flutter analyze` 0 nuevos.
+- Pendientes remotos y de diseño en la sección 8.
 
 Archivos afectados por la Fase B futura: `lib/services/zone_id_service.dart`,
 `supabase_migrations/<nueva>` (auth_public_key + challenge + recovery), docs.

@@ -18,7 +18,7 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución (FASE 1.2 aplicada — Opción 3 Fase A, decisión CTO):** (a) `REVOKE` de `anon`/`PUBLIC` en `claim_zone_id` y `verify_zone_id`; solo `authenticated`. (b) `claim_zone_id` endurecido: formato estricto `^ZONE-[A-Z0-9]{8}$`, rate-limit (máx 5 fallos/15 min por zone_id, tabla `zone_claim_attempts`), **ya NO escribe `public_key`**, idempotente y auditado. (c) Cliente: las llamadas al RPC ya no envían `p_public_key`; se detiene la rotación silenciosa de clave en `ensureAuth` (276-302) y `checkAndFixRegistration` (388-391); `updateProfile` preserva la clave archivada (436-455); validación fail-fast `isValidZoneIdFormat`. (d) Fase B (siguiente iteración, pendiente de CTO): identidad de firma **Ed25519** (las claves actuales son X25519/ECDH y no firman) + códigos de recuperación + `update_public_key` firmado + transfer firmado.
 - **Dependencias:** Z-103 (verify_zone_id, mismo lote), Z-207 (ensureAuth).
 - **Prueba:** ✅ `flutter test` 5/5 (incluye `test/zone_id_format_test.dart`); ✅ `flutter analyze` sin findings nuevos; SQL con 7 pruebas de verificación documentadas en `supabase_migrations/secure_claim_zone_id.sql` (anon→403, formato, rate-limit, claim no altera public_key, idempotencia, sin oráculo).
-- **Estado:** FIXED_LOCAL — **REQUIRES_REMOTE_VERIFICATION** (migración `supabase_migrations/secure_claim_zone_id.sql` + baselines `schema`/`deploy` actualizados; aplicar en remoto vía supabase CLI y ejecutar las 7 pruebas SQL).
+- **Estado:** FIXED_LOCAL — **REQUIRES_APPLICATION_EN_REMOTO** — sonda REST 2026-09-23 (anon key, sin sesión): el remoto **coexiste amabas variantes** (`claim_zone_id(text)` y `claim_zone_id(text,text)` → 300 PGRST203) y la 2-arg **ejecuta sin sesión** (204) → **GRANT anon VIVO en producción**. La migración `supabase_migrations/secure_claim_zone_id.sql` es OBLIGATORIA en remoto (DROP 2-arg + REVOKE anon + 1-arg endurecida) + ejecutar las 7 pruebas SQL.
 
 ### Z-002 · RLS SELECT de `users` filtra TODAS las columnas a cualquier autenticado
 - **Severidad:** P0
@@ -29,8 +29,9 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Riesgo:** Alto (incumplimiento GDPR/ley 1581, doxxing).
 - **Solución:** Exponer perfiles solo vía RPC/vista que devuelva NULL en handles con `*_visible=false`, oculte `gallery_photos`, `public_key` según política; aplicar filtro server-side de `blocked_users` en la query; mínimo privilegio en SELECT.
 - **Dependencias:** Z-104 (resolve_bt_token), Z-111 (bucket público).
-- **Prueba:** SQL test: consumo directo via PostgREST con 2 usuarios autenticados → columna `instagram_handle` debe ser null si `ig_visible=false`.
-- **Estado:** ABIERTO — FASE 1 pendiente.
+- **Prueba:** SQL test (en `z002_profile_visibility.sql`): anon→denied en vista; users self-scoped; `instagram_handle` NULL si `ig_visible=false`; avatar/galería NULL si `avatar_is_public=false`; bloqueo bidireccional invisible; claim devuelve jsonb.
+- **Solución (FASE 1.3 implementada — decisión CTO A + vista v_profile):** RLS `users` SELECT self-scoped (`auth.uid() = id`); nueva vista `public.v_profile` (semántica owner p/ filtrar server-side: shadowban, bloqueos bidireccionales, NULIFICA avatar/galería si `avatar_is_public=false` y handles si `*_visible=false`) como ÚNICO camino de lectura de terceros; `claim_zone_id` → RETURNS jsonb (perfil completo tras reclamo, evita releer `users` en login); cliente: 4 lecturas de terceros → `v_profile`, sin bypass mesh en `public_profile_sheet` (avatares galería estrictos).
+- **Estado:** FIXED_LOCAL — **REQUIRES_REMOTE_VERIFICATION** (aplicar migración Z-002 en remoto + pruebas SQL).
 
 ### Z-003 · Mesh envía mensajes EN CLARO si no hay llave de sesión
 - **Severidad:** P0
@@ -142,7 +143,7 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución (FASE 1.2 aplicada — mismo lote que Z-001):** `verify_zone_id` endurecido: `REVOKE` de `anon`/`PUBLIC` (solo `authenticated`), formato estricto, rate-limit compartido (`zone_claim_attempts`) y **ya no expone `id` ni `zone_id`** (devuelve `{exists, display_name, avatar_url}`). La función queda disponible solo para el flujo login autenticado.
 - **Dependencias:** Z-001.
 - **Prueba:** ✅ `flutter analyze` sin findings nuevos; SQL: prueba 1 y 7 del bloque de verificación de `supabase_migrations/secure_claim_zone_id.sql`.
-- **Estado:** FIXED_LOCAL — **REQUIRES_REMOTE_VERIFICATION** (aplicar migración en remoto vía supabase CLI y verificar 403 para anon).
+- **Estado:** FIXED_LOCAL — **REQUIRES_REMOTE_VERIFICATION** — sonda REST 2026-09-23: `verify_zone_id` responde **200 a anon sin sesión** (oráculo VIVO en producción). La migración `secure_claim_zone_id.sql` lo revoca (`REVOKE anon` + rate-limit + sin `id`); pendiente aplicar en remoto.
 
 ### Z-104 · `resolve_bt_token` expuesto a anon; `used` nunca se marca
 - **Severidad:** P1
@@ -202,7 +203,7 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** Usar `updated_at` (tras aplicar multi_device_fix) o eliminar el campo si el trigger lo gestiona; test de contrato.
 - **Dependencias:** Z-109.
 - **Prueba:** Editar perfil → refrescar → persiste en DB.
-- **Estado:** ABIERTO — FASE 1 pendiente.
+- **Estado:** FIXED_LOCAL (parcial, FASE 1.3): el cliente (`updateProfile`) ahora envía `updated_at` snake_case (verificado remoto: columna EXISTE) en lugar del `updatedAt` camelCase que provocaba 400. Pendiente remoto: aplicar migración Z-002 (que añade `updated_at` IF NOT EXISTS a schema/deploy) y validar persistencia; el trigger de timestamp multi-device sigue en Z-109.
 
 ### Z-109 · RPCs de radar/actividad y `updated_at` solo en parche, no en schema/deploy
 - **Severidad:** P1
@@ -214,7 +215,7 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** Consolidar todos los parches en `supabase_deploy.sql` (idempotente) y ejecutar; lanzar error visible (no catch-and-ignore) en dev; documentar como migración única.
 - **Dependencias:** Z-108.
 - **Prueba:** SQL editor: funciones existen tras deploy; API `getActiveUsersForRadar` devuelve datos.
-- **Estado:** ABIERTO — FASE 1 pendiente (requiere aplicar parches en Supabase remoto).
+- **Estado:** PARCIAL (FASE 1.3): `updated_at` consolidado en `schema`/`deploy` (+ cliente `updateProfile` lo escribe). **Las RPC `get_active_users_for_radar`, `update_bt_activity`, `get_radar_stats` siguen siendo drift SOLO-REMOTO** (sonda REST 2026-09-23: existen en remoto pero no hay definición canónica en el repo — requieren `supabase db dump` o captura del SQL Editor para consolidarlas). Radar usa fallback `v_profile`.
 
 ### Z-110 · Sin notificaciones push; listener global nunca se detiene
 - **Severidad:** P1
@@ -314,7 +315,7 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** Añadir `updated_at` + trigger en schema y deploy (consolidar parche).
 - **Dependencias:** Z-109.
 - **Prueba:** Sync aplica LWW; trigger actualiza timestamp.
-- **Estado:** ABIERTO.
+- **Estado:** PARCIAL (FASE 1.3): columna `updated_at` añadida a `supabase_schema.sql`/`supabase_deploy.sql` (+ verificado remoto: EXISTE en producción). Pendiente: trigger de actualización automática del timestamp (Z-109).
 
 ### Z-206 · Sin policy UPDATE en `messages` (bloquea receipts y ediciones futuras)
 - **Severidad:** P2

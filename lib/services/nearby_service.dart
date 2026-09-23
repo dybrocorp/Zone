@@ -16,6 +16,7 @@ import 'supabase_service.dart';
 import 'package:cryptography/cryptography.dart';
 import '../models/isar_models.dart';
 import 'logger_service.dart';
+import 'mesh_policy.dart';
 
 /// Modelo de usuario descubierto por Nearby Connections.
 class NearbyUser {
@@ -107,6 +108,14 @@ class NearbyService with WidgetsBindingObserver {
       StreamController<NearbyMessage>.broadcast();
   Stream<NearbyMessage> get incomingMessagesStream =>
       _incomingMessagesController.stream;
+
+  // Z-003 (FASE 1.4): cola fail-closed de mensajes mesh pendientes de llave de sesión.
+  final List<MeshPendingMessage> _pendingMeshMessages = [];
+  static const int _maxPendingMeshMessages = 200;
+  final _meshStatusController = StreamController<MeshStatusEvent>.broadcast();
+  Stream<MeshStatusEvent> get meshStatusStream => _meshStatusController.stream;
+  List<MeshPendingMessage> get pendingMeshMessages =>
+      List.unmodifiable(_pendingMeshMessages);
 
   final Map<String, dynamic> _pendingConnections = {};
   final Set<String> _connectedEndpoints = {};
@@ -859,6 +868,11 @@ class NearbyService with WidgetsBindingObserver {
       if (sessionKey != null) {
         profileData['sessionKey'] = sessionKey;
         _logger.debug('[NearbyService] Llave de sesión establecida con éxito.');
+        // Z-003 (FASE 1.4): al establecerse la llave, descargar la cola fail-closed.
+        final remoteZoneId = profileData['zone_id'] as String?;
+        if (remoteZoneId != null && remoteZoneId.isNotEmpty) {
+          await _flushPendingMeshMessages(remoteZoneId);
+        }
       }
     }
 
@@ -946,29 +960,20 @@ class NearbyService with WidgetsBindingObserver {
 
   Future<void> sendMeshMessage(String targetZoneId, String message) async {
     final route = _routingTable[targetZoneId];
-    final profile = await _isar.getProfile(targetZoneId);
 
-    Map<String, dynamic> packet = {
-      'type': 'mesh_msg',
-      'source': _myZoneId,
-      'target': targetZoneId,
-      'msgId': DateTime.now().millisecondsSinceEpoch.toString(),
-      'text': message,
-      'hops': 0,
-      'isEncrypted': false,
-    };
-
-    // Intentar cifrar si tenemos llave de sesión
-    if (profile?.sessionKey != null) {
+    // Z-003 (FASE 1.4): fail-closed — NUNCA se envía texto en claro.
+    // Si no hay llave de sesión o el cifrado falla, el mensaje se encola y se
+    // reintenta al derivarse la llave (_handleProfileExchange → _flushPendingMeshMessages).
+    final sessionKey = await _security.getSessionKey(targetZoneId);
+    var encrypted = <String, dynamic>{};
+    var encryptOk = false;
+    if (sessionKey != null) {
       try {
-        final sessionKeyBytes = base64Decode(profile!.sessionKey!);
+        final sessionKeyBytes = base64Decode(sessionKey);
         final sharedSecret = SecretKey(sessionKeyBytes);
-        final encrypted = await _chatE2EE.encryptMessage(message, sharedSecret);
-
-        packet['text'] = encrypted['encrypted_content'];
-        packet['nonce'] = encrypted['nonce'];
-        packet['mac'] = encrypted['mac'];
-        packet['isEncrypted'] = true;
+        encrypted =
+            await _chatE2EE.encryptMessage(message, sharedSecret);
+        encryptOk = true;
         _logger.debug(
           '[NearbyService] Mensaje Mesh cifrado para $targetZoneId',
         );
@@ -976,6 +981,23 @@ class NearbyService with WidgetsBindingObserver {
         _logger.debug('[NearbyService] Error cifrando mensaje Mesh: $e');
       }
     }
+
+    final decision = MeshPolicy.decideSend(
+      hasSessionKey: sessionKey != null,
+      encryptOk: encryptOk,
+    );
+    if (decision == MeshSendDecision.queueForKey) {
+      _enqueueMeshMessage(targetZoneId, message);
+      return;
+    }
+
+    final packet = MeshPolicy.ciphertextPacket(
+      source: _myZoneId,
+      target: targetZoneId,
+      encryptedContent: encrypted['encrypted_content'] as String,
+      nonce: encrypted['nonce'] as String,
+      mac: encrypted['mac'] as String,
+    );
 
     if (route != null && _isRouteActive(route)) {
       _logger.debug(
@@ -993,10 +1015,56 @@ class NearbyService with WidgetsBindingObserver {
     }
   }
 
+  /// Z-003 (FASE 1.4): encola un mensaje mesh pendiente de llave (fail-closed).
+  /// Con tope de tamaño para evitar crecimiento ilimitado en memoria.
+  void _enqueueMeshMessage(String targetZoneId, String message) {
+    if (_pendingMeshMessages.length >= _maxPendingMeshMessages) {
+      _pendingMeshMessages.removeAt(0);
+    }
+    _pendingMeshMessages.add(MeshPendingMessage(
+      targetZoneId: targetZoneId,
+      message: message,
+      queuedAt: DateTime.now(),
+    ));
+    _meshStatusController.add(MeshStatusEvent(MeshStatusKind.queued, targetZoneId));
+    _logger.debug(
+      '[NearbyService] Mensaje Mesh ENCOLADO (fail-closed) para $targetZoneId — '
+      'pendiente de llave de sesión',
+    );
+  }
+
+  /// Z-003 (FASE 1.4): reintenta los mensajes pendientes hacia `targetZoneId`
+  /// cuando ya existe una llave de sesión (hook desde `_handleProfileExchange`).
+  Future<void> _flushPendingMeshMessages(String targetZoneId) async {
+    final pending = _pendingMeshMessages
+        .where((m) => m.targetZoneId == targetZoneId)
+        .toList();
+    if (pending.isEmpty) return;
+    _pendingMeshMessages.removeWhere((m) => m.targetZoneId == targetZoneId);
+    for (final item in pending) {
+      await sendMeshMessage(item.targetZoneId, item.message);
+    }
+    _meshStatusController.add(MeshStatusEvent(MeshStatusKind.flushed, targetZoneId));
+    _logger.debug(
+      '[NearbyService] Cola mesh descargada para $targetZoneId '
+      '(${pending.length} mensaje(s))',
+    );
+  }
+
   void _handleMeshMessage(
     String fromEndpointId,
     Map<String, dynamic> packet,
   ) async {
+    // Z-003 (FASE 1.4): fail-closed — la malla solo propaga mesh_msg cifrados.
+    final isEncrypted = packet['isEncrypted'] as bool? ?? false;
+    if (MeshPolicy.decideRelay(isEncrypted: isEncrypted) ==
+        MeshRelayDecision.dropPlaintext) {
+      _logger.warning(
+        '[NearbyService] Mensaje Mesh EN CLARO descartado (fail-closed) de $fromEndpointId',
+      );
+      return;
+    }
+
     final target = packet['target'] as String;
     final source = packet['source'] as String;
     final hops = (packet['hops'] as int) + 1;
@@ -1043,11 +1111,19 @@ class NearbyService with WidgetsBindingObserver {
     String text = packet['text'] as String;
     final isEncrypted = packet['isEncrypted'] as bool? ?? false;
 
+    // Z-003 (FASE 1.4): fail-closed — nunca se procesa texto en claro.
+    if (!isEncrypted) {
+      _logger.warning(
+        '[NearbyService] Mensaje Mesh en claro rechazado de $sourceZoneId',
+      );
+      return;
+    }
+
     if (isEncrypted) {
-      final profile = await _isar.getProfile(sourceZoneId);
-      if (profile?.sessionKey != null) {
+      final sessionKey = await _security.getSessionKey(sourceZoneId);
+      if (sessionKey != null) {
         try {
-          final sessionKeyBytes = base64Decode(profile!.sessionKey!);
+          final sessionKeyBytes = base64Decode(sessionKey);
           final sharedSecret = SecretKey(sessionKeyBytes);
           text = await _chatE2EE.decryptMessage(
             text,
@@ -1238,5 +1314,6 @@ class NearbyService with WidgetsBindingObserver {
     }
     _discoveredUsersController.close();
     _incomingMessagesController.close();
+    _meshStatusController.close();
   }
 }

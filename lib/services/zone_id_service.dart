@@ -2,10 +2,12 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'chat_e2ee_service.dart';
 import 'isar_service.dart';
 import 'logger_service.dart';
+import 'p2p_security_service.dart';
 
 /// Servicio que gestiona el ID único ZONE- del usuario.
 /// Lo genera, persiste localmente y lo registra en Supabase.
@@ -146,12 +148,15 @@ class ZoneIdService {
           .eq('zone_id', zoneId)
           .maybeSingle();
 
-      // 5. Actualizar la base de datos para que este dispositivo sea el nuevo "dueño" del ZONE-ID
-      // Usamos RPC para saltarnos el bloqueo de RLS en el handover de ID
-      final pubKey = await _storage.read(key: _keyPublicKey);
+      // 5. Reclamar la propiedad del ZONE-ID (RPC endurecido por Z-001 Fase A).
+      //    El RPC ya NO acepta p_public_key: la rotación de clave queda protegida.
+      if (!isValidZoneIdFormat(zoneId)) {
+        _logger.debug('[ZoneIdService] Formato de ZONE-ID inválido en login.');
+        return false;
+      }
       await _supabase.rpc(
         'claim_zone_id',
-        params: {'p_zone_id': zoneId, 'p_public_key': pubKey},
+        params: {'p_zone_id': zoneId},
       );
 
       // 6. Si teníamos perfil previo, migrarlo al nuevo UID
@@ -308,14 +313,11 @@ class ZoneIdService {
     // Usamos el RPC claim_zone_id que es idempotente y seguro (Security Definer).
     if (currentZoneId != null) {
       try {
-        final pubKey = await _storage.read(key: _keyPublicKey);
         await _supabase.rpc(
           'claim_zone_id',
-          params: {'p_zone_id': currentZoneId, 'p_public_key': pubKey},
+          params: {'p_zone_id': currentZoneId},
         );
-        _logger.debug(
-          '[ZoneIdService] Reclamo exitoso para $currentZoneId con llave ${pubKey?.substring(0, 5)}...',
-        );
+        _logger.debug('[ZoneIdService] Reclamo exitoso para $currentZoneId');
       } catch (e) {
         _logger.debug(
           '[ZoneIdService] Aviso: Error al reclamar Zone ID en el inicio: $e',
@@ -374,25 +376,17 @@ class ZoneIdService {
         });
         _logger.debug('[ZoneIdService] Fila de usuario recreada con éxito.');
       } else {
-        // SIEMPRE sincronizar la clave pública con Supabase
+        // Z-001 Fase A: la public_key archivada en Supabase ES la identidad E2EE.
+        // NO se sobrescribe con la clave local sin prueba de posesión; la
+        // rotación protegida llega en la Fase B (firma Ed25519 + códigos de
+        // recuperación). La clave local de este dispositivo solo sirve para
+        // el canal mesh actual.
         final dbKey = res['public_key']?.toString();
-        if (dbKey != publicKeyBase64) {
-          _logger.debug(
-            '[ZoneIdService] ⚠️ Clave en Supabase NO coincide con la local. Sincronizando...',
-          );
-          _logger.debug(
-            '[ZoneIdService] DB: ${dbKey?.substring(0, 8)}... vs Local: ${publicKeyBase64.substring(0, 8)}...',
-          );
-          await _supabase
-              .from('users')
-              .update({'public_key': publicKeyBase64})
-              .eq('id', _uid!);
-          _logger.debug(
-            '[ZoneIdService] ✅ Clave pública sincronizada con Supabase.',
-          );
-        } else {
-          _logger.debug('[ZoneIdService] ✅ Clave pública ya sincronizada.');
-        }
+        _logger.debug(
+          '[ZoneIdService] Clave en Supabase preservada '
+          '(${dbKey?.substring(0, 8)}...). '
+          'Rotación protegida pendiente de Z-001 Fase B.',
+        );
       }
     } catch (e) {
       _logger.debug('[ZoneIdService] Error en checkAndFixRegistration: $e');
@@ -429,13 +423,30 @@ class ZoneIdService {
       await _storage.write(key: 'public_key', value: publicKey);
     }
 
+    // Z-001 Fase A: la public_key archivada en Supabase ES la identidad E2EE y
+    // no debe sobrescribirse sin prueba de posesión. Si la fila ya existe,
+    // se preserva la clave de la DB; la local solo aplica a filas nuevas.
+    String pkToSend = publicKey;
+    try {
+      final existing = await _supabase
+          .from('users')
+          .select('public_key')
+          .eq('id', _uid!)
+          .maybeSingle();
+      final dbKey = existing?['public_key']?.toString();
+      if (dbKey != null && dbKey.isNotEmpty) {
+        pkToSend = dbKey;
+      }
+    } catch (e) {
+      _logger.debug('[ZoneIdService] No se pudo leer public_key previa: $e');
+    }
+
     // Usamos UPSERT de forma defensiva por si el registro inicial en public.users falló.
-    // Incluir public_key es obligatorio porque tiene restricción NOT NULL en la DB.
     final profileData = {
       'id': _uid,
       'zone_id': _zoneId,
       'display_name': displayName,
-      'public_key': publicKey,
+      'public_key': pkToSend,
       'instagram_handle': instagram,
       'ig_visible': igVisible,
       'facebook_handle': facebook,
@@ -550,6 +561,13 @@ class ZoneIdService {
   //  Generación del ID
   // ──────────────────────────────────────────────────────────
 
+  /// Valida el formato canónico de un ZONE-ID: `ZONE-` + 8×[A-Z0-9].
+  /// Contrato compartido con el backend (claim_zone_id / verify_zone_id).
+  static bool isValidZoneIdFormat(String? zoneId) {
+    if (zoneId == null || zoneId.isEmpty) return false;
+    return RegExp(r'^ZONE-[A-Z0-9]{8}$').hasMatch(zoneId);
+  }
+
   String _generateZoneId() {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     final rnd = Random.secure();
@@ -590,7 +608,22 @@ class ZoneIdService {
     // Esto borra datos en public (usuarios, chats, tokens) y auth.
     await _supabase.rpc('delete_own_account');
 
-    // 2. Limpiar todo el estado local
+    // 3. Limpiar toda la base de datos local (Isar)
+    try {
+      await _isar.clearAll();
+    } catch (e) {
+      _logger.debug('Aviso: Fallo limpiando Isar: $e');
+    }
+
+    // 4. Limpiar SharedPreferences
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.clear();
+    } catch (e) {
+      _logger.debug('Aviso: Fallo limpiando SharedPreferences: $e');
+    }
+
+    // 5. Limpiar todo el estado local (claves, sesión)
     await clearAuth();
   }
 
@@ -598,6 +631,14 @@ class ZoneIdService {
   Future<void> clearAuth() async {
     await _storage.delete(key: _keyZoneId);
     await _storage.delete(key: _keySupabaseSession);
+    await _storage.delete(key: _keyPrivateKey);
+    await _storage.delete(key: _keyPublicKey);
+
+    // Limpiar todas las session keys almacenadas de forma segura
+    try {
+      await P2PSecurityService().deleteAllSessionKeys();
+    } catch (_) {}
+
     await _supabase.auth.signOut();
     _zoneId = null;
     _uid = null;

@@ -137,21 +137,63 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth;
 REVOKE EXECUTE ON FUNCTION public.delete_own_account() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.delete_own_account() TO authenticated;
 
+-- Tabla de auditoría / rate-limit de claim_zone_id y verify_zone_id (Z-001 Fase A)
+-- Acceso SOLO vía las funciones SECURITY DEFINER; sin grants a anon/authenticated.
+CREATE TABLE IF NOT EXISTS public.zone_claim_attempts (
+  id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  zone_id       TEXT NOT NULL,
+  uid           UUID,
+  success       BOOLEAN NOT NULL DEFAULT FALSE,
+  attempted_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_zone_claim_attempts_zone_time
+  ON public.zone_claim_attempts (zone_id, attempted_at DESC);
+REVOKE ALL ON public.zone_claim_attempts FROM anon, authenticated, PUBLIC;
+ALTER TABLE public.zone_claim_attempts ENABLE ROW LEVEL SECURITY;
+
+-- claim_zone_id endurecido (autenticación, formato, rate-limit; NO escribe public_key)
 CREATE OR REPLACE FUNCTION public.claim_zone_id(p_zone_id text)
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
+  v_uid        uuid := auth.uid();
+  v_failures   bigint;
+  v_target     uuid;
 BEGIN
-  UPDATE public.users SET id = auth.uid() WHERE zone_id = p_zone_id;
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'Se requiere sesión autenticada';
+  END IF;
+  IF p_zone_id !~ '^ZONE-[A-Z0-9]{8}$' THEN
+    RAISE EXCEPTION 'Formato de ZONE-ID inválido';
+  END IF;
+  SELECT count(*) INTO v_failures
+  FROM public.zone_claim_attempts
+  WHERE zone_id = p_zone_id
+    AND success = FALSE
+    AND attempted_at > now() - interval '15 minutes';
+  IF v_failures >= 5 THEN
+    RAISE EXCEPTION 'Demasiados intentos para este ZONE-ID. Reintenta en 15 minutos.';
+  END IF;
+  SELECT id INTO v_target FROM public.users WHERE zone_id = p_zone_id;
+  IF v_target IS NULL THEN
+    INSERT INTO public.zone_claim_attempts (zone_id, uid, success)
+    VALUES (p_zone_id, v_uid, FALSE);
+    RAISE EXCEPTION 'ZONE-ID no encontrado';
+  END IF;
+  UPDATE public.users SET id = v_uid WHERE zone_id = p_zone_id;
+  INSERT INTO public.zone_claim_attempts (zone_id, uid, success)
+  VALUES (p_zone_id, v_uid, TRUE);
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public.claim_zone_id(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.claim_zone_id(text) FROM PUBLIC, anon;
+DROP FUNCTION IF EXISTS public.claim_zone_id(text, text); -- variantes obsoletas 2-arg
 GRANT EXECUTE ON FUNCTION public.claim_zone_id(text) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.claim_zone_id(text) TO anon;
 
+-- verify_zone_id endurecido (solo authenticated, sin oráculo: no expone 'id')
 CREATE OR REPLACE FUNCTION public.verify_zone_id(p_zone_id text)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -159,22 +201,41 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  v_user_data jsonb;
+  v_uid        uuid := auth.uid();
+  v_failures   bigint;
+  v_user_data  jsonb;
 BEGIN
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'Se requiere sesión autenticada';
+  END IF;
+  IF p_zone_id !~ '^ZONE-[A-Z0-9]{8}$' THEN
+    RETURN NULL;
+  END IF;
+  SELECT count(*) INTO v_failures
+  FROM public.zone_claim_attempts
+  WHERE zone_id = p_zone_id
+    AND success = FALSE
+    AND attempted_at > now() - interval '15 minutes';
+  IF v_failures >= 5 THEN
+    RAISE EXCEPTION 'Demasiados intentos para este ZONE-ID. Reintenta en 15 minutos.';
+  END IF;
   SELECT jsonb_build_object(
-    'id', id,
-    'zone_id', zone_id,
-    'display_name', display_name
+    'exists', TRUE,
+    'display_name', display_name,
+    'avatar_url', avatar_url
   ) INTO v_user_data
   FROM public.users
   WHERE zone_id = p_zone_id;
+  IF v_user_data IS NULL THEN
+    INSERT INTO public.zone_claim_attempts (zone_id, uid, success)
+    VALUES (p_zone_id, v_uid, FALSE);
+  END IF;
   RETURN v_user_data;
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public.verify_zone_id(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.verify_zone_id(text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.verify_zone_id(text) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.verify_zone_id(text) TO anon;
 
 CREATE OR REPLACE FUNCTION public.resolve_bt_token(p_token text)
 RETURNS jsonb

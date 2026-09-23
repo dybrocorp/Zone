@@ -46,6 +46,9 @@ DROP TRIGGER IF EXISTS users_updated_at_trigger ON public.users;
 CREATE TRIGGER users_updated_at_trigger BEFORE UPDATE ON public.users
     FOR EACH ROW EXECUTE FUNCTION update_users_updated_at();
 
+-- Z-109: función de trigger no expuesta a la red (defensivo; los triggers no dependen de grants EXECUTE).
+REVOKE EXECUTE ON FUNCTION public.update_users_updated_at() FROM PUBLIC, anon, authenticated;
+
 -- ============================================================
 -- 2. TOKENS BLUETOOTH TEMPORALES (seguridad del radar)
 -- El token efímero se comparte via Nearby Connections, NO el zone_id
@@ -254,6 +257,139 @@ WHERE u.is_shadowbanned = FALSE
   );
 REVOKE ALL ON public.v_profile FROM anon, PUBLIC;
 GRANT SELECT ON public.v_profile TO authenticated;
+
+-- ─── Z-109 (2026-09-23): RPCs radar/mantenimiento consolidadas en canon ──────
+-- Versiones CORREGIDAS: nada ejecutable por anon/PUBLIC. get_active_users_for_radar
+-- es SECURITY INVOKER sobre v_profile (hereda gating de Z-002: avatar_is_public,
+-- shadowban, bloqueos mutuos) + filtro stealth_mode. Va DESPUÉS de v_profile
+-- (la RPC LANGUAGE sql la referencia en creación).
+-- ----------------------------------------------------------------------------
+
+-- Radar global: usuarios activos 24h (SECURITY INVOKER + v_profile)
+CREATE OR REPLACE FUNCTION public.get_active_users_for_radar(p_limit integer DEFAULT 1000)
+ RETURNS TABLE(id uuid, zone_id text, display_name text, avatar_url text, public_key text, stealth_mode boolean)
+ LANGUAGE sql
+ SECURITY INVOKER
+ SET search_path TO 'public'
+AS $$
+    SELECT v.id, v.zone_id, v.display_name, v.avatar_url, v.public_key, v.stealth_mode
+    FROM public.v_profile v
+    WHERE v.stealth_mode = FALSE
+    ORDER BY v.updated_at DESC
+    LIMIT p_limit;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.get_active_users_for_radar(integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_active_users_for_radar(integer) TO authenticated, service_role;
+
+-- Métricas del radar (diagnóstico): gate de sesión + sin anon
+CREATE OR REPLACE FUNCTION public.get_radar_stats()
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $$
+DECLARE
+    v_stats JSONB;
+BEGIN
+    IF auth.uid() IS NULL THEN
+        RETURN NULL;
+    END IF;
+    SELECT jsonb_build_object(
+        'total_users', (SELECT COUNT(*) FROM public.users WHERE is_shadowbanned = FALSE),
+        'active_users_24h', (SELECT COUNT(*) FROM public.users WHERE updated_at > NOW() - INTERVAL '24 hours' AND is_shadowbanned = FALSE),
+        'active_tokens', (SELECT COUNT(*) FROM public.bt_tokens WHERE expires_at > NOW()),
+        'total_encounters', (SELECT COUNT(*) FROM public.encounters WHERE seen_at > NOW() - INTERVAL '24 hours')
+    ) INTO v_stats;
+    RETURN v_stats;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.get_radar_stats() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_radar_stats() TO authenticated, service_role;
+
+-- Refrescar la caché materializada del radar: solo mantenimiento (service_role)
+CREATE OR REPLACE FUNCTION public.refresh_active_users_cache()
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $$
+BEGIN
+    REFRESH MATERIALIZED VIEW CONCURRENTLY public.active_users_cache;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.refresh_active_users_cache() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.refresh_active_users_cache() TO service_role;
+
+-- Limpieza de tokens BT expirados con margen: solo mantenimiento (service_role)
+CREATE OR REPLACE FUNCTION public.auto_cleanup_tokens()
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $$
+BEGIN
+    DELETE FROM public.bt_tokens
+    WHERE expires_at < NOW() - INTERVAL '1 hour';
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.auto_cleanup_tokens() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.auto_cleanup_tokens() TO service_role;
+
+-- Actividad BT del usuario actual (usa auth.uid()): solo authenticated/service_role
+CREATE OR REPLACE FUNCTION public.update_bt_activity()
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $$
+BEGIN
+    UPDATE public.users
+    SET last_bt_activity = NOW(),
+        updated_at = NOW()
+    WHERE id = auth.uid();
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.update_bt_activity() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.update_bt_activity() TO authenticated, service_role;
+
+-- Función dormida presente en remoto (2026-09-23): event-trigger de red de seguridad
+-- para auto-RLS. NO se cablea como event trigger (Supabase gestiona auto-RLS vía su
+-- propio event trigger `ensure_rls`). Se conserva en canon solo por fidelidad con el
+-- estado remoto; grants restringidos por defecto.
+CREATE OR REPLACE FUNCTION public.rls_auto_enable()
+ RETURNS event_trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  cmd record;
+BEGIN
+  FOR cmd IN
+    SELECT *
+    FROM pg_event_trigger_ddl_commands()
+    WHERE command_tag IN ('CREATE TABLE', 'CREATE TABLE AS', 'SELECT INTO')
+      AND object_type IN ('table','partitioned table')
+  LOOP
+     IF cmd.schema_name IS NOT NULL AND cmd.schema_name IN ('public') AND cmd.schema_name NOT IN ('pg_catalog','information_schema') AND cmd.schema_name NOT LIKE 'pg_toast%' AND cmd.schema_name NOT LIKE 'pg_temp%' THEN
+      BEGIN
+        EXECUTE format('alter table if exists %s enable row level security', cmd.object_identity);
+        RAISE LOG 'rls_auto_enable: enabled RLS on %', cmd.object_identity;
+      EXCEPTION
+        WHEN OTHERS THEN
+          RAISE LOG 'rls_auto_enable: failed to enable RLS on %', cmd.object_identity;
+      END;
+     ELSE
+        RAISE LOG 'rls_auto_enable: skip % (system schema or not in enforced list)', cmd.object_identity, cmd.schema_name;
+     END IF;
+  END LOOP;
+END;
+$function$;
+
+REVOKE EXECUTE ON FUNCTION public.rls_auto_enable() FROM PUBLIC;
 
 -- ─── BT_TOKENS ───────────────────────────────────────────────
 -- Solo tu propio token

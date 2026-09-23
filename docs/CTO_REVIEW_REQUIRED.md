@@ -311,5 +311,25 @@ de 2 conflictos; vuestro WIP quedó intacto y SIN commitear en el working tree.
 `supabase_schema.sql`/`deploy.sql` alineados con la definición (commit de esta tanda).
 **`updated_at` en el SQL Editor creado por postgres hereda default privileges; los baselines ya lo cubren.**
 
-→ **Pendiente de decisión:** aprobar un batch Z-109 (consolidar drift + REVOKE anon/PUBLIC en los RPCs
-drift + alinear avatares con gating) tras FASE 1.5, sin mezclarlo con 1.4.
+---
+
+### Z-109 · DECISIÓN CTO APROBADA (2026-09-23, batch completo) — ejecutada en remoto
+
+> **Aprobación registrada antes de codificar:** el batch completo A–F (ver puntos 1–5 y 7 de arriba)
+> fue aprobado por el CTO con estos acuerdos explícitos:
+> 1. **A `get_active_users_for_radar`:** REVOKE `anon/PUBLIC` → solo `authenticated`+`service_role`;
+>    reescrita como **`SECURITY INVOKER` sobre `v_profile`** (+ filtro `stealth_mode=false` del
+>    original) → hereda TODO el gating server-side de Z-002 (avatar_is_public, shadowban, bloqueos
+>    mutuos). La app ya usa exactamente esa consulta como fallback → cero breakage esperado.
+> 2. **B `get_radar_stats`:** REVOKE anon/PUBLIC + gate `auth.uid() IS NULL → NULL`; `authenticated`+`service_role`.
+> 3. **C `refresh_active_users_cache` y D `auto_cleanup_tokens`:** solo `service_role` (mantenimiento).
+> 4. **E `update_bt_activity`:** REVOKE anon/PUBLIC; `authenticated`+`service_role`.
+> 5. **F `update_users_updated_at`:** REVOKE `PUBLIC` (defensivo; los triggers no dependen de grants).
+> 6. **G `resolve_bt_token`:** SE MANTIENE `anon` **por diseño** (radar bilateral; tokens UUIDv4 =
+>    122 bits aleatorios → fuerza bruta infeasible). Item futuro: rate-limit (Z-104).
+> 7. **Consolidación en canon:** versiones corregidas de A–F + `rls_auto_enable` añadidas a
+>    `supabase_schema.sql`/`supabase_deploy.sql` (tras la creación de `v_profile`), y REVOKE
+>    alineado en `update_users_updated_at`.
+>
+> Migración: `supabase_migrations/z109_rpc_anon_revoke.sql` (aplicada en remoto en transacción
+> atómica con verificación en-transacción). Evidencia remota y conteos en `PHASE_1_PROGRESS.md`.

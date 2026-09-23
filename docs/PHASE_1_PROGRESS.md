@@ -159,14 +159,49 @@ Riesgo residual documentado: la toma de control con ZONE-ID conocido por un usua
 - **Acceso remoto:** Management API vía PAT (mismo motor del SQL Editor) — migraciones 1.2/1.3 aplicadas
   en transacciones atómicas y verificadas; PAT conservado hasta el fin de FASE 1 (decisión CTO).
 - **Drift SOLO-REMOTO (Z-109):** dump read-only completo de funciones `public.*` guardado en
-  `docs/REMOTE_DRIFT_SNAPSHOT_2026-09-23.sql` (incluye los RPC drift con GRANT anon → ver
-  `CTO_REVIEW_REQUIRED` §10 para el batch Z-109 pendiente).
+  `docs/REMOTE_DRIFT_SNAPSHOT_2026-09-23.sql`; **batch Z-109 ✅ CERRADO en remoto (2026-09-23)** —
+  ver sección "Z-109" abajo.
 - **Trigger `updated_at`:** confirmado EXISTENTE en remoto (`users_updated_at_trigger` BEFORE UPDATE);
   `supabase_schema.sql` / `supabase_deploy.sql` alineados con la definición (solo baseline, sin cambio remoto).
 - **`supabase/` (CLI):** añadido a `.gitignore` (config local del CLI, no va al repo).
 - **Incidente de encoding** durante la aplicación remota de Z-002: documentado en `CTO_REVIEW_REQUIRED` §8
   con la corrección (DO-block anti-drift de policies, REVOKE de default privileges en `v_profile`,
   lectura UTF-8 estricta en el aplicador).
+
+## Z-109 — RPC drift con `GRANT anon` · CERRADO (aprobado CTO 2026-09-23, batch A–F)
+
+**ID:** Z-109 · **Estado:** ✅ REMOTE_APPLIED + VERIFIED (commit de esta tanda; aprobación y detalle en `CTO_REVIEW_REQUIRED` §10).
+**Migración:** `supabase_migrations/z109_rpc_anon_revoke.sql` (transacción atómica + verificación en-transacción).
+
+**Hallazgo raíz:** 6 funciones `public.*` remotas con `SECURITY DEFINER` y `GRANT EXECUTE to anon/PUBLIC` —
+la más crítica, `get_active_users_for_radar`, anulaba el gating de Z-002 (anon enumeraba usuarios activos,
+sus claves públicas y avatares no públicos).
+
+**Remediación aplicada en remoto (verificado en vivo):**
+- `get_active_users_for_radar` → **`SECURITY INVOKER` sobre `v_profile`** + filtro `stealth_mode=false`:
+  hereda `avatar_is_public`, shadowban y bloqueos mutuos. anon/PUBLIC revocados (solo `authenticated`+`service_role`).
+- `get_radar_stats` → gate `auth.uid()` + revoke anon (P2).
+- `refresh_active_users_cache` y `auto_cleanup_tokens` → solo `service_role` (mantenimiento; cierra DoS por
+  `REFRESH MATERIALIZED VIEW CONCURRENTLY` disparado por anon).
+- `update_bt_activity` → revoke anon (usaba `auth.uid()`).
+- `update_users_updated_at` → REVOKE `PUBLIC` (defensivo).
+- `resolve_bt_token` → **sin cambios** (canon ya `{authenticated, anon}` por diseño; tokens UUIDv4 → sin
+  riesgo de fuerza bruta; rate-limit futuro en Z-104).
+- **Consolidación en canon:** versiones corregidas (A–F + `rls_auto_enable` dormida, documentada) añadidas a
+  `supabase_schema.sql`/`supabase_deploy.sql` tras la creación de `v_profile`.
+
+**Verificación remota en vivo (2026-09-23):**
+| Proba | Resultado |
+|---|---|
+| ACL 6 funciones | `{postgres, auth/service_role}` — **sin anon ni PUBLIC** ✅ |
+| `anon` → radar / stats / activity / refresh / cleanup | **42501 permission denied** (6/6) ✅ |
+| `authenticated` → `get_active_users_for_radar(1000)` | 2 filas, avatares ok (app intacta) ✅ |
+| `authenticated` sin sesión → `get_radar_stats` | `null` (gate `auth.uid()`) ✅ |
+| `get_active_users_for_radar` | `prosecdef=false` (INVOKER) + lee `v_profile` ✅ |
+| Conteos globales | usuarios 2, visibles 2, `zone_claim_attempts` 0 ✅ |
+
+**Conclusión:** la superficie anon queda cerrada; la app conserva su funcionalidad (las 3 RPC de app
+siguen en `authenticated`, con fallbacks intactos).
 
 ## FASE 1.4 — Z-003 · Mesh en claro → fail-closed IMPLEMENTADO (decisión CTO 2026-09-23)
 

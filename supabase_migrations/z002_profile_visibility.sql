@@ -34,7 +34,26 @@ ALTER TABLE public.users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 -- ----------------------------------------------------------------------------
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Ver perfiles públicos" ON public.users;
+-- Elimina CUALQUIER politica SELECT ajena sobre users (p.ej. la historica
+-- "Ver perfiles públicos", cuyo nombre puede variar por normalizacion Unicode
+-- o codificacion) salvo la self-scoped (auth.uid() = id). Robusto e idempotente.
+DO $$
+DECLARE
+  p record;
+BEGIN
+  FOR p IN
+    SELECT pol.polname AS nm, pg_get_expr(pol.polqual, pol.polrelid) AS qexpr
+    FROM pg_policy pol
+    JOIN pg_class c ON c.oid = pol.polrelid
+    WHERE c.relname = 'users' AND c.relnamespace = 'public'::regnamespace
+      AND pol.polcmd = 'r'
+  LOOP
+    IF p.qexpr IS NULL OR position('auth.uid()' IN p.qexpr) = 0 THEN
+      EXECUTE format('DROP POLICY %I ON public.users', p.nm);
+    END IF;
+  END LOOP;
+END $$;
+
 DROP POLICY IF EXISTS "Ver propio perfil" ON public.users;
 CREATE POLICY "Ver propio perfil" ON public.users
     FOR SELECT TO authenticated USING (auth.uid() = id);
@@ -84,8 +103,8 @@ WHERE u.is_shadowbanned = FALSE
        OR (b.blocker_id = auth.uid() AND b.blocked_id = u.id)
   );
 
--- Sin acceso a anon/public; solo authenticated (como el resto del esquema).
-REVOKE ALL ON public.v_profile FROM anon, PUBLIC;
+-- Sin acceso a anon/public ni DML de authenticated; solo SELECT.
+REVOKE ALL ON public.v_profile FROM anon, PUBLIC, authenticated;
 GRANT SELECT ON public.v_profile TO authenticated;
 
 -- ----------------------------------------------------------------------------
@@ -93,7 +112,10 @@ GRANT SELECT ON public.v_profile TO authenticated;
 --    Mismos controles Z-001 (auth + formato + rate-limit) pero devuelve el
 --    perfil migrado para que el login no tenga que releer 'users' (que ahora
 --    es self-scoped). NO toca public_key.
+--    DROP previo: tras la Fase 1.2 claim devuelve void; Postgres exige DROP
+--    para cambiar el tipo de retorno (42P13). Atómico dentro de transacción.
 -- ----------------------------------------------------------------------------
+DROP FUNCTION IF EXISTS public.claim_zone_id(text);
 CREATE OR REPLACE FUNCTION public.claim_zone_id(p_zone_id text)
 RETURNS jsonb
 LANGUAGE plpgsql

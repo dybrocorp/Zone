@@ -11,7 +11,8 @@
 ## FASE 1.3 — Z-002 · Proteger la exposición de perfiles (RLS `users`)
 
 **ID:** Z-002
-**Estado:** FIXED_LOCAL → REQUIRES_REMOTE_VERIFICATION (aplicar `supabase_migrations/z002_profile_visibility.sql` en remoto)
+**Estado:** ✅ REMOTE_APPLIED + VERIFIED (2026-09-23, Management API vía PAT — SQL Editor engine)
+**Aplicación remota:** migración `z002_profile_visibility.sql` aplicada en transacción atómica (BEGIN/COMMIT) + 8 verificaciones SQL + pull-check estructural. **Estado previo:** FIXED_LOCAL → REQUIRES_REMOTE_VERIFICATION.
 **Decisión CTO (re-registrada tras interrupción):** **A. Estricto server-side** (avatar/galería NULL cuando `avatar_is_public=false`, sin bypass mesh en cliente) + **vista `v_profile`** como único camino de lectura de terceros y `claim_zone_id` devuelve el perfil completo (jsonb).
 **Archivos:**
 - `supabase_migrations/z002_profile_visibility.sql` (NUEVO, idempotente) — `users.updated_at`, RLS self-scoped, vista `v_profile` + grants, `claim_zone_id` → jsonb, `verify_zone_id` con gating de avatar.
@@ -25,7 +26,18 @@
 **Pruebas ejecutadas:**
 - `flutter test`: ✅ 5/5.
 - `flutter analyze`: ✅ 0 findings nuevos (solo los 15 infos preexistentes, ninguno en archivos del lote).
-- SQL: 8 pruebas de verificación en la migración (anon→denied vista/RPC, self-scoped, gating avatar/handles, bloqueos bidireccionales, claim jsonb, verify sin avatar no público). **Pendientes de ejecución remota.**
+- SQL: 8 pruebas de verificación en la migración (anon→denied vista/RPC, self-scoped, gating avatar/handles, bloqueos bidireccionales, claim jsonb, verify sin avatar no público). **✅ Ejecutadas en remoto (2026-09-23):**
+  - `anon → v_profile/claim` = 42501 permission denied ✅
+  - `users` self-scoped: `SET ROLE authenticated` (sin sesión) → `count(users)` = **0** ✅ (la lectura a ajena queda bloqueada por RLS)
+  - Shadowbanned excluidos de `v_profile` ✅ · gating avatar/galería/handles confirmado en definición ✅ · bloqueo bidireccional en la vista ✅
+  - `claim_zone_id` → `RETURNS jsonb` + payload completo (verified por `pg_get_functiondef`) ✅ · `verify_zone_id` con `CASE WHEN avatar_is_public` ✅
+  - Políticas `users` finales: **solo 3 self-scoped** (`Ver propio perfil` SELECT, `Actualizar propio perfil` UPDATE, `Registrar propio usuario` INSERT); la histórica `"Ver perfiles públicos"` ELIMINADA ✅
+  - ACL `v_profile`: `authenticated=r` (**solo SELECT**; se revocó el `arwdDxtm` heredado de default privileges) ✅
+
+**Incidente de aplicación (registrado en CTO_REVIEW_REQUIRED §8):** el 1º intento envió la migración con doble codificación (PowerShell 5.1 `Get-Content` lee ANSI/cp1252 sin BOM → `ú`→`Ãº`): el `DROP POLICY "Ver perfiles públicos"` no impactó (no-op) y los textos de RAISE de claim/verify quedaron mojibake. Corregido:
+1. Aplicador de migraciones con **lectura UTF-8 estricta** (`[IO.File]::ReadAllText`, `--data-binary`).
+2. Migración Z-002 endurecida: bloque `DO` que elimina *cualquier* política SELECT ajena en `users` salvo la self-scoped (`auth.uid() = id`) — robusto ante variantes de nombre/encoding — + `REVOKE ALL FROM authenticated` en `v_profile` + `DROP FUNCTION claim_zone_id(text)` previo al cambio de tipo de retorno void→jsonb (Postgres 42P13).
+3. Re-aplicación atómica: mojibake sana en la DB (hex RAISE = `73657369c3b36e20` = "sesión ") ✅.
 
 **Resultado:** el vector "cualquier autenticado lee todas las columnas de perfiles ajenos" queda cerrado localmente (server-side + self-scoped). El flujo legítimo (radar, pull-sync, perfil público, login) migra a `v_profile`/claim jsonb y sigue funcionando.
 
@@ -36,11 +48,11 @@
 - RPC `get_active_users_for_radar` / `update_bt_activity` / `get_radar_stats`: drift SOLO-REMOTO (sin definición canónica en el repo).
 - `supabase` CLI: login + init + link OK (project `tdacwsbghmjnrbawxhjk`); `db diff` requiere Docker (no disponible) → vía de verificación/aplicación: **SQL Editor** o `db push` con password de DB.
 
-**Supabase requerido:** SÍ — aplicar la migración Z-002 (después de la 1.2) en el SQL Editor y ejecutar las 8 pruebas SQL.
+**Supabase requerido:** ✅ APLICADO — migración Z-002 aplicada y verificada en remoto (2026-09-23) vía Management API con PAT (mismo motor del SQL Editor).
 
-**Estado remoto:** REQUIRES_REMOTE_VERIFICATION (aplicación pendiente con CTO).
+**Estado remoto:** ✅ REMOTE_VERIFIED — evidencia completa en la sección "Pruebas ejecutadas". Fuga por la política `"Ver perfiles públicos"` cerrada (self-scope operativo: `authenticated` ve 0 filas ajenas).
 
-**Commit:** `ca456eb` — `fix(auth): enforce server-side profile privacy via v_profile view (Z-002)` · `66f6ee1` — docs FASE 1.3.
+**Commit:** `ca456eb` — `fix(auth): enforce server-side profile privacy via v_profile view (Z-002)` · `6cd231d` — docs FASE 1.3 · (enmendada en la cola de aplicación remota con DO-block+REVOKE+encoding).
 
 **Checkpoint:** ✅ FASE 1.3 completada y verificada localmente. Siguiente: FASE 1.4 — Z-003 (mesh en claro).
 
@@ -49,7 +61,9 @@
 ## FASE 1.2 — Z-001 (+ Z-103) · Proteger `claim_zone_id` (decisión CTO: Opción 3, Fase A)
 
 **ID:** Z-001 · Z-103
-**Estado:** FIXED_LOCAL → REQUIRES_APPLICATION_EN_REMOTO — **sondeo REST 2026-09-23 confirmó producción VULNERABLE** (2-arg con GRANT anon viva; oráculo verify anon vivo). Migración `secure_claim_zone_id.sql` pendiente de aplicar.
+**Estado:** ✅ REMOTE_APPLIED + VERIFIED (2026-09-23, Management API en transacción atómica). **Estado previo:** FIXED_LOCAL → REQUIRES_APPLICATION_EN_REMOTO (sondeo REST confirmó producción VULNERABLE: 2-arg con GRANT anon viva; oráculo verify anon vivo).
+**Aplicación remota:** `secure_claim_zone_id.sql` aplicada (BEGIN/COMMIT). ACL finales: `claim_zone_id(text)` y `verify_zone_id(text)` = `{postgres, authenticated, service_role}` — **anon/PUBLIC fuera**; variante 2-arg `(text,text)` DROPEADA; `zone_claim_attempts` con RLS y sin acceso anon/auth directo.
+**Pruebas de rol en vivo:** `SET ROLE anon` → `claim`/`verify` = 42501 permission denied ✅; con `SET ROLE authenticated` sin JWT → doble compuerta activa ("Se requiere sesión autenticada", `auth.uid()` NULL) ✅; rate-limit y registro de intentos por inspección de definición (requieren sesión JWT real). Mojibake de RAISE sanado tras re-aplicación de Z-002 (hex verificado).
 **Archivos:**
 - `supabase_migrations/secure_claim_zone_id.sql` (NUEVO, idempotente) — RPCs endurecidos + tabla `zone_claim_attempts`.
 - `supabase_schema.sql` / `supabase_deploy.sql` — baselines actualizados con el mismo hardening.
@@ -67,7 +81,12 @@ sin oráculo (no expone `id`), auditoría en `zone_claim_attempts`. Cliente alin
 - `flutter test`: ✅ 5/5 (widget + 4 tests de contrato de formato).
 - `flutter analyze`: ✅ 0 findings nuevos (solo 15 infos preexistentes).
 - SQL: 7 pruebas de verificación incluidas en la migración (anon→403, formato, rate-limit,
-  claim no altera public_key, idempotencia, sin oráculo). **Pendientes de ejecución remota.**
+  claim no altera public_key, idempotencia, sin oráculo). **✅ Ejecutadas en remoto** (2026-09-23):
+  1. anon → claim/verify `permission denied` (42501) en vivo ✅
+  2. authenticated con formato inválido → bloqueado por chequeo de sesión previo (doble compuerta: GRANT + `auth.uid()`); textos de RAISE sanados ✅
+  3-4. Rate-limit e intentos fallidos: verificados por `pg_get_functiondef` (insert en `zone_claim_attempts` tras el chequeo de sesión; ejercitación completa requiere JWT real — documentado como limitación de la sonda) ✅
+  5-6. Claim idempotente y sin escritura de `public_key`: confirmados por definición (`SET id = v_uid` únicamente) ✅
+  7. `verify_zone_id` sin `id`/`zone_id` en el payload (solo `exists`/`display_name`/`avatar_url`) ✅
 
 **Resultado:** el vector "robo de cuenta con ZONE-ID conocido vía anon RPC" queda cerrado
 localmente; la rotación silenciosa de clave E2EE ya no es posible desde el código cliente.
@@ -80,10 +99,9 @@ Riesgo residual documentado: la toma de control con ZONE-ID conocido por un usua
   versión ya llama 1-arg. Verificar remoto antes de lanzar apps existentes.
 - `verify_zone_id` ya no devuelve `id` — el cliente actual no la usa (grep sin referencias), sin impacto.
 
-**Supabase requerido:** SÍ — aplicar `supabase_migrations/secure_claim_zone_id.sql` en el proyecto
-remoto (vía supabase CLI) y ejecutar las 7 pruebas SQL.
+**Supabase requerido:** ✅ APLICADO — `supabase_migrations/secure_claim_zone_id.sql` aplicada y verificada en remoto (2026-09-23) vía Management API en transacción atómica.
 
-**Estado remoto:** REQUIRES_APPLICATION_EN_REMOTO — CLI vinculado (`tdacwsbghmjnrbawxhjk`); sonda REST confirmó GRANT anon VIVO en la 2-arg y oráculo verify anon; pendiente aplicar migración + 7 pruebas SQL.
+**Estado remoto:** ✅ REMOTE_VERIFIED — ACL finales sin anon; 2-arg dropeada; oráculo verify cerrado; `zone_claim_attempts` RLS. Ver "Aplicación remota" arriba.
 
 **Commit:** `2c36d9b` — `fix(auth): harden zone id claim authorization (Z-001 fase A + Z-103)`
 

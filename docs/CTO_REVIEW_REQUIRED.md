@@ -7,7 +7,10 @@
 > **Hallazgo:** Z-001 — `claim_zone_id` inseguro. **Hallazgo:** Z-002 — RLS `users`.
 > **Fecha:** 2026-09-22 · **Estado:** ✔️ Z-001 DECIDIDO (Opción 3) → **Fase A implementada localmente** · Fase B pendiente de diseño.
 > **Fecha:** 2026-09-23 · **Estado:** ✔️ Z-002 DECIDIDO (A estricto + vista `v_profile`) → implementado localmente.
-> **⚠️ Remoto (sonda 2026-09-23):** producción VULNERABLE (2-arg GRANT anon viva; oráculo verify anon) → migraciones 1.2 y 1.3 pendientes de APLICAR en remoto.
+> **⚠️ Remoto (sonda 2026-09-23):** producción VULNERABLE (2-arg GRANT anon viva; oráculo verify anon).
+> **✅ Remoto (2026-09-23, APLICADO + VERIFICADO):** migraciones 1.2 (Z-001/Z-103) y 1.3 (Z-002) aplicadas en
+> transacciones atómicas vía Management API y verificadas en vivo. Detalle y evidencia en `PHASE_1_PROGRESS.md`
+> y en el §8.
 
 ## 0. Resolución del CTO (2026-09-22)
 
@@ -173,8 +176,9 @@ El filtrado de visibilidad vivía solo en el cliente.
 - `verify_zone_id` gating de `avatar_url` por `avatar_is_public` (coherencia con A).
 
 **Pendientes nuevos para revisión del CTO (NO aplicadas en este lote):**
-1. **Aplicar en remoto** `secure_claim_zone_id.sql` (Fase 1.2) y luego `z002_profile_visibility.sql` (Fase 1.3)
-   vía **SQL Editor** (recomendado; sin Docker local no funciona `db diff`) o `supabase db push` con la password de la DB.
+1. ~~**Aplicar en remoto** `secure_claim_zone_id.sql` (Fase 1.2) y luego `z002_profile_visibility.sql` (Fase 1.3)~~
+   ~~vía **SQL Editor** (recomendado; sin Docker local no funciona `db diff`) o `supabase db push` con la password de la DB.~~
+   **✅ APLICADO + VERIFICADO en remoto (2026-09-23)** vía **Management API con PAT** (mismo motor que el SQL Editor). Detalle abajo.
 2. **Drift SOLO-REMOTO:** `get_active_users_for_radar`, `update_bt_activity`, `get_radar_stats` existen en producción
    pero no tienen definición canónica en el repo → requiere dump (`\df` + bodies) para consolidarlas (Z-109).
 3. **`bio`: no existe en remoto** — columna a añadir SOLO cuando la feature de bio avance (pull-sync ya no la consulta).
@@ -182,30 +186,49 @@ El filtrado de visibilidad vivía solo en el cliente.
    No se toca en este lote (batch propio); asignar prioridad (es el próximo conductor de fugas).
 5. **Z-111 (`profiles` bucket público):** sigue abierto (avatares "privados" descargables por URL). Depende del gating de Z-002 ya implementado.
 
+**Incidente de encoding durante la aplicación remota (resuelto, requiere conocimiento del CTO):**
+- El 1º intento de aplicar Z-002 envió la migración con **doble codificación** (Windows PowerShell 5.1 usa
+  ANSI/cp1252 en `Get-Content` para archivos sin BOM → `ú` se convirtió en `Ãº`, y así con todos los acentos).
+  Consecuencia: `DROP POLICY IF EXISTS "Ver perfiles públicos"` **no impactó** (no-op) → la policy histórica
+  siguió viva exponiendo todas las columnas de perfiles ajenos a `authenticated`, y los textos de RAISE de
+  claim/verify quedaron mojibake en la DB.
+- **Corrección aplicada (bajo supervisión, transacción atómica):**
+  1. Aplicador con **lectura UTF-8 estricto** (`[IO.File]::ReadAllText`, `--data-binary`, sin BOM).
+  2. Migración Z-002 endurecida: bloque `DO` que elimina **cualquier política SELECT ajena** en `users`
+     salvo la self-scoped (`auth.uid() = id`) — robusto ante variantes de nombre/normalización Unicode —
+     + `REVOKE ALL ON v_profile FROM authenticated` (default privileges de Supabase otorgaban `arwdDxtm` a objetos nuevos;
+     queda solo `SELECT`) + `DROP FUNCTION claim_zone_id(text)` previo al cambio void→jsonb (Postgres 42P13).
+  3. Re-aplicación OK: self-scope verificado (authenticated sin sesión ve 0 filas ajenas), mojibake sanado
+     (hex del RAISE = `73657369c3b36e20`).
+
 ---
 
 ## Estado
 
 **✔️ DECISIÓN CTO REGISTRADA (Opción 3). Fase A implementada y verificada localmente
-(Z-001 + Z-103). Estado remoto: REQUIRES_APPLICATION_EN_REMOTO — sonda REST 2026-09-23
-confirmó GRANT anon VIVO (2-arg) y oráculo verify anon en producción.**
+(Z-001 + Z-103). ✅ REMOTE_APPLIED + VERIFIED (2026-09-23): migración 1.2 aplicada en
+transacción atómica vía Management API con PAT. ACL finales sin anon; 2-arg dropeada;
+oráculo verify cerrado.**
 
 - Migración: `supabase_migrations/secure_claim_zone_id.sql` (idempotente).
 - Baselines actualizados: `supabase_schema.sql`, `supabase_deploy.sql`.
 - Cliente: `lib/services/zone_id_service.dart` (sin `p_public_key`; sin rotación silenciosa;
   preserva `public_key` archivada; `isValidZoneIdFormat` fail-fast) + `test/zone_id_format_test.dart`.
 - Verificación local: `flutter test` 5/5, `flutter analyze` 0 nuevos.
-- Verificación remota: CLI enlazado (`tdacwsbghmjnrbawxhjk`); Docker local no disponible para
-  `db diff` → aplicar migración por SQL Editor y ejecutar las 7 pruebas SQL.
+- Verificación remota: pruebas de rol en vivo (anon→42501 en claim/verify; doble compuerta OK).
+  Detalle en `PHASE_1_PROGRESS.md` (FASE 1.2).
 
-**✔️ DECISIÓN CTO Z-002 REGISTRADA (A estricto + vista `v_profile`). Implementada y verificada
-localmente (FASE 1.3). Estado remoto: REQUIRES_REMOTE_VERIFICATION (aplicar `z002_profile_visibility.sql`).**
+**✔️ DECISIÓN CTO Z-002 REGISTRADA (A estricto + vista `v_profile`). ✅ REMOTE_APPLIED + VERIFIED
+(2026-09-23): migración 1.3 aplicada y verificada tras corregir un incidente de encoding (ver §8).**
 
-- Migración: `supabase_migrations/z002_profile_visibility.sql` (idempotente, builds sobre 1.2).
+- Migración: `supabase_migrations/z002_profile_visibility.sql` (idempotente, builds sobre 1.2;
+  enmendada con DO-block de limpieza de policies, REVOKE de default privileges en v_profile y
+  DROP previo a cambio de tipo de retorno).
 - Baselines: `supabase_schema.sql`, `supabase_deploy.sql`; cliente: `zone_id_service`,
   `supabase_service` (lecturas de terceros → `v_profile`), `public_profile_sheet` (sin bypass mesh).
 - Verificación local: `flutter test` 5/5, `flutter analyze` 0 nuevos.
-- Pendientes remotos y de diseño en la sección 8.
+- Verificación remota: self-scope negativo (0 filas ajenas), 3 policies self-scoped, v_profile
+  SELECT-only, mojibake sanado. Pendientes restantes en la sección 8.
 
 Archivos afectados por la Fase B futura: `lib/services/zone_id_service.dart`,
 `supabase_migrations/<nueva>` (auth_public_key + challenge + recovery), docs.

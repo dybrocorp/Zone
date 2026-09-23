@@ -150,9 +150,30 @@ Riesgo residual documentado: la toma de control con ZONE-ID conocido por un usua
 
 | Fase | Bug | Estado |
 |------|-----|--------|
-| 1.3 | Z-002 — corregir exposición RLS de `users` | ✅ FIXED_LOCAL (ver sección superior) |
-| 1.4 | Z-003 — detener mesh en claro y diseñar protocolo seguro | OPEN |
+| 1.3 | Z-002 — corregir exposición RLS de `users` | ✅ REMOTE_APPLIED + VERIFIED (ver sección superior) |
+| 1.4 | Z-003 — detener mesh en claro y diseñar protocolo seguro | 🟡 IN_PROGRESS — SOLO DISEÑO (decisión CTO §9 de `docs/CTO_REVIEW_REQUIRED.md`); código intacto |
 | 1.5 | Z-007 — implementar verdadero offline-first en chat | OPEN |
 
-> **FASE 1.2 (Z-001 + Z-103) completada** — ver sección superior.
-> Al completar 1.1–1.5 se emitirá `docs/PHASE_1_COMPLETION_REPORT.md` antes de continuar con los P1 restantes.
+## Operativos cerrados (2026-09-23, mismo checkpoint remoto)
+
+- **Acceso remoto:** Management API vía PAT (mismo motor del SQL Editor) — migraciones 1.2/1.3 aplicadas
+  en transacciones atómicas y verificadas; PAT conservado hasta el fin de FASE 1 (decisión CTO).
+- **Drift SOLO-REMOTO (Z-109):** dump read-only completo de funciones `public.*` guardado en
+  `docs/REMOTE_DRIFT_SNAPSHOT_2026-09-23.sql` (incluye los RPC drift con GRANT anon → ver
+  `CTO_REVIEW_REQUIRED` §10 para el batch Z-109 pendiente).
+- **Trigger `updated_at`:** confirmado EXISTENTE en remoto (`users_updated_at_trigger` BEFORE UPDATE);
+  `supabase_schema.sql` / `supabase_deploy.sql` alineados con la definición (solo baseline, sin cambio remoto).
+- **`supabase/` (CLI):** añadido a `.gitignore` (config local del CLI, no va al repo).
+- **Incidente de encoding** durante la aplicación remota de Z-002: documentado en `CTO_REVIEW_REQUIRED` §8
+  con la corrección (DO-block anti-drift de policies, REVOKE de default privileges en `v_profile`,
+  lectura UTF-8 estricta en el aplicador).
+
+## FASE 1.4 — Z-003 · Mesh en claro → diseño en curso (SIN implementar)
+
+**ID:** Z-003 · **Estado:** IN_PROGRESS (fase de DISEÑO; CTO decisión pendiente en `CTO_REVIEW_REQUIRED` §9).
+**Regla:** cambio de protocolo mesh/cripto requiere decisión explícita del CTO — el código NO se ha tocado.
+**Evidencia recolectada:** `sendMeshMessage` construye el paquete con `'text'` + `'isEncrypted': false`
+antes del cifrado (1016-1018); falla abierta si no hay `sessionKey` o el cifrado lanza (catch 1036-1038
+solo loguea); relay en claro a toda la malla (1057-1111); la llave de sesión solo existe tras
+`profile_exchange` (905-917). **Opciones propuestas (1 fail-closed, 2 bootstrap, 3 handshake Ed25519
+acoplado a Fase B):** ver §9. **Checkpoint:** 4 preguntas de decisión al CTO antes de codificar.

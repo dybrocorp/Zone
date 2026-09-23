@@ -232,3 +232,72 @@ oráculo verify cerrado.**
 
 Archivos afectados por la Fase B futura: `lib/services/zone_id_service.dart`,
 `supabase_migrations/<nueva>` (auth_public_key + challenge + recovery), docs.
+
+---
+
+## 9. Z-003 — Mesh en claro · Solicitud de DECISIÓN de diseño (FASE 1.4, 2026-09-23)
+
+> Regla del protocolo: cualquier cambio que afecte criptografía o protocolo mesh NO se implementa
+> sin decisión explícita del CTO. Este documento presenta el diseño; **no se ha tocado código**.
+
+**Evidencia (código, solo lectura — `lib/services/nearby_service.dart`):**
+- `sendMeshMessage` (1008-1055): construye el paquete con `'text': <texto>` y `'isEncrypted': false`
+  (1016-1018) **antes** de intentar cifrar. Si no hay `sessionKey` → va tal cual; si el cifrado lanza →
+  el `catch` (1036-1038) solo loguea y **el paquete sigue saliendo en claro** por flood/relay.
+- `_handleMeshMessage` (1057-1111): relay a saltos intermedios aunque no sea el destino → en la
+  práctica un mensaje en claro es visible en **toda la malla**.
+- `_processIncomingMeshMessage` (1113-1156): `isEncrypted == false` → texto directo (1118-1119).
+- La llave de sesión **solo se deriva al recibir** `profile_exchange` con la clave pública del peer
+  (`_handleProfileExchange` 905-917). Sin intercambio de perfil previo → NO hay llave → hoy se envía en claro.
+- Primitivas existentes (reutilizar, NO criptografía nueva): X25519 ECDH (`generateKeyPair`,
+  `deriveSessionKey`), AEAD `encryptMessage`/`decryptMessage` (SecretKey + nonce + mac), Secure Storage.
+
+**Opciones de diseño (pendiente decisión CTO):**
+
+- **Opción 1 — FAIL-CLOSED mínimo (recomendada para FASE 1.4):**
+  - Emisor: si no hay `sessionKey` o el cifrado falla → **NO enviar**; emitir evento
+    "clave no disponible" y opcionalmente encolar el mensaje localmente para reintento
+    tras derivar llave. Nada en claro toca el cable.
+  - Relay/receptor: `_handleMeshMessage` reenvía solo paquetes `isEncrypted == true`
+    (si no, descarta y loguea); el receptor mantiene el placeholder actual sin llave.
+  - Cero cripto nuevo. En la práctica el radar/descubrimiento ya intercambia perfiles →
+    los pares visibles tendrán llave derivada.
+- **Opción 2 — Bootstrap de llave bajo demanda:** si no hay llave, el emisor envía su
+  `profile_exchange` y pide el perfil del destino antes de cifrar. Más fluido pero requiere
+  perfil del otro (que solo existe si se vieron antes → no resuelve el primer contacto
+  con desconocidos y añade mensajes/superficie).
+- **Opción 3 — Handshake completo (evolución con Fase B de Z-001):** autenticar endpoints
+  con challenge/nonce firmado por identidad Ed25519 (las claves actuales X25519 no firman →
+  depende de la identidad de firma de la Fase B) + llave derivada por par + solo cifrado.
+  Correcto a medio plazo; NO bloquear FASE 1.4 con esto.
+
+**Decisiones pedidas al CTO:**
+1. ¿Opción 1 para FASE 1.4? (fail-closed, sin cripto nuevo, reutilizando X25519+AEAD existentes)
+2. UX en emisor sin llave: ¿encolar con reintento automático o descartar con aviso al usuario?
+3. ¿El relay debe descartar paquetes no cifrados (`isEncrypted != true`) incluso de peers conocidos?
+4. ¿Incluir en el mismo lote la prueba unitaria (no hay llave → no se envía; relay descarta en claro)?
+
+## 10. Hallazgos nuevos del dump remoto (2026-09-23) — RPCs drift con GRANT anon
+
+> Snapshot completo read-only en `docs/REMOTE_DRIFT_SNAPSHOT_2026-09-23.sql` (Z-109, consolidación pendiente).
+
+**Funciones SOLO-REMOTO con `GRANT EXECUTE TO anon` y SECURITY DEFINER sin gate de sesión:**
+1. **`get_active_users_for_radar(p_limit default 1000)`** — devuelve `id, zone_id, display_name,
+   avatar_url, public_key, stealth_mode` de usuarios activos 24 h. **El anon puede enumerar usuarios
+   activos y sus claves públicas por PostgREST** (fuga nueva; además expone `avatar_url` sin gating
+   de `avatar_is_public`). → Requiere batch propio (REVOKE anon + gate + gating + consolida en canon).
+2. **`get_radar_stats()`** — métricas agregadas (total_users, activos 24 h, tokens, encuentros) → fuga P2.
+3. **`refresh_active_users_cache()`** — anon puede disparar `REFRESH MATERIALIZED VIEW CONCURRENTLY`
+   → abuso/DoS del backend.
+4. **`auto_cleanup_tokens()`** — anon puede ejecutar el cleanup → innecesario; REVOKE.
+5. **`update_bt_activity()`** — usa `auth.uid()` (no filtra a anon) pero GRANT anon innecesario; REVOKE.
+6. **`resolve_bt_token(p_token)`** — GRANT anon (Z-104, ya documentado; pendiente).
+7. **`update_users_updated_at()`** (trigger function) — GRANT `PUBLIC`; REVOKE PUBLIC (defensivo).
+
+**Trigger remoto confirmado:** `users_updated_at_trigger` EXISTE en remoto sobre `users`
+(`update_users_updated_at()` BEFORE UPDATE) → Z-205/Z-109 parcialmente cubierto; baselines
+`supabase_schema.sql`/`deploy.sql` alineados con la definición (commit de esta tanda).
+**`updated_at` en el SQL Editor creado por postgres hereda default privileges; los baselines ya lo cubren.**
+
+→ **Pendiente de decisión:** aprobar un batch Z-109 (consolidar drift + REVOKE anon/PUBLIC en los RPCs
+drift + alinear avatares con gating) tras FASE 1.5, sin mezclarlo con 1.4.

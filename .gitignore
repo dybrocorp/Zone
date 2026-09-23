@@ -41,3 +41,6 @@ lib/config/*.dart
 ios/Pods/
 ios/.symlinks/
 macos/Pods/
+
+# Supabase CLI (local tooling state: config.toml con project ref; no va al repo)
+supabase/

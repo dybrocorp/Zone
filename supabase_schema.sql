@@ -32,6 +32,20 @@ CREATE TABLE IF NOT EXISTS public.users (
     updated_at TIMESTAMPTZ DEFAULT now()   -- Última modificación (radar/pull-sync)
 );
 
+-- Trigger: actualiza updated_at en cada UPDATE (existente en remoto 2026-09-23; alineado en baseline)
+CREATE OR REPLACE FUNCTION public.update_users_updated_at()
+RETURNS trigger LANGUAGE plpgsql
+AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS users_updated_at_trigger ON public.users;
+CREATE TRIGGER users_updated_at_trigger BEFORE UPDATE ON public.users
+    FOR EACH ROW EXECUTE FUNCTION update_users_updated_at();
+
 -- ============================================================
 -- 2. TOKENS BLUETOOTH TEMPORALES (seguridad del radar)
 -- El token efímero se comparte via Nearby Connections, NO el zone_id

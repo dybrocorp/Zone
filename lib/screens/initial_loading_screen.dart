@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/connectivity_service.dart';
 import '../services/isar_service.dart';
 import '../services/p2p_security_service.dart';
 import '../services/sync_service.dart';
+import '../utils/env_config.dart';
 import 'auth_screen.dart';
 
 class InitialLoadingScreen extends StatefulWidget {
@@ -29,8 +29,24 @@ class _InitialLoadingScreenState extends State<InitialLoadingScreen> {
     debugPrint('[Startup] Iniciando a las ${start.toIso8601String()}');
 
     try {
-      // 0. Variables de entorno
-      await dotenv.load(fileName: '.env');
+      // 0. Configuración de Supabase:
+      //    compile-time `--dart-define-from-file=.env` (producción) o
+      //    fallback dev con flutter_dotenv. La ausencia de configuración
+      //    NO crashea: se muestra un mensaje claro.
+      final config = await EnvConfig.resolve();
+      final supabaseUrl = config.url;
+      final supabaseAnonKey = config.anonKey;
+      if (supabaseUrl == null || supabaseAnonKey == null) {
+        debugPrint('[Startup] Configuración de Supabase ausente');
+        if (mounted) {
+          setState(() {
+            _loadingText =
+                'Falta la configuración del servidor. Reinstala la app.';
+            _progress = 0.0;
+          });
+        }
+        return;
+      }
 
       // 1. Conectividad (rápida, no requiere I/O)
       setState(() { _loadingText = 'Verificando red...'; _progress = 0.15; });
@@ -47,8 +63,8 @@ class _InitialLoadingScreenState extends State<InitialLoadingScreen> {
       // 4. Supabase
       setState(() { _loadingText = 'Conectando con la nube...'; _progress = 0.8; });
       await Supabase.initialize(
-        url: dotenv.env['SUPABASE_URL']!,
-        anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
+        url: supabaseUrl,
+        anonKey: supabaseAnonKey,
       );
       debugPrint('[Startup] Supabase OK (${DateTime.now().difference(start).inMilliseconds}ms)');
 

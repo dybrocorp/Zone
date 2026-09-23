@@ -43,8 +43,12 @@ cd Zone
 # Get dependencies
 flutter pub get
 
-# Run the app
-flutter run
+# Supabase config is injected at compile time (never bundled as an asset).
+# Copy .env.example to .env (or reuse your existing .env), then run:
+flutter run --dart-define-from-file=.env
+
+# Production builds
+flutter build apk --dart-define-from-file=.env
 ```
 
 ### Code Style
@@ -127,8 +131,12 @@ cd Zone
 # Obtener dependencias
 flutter pub get
 
-# Ejecutar la aplicación
-flutter run
+# La configuración de Supabase se inyecta en compilación (nunca se empaqueta
+# como asset). Copia .env.example a .env (o reutiliza tu .env existente):
+flutter run --dart-define-from-file=.env
+
+# Builds de producción
+flutter build apk --dart-define-from-file=.env
 ```
 
 ### Estilo de Código

@@ -46,11 +46,24 @@ El uso de esta plataforma está sujeto a los siguientes documentos legales de DY
 
 ## ⚙️ Instalación y Uso
 
+> **Configuración de Supabase:** la app lee `SUPABASE_URL` y `SUPABASE_ANON_KEY`
+> como valores de compilación (`--dart-define`). No se empaqueta ningún archivo
+> `.env` como asset.
+
 ```bash
 git clone https://github.com/dybrocorp/Zone.git
 cd Zone
+
+# 1. Crear el archivo .env (ver .env.example) o reutilizar el existente
+cp .env.example .env 2>nul || echo "Usa el .env existente"
+
+# 2. Ejecutar inyectando la configuración (recomendado):
 flutter pub get
-flutter run
+flutter run --dart-define-from-file=.env
+
+# 3. Build de producción:
+flutter build apk --dart-define-from-file=.env
+flutter build appbundle --dart-define-from-file=.env  # Google Play
 ```
 
 ---

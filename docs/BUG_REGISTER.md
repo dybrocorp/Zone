@@ -15,10 +15,10 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Impacto:** Cualquier usuario autenticado que conozca (o adivine) un `zone_id` de 8 caracteres A-Z0-9 (~41 bits, sin verificación) puede **robar la cuenta y el perfil completo** de la víctima. El login acepta únicamente este código como credencial.
 - **Causa raíz:** Diseño de "handover de ID" sin prueba de posesión criptográfica; firma cliente/servidor divergente no validada; GRANT innecesario a `anon`.
 - **Riesgo:** Crítico (compromiso total de cuenta, robo de identidad, spam/abuso).
-- **Solución:** (a) Quitar `GRANT ... TO anon`. (b) Rediseñar a challenge/response firmado con la clave privada local: `claim` solo si el cliente firma un nonce con la clave cuya pública coincide con `users.public_key` del `zone_id`; o vinculación por token BT efímero. (c) Sincronizar la firma del RPC (un único parámetro) con el cliente. (d) Poner pruebas de fuerza bruta (rate limit) y añadir entropía al ID.
-- **Dependencias:** Z-103 (verify_zone_id), Z-207 (ensureAuth), ¿rotación de claves.
-- **Prueba:** Unit test de contrato SQL + test de integración: dos usuarios, B intenta `claim_zone_id` de A sin poseer la clave → debe fallar. Test de firma de RPC.
-- **Estado:** ABIERTO — FASE 1 pendiente.
+- **Solución (FASE 1.2 aplicada — Opción 3 Fase A, decisión CTO):** (a) `REVOKE` de `anon`/`PUBLIC` en `claim_zone_id` y `verify_zone_id`; solo `authenticated`. (b) `claim_zone_id` endurecido: formato estricto `^ZONE-[A-Z0-9]{8}$`, rate-limit (máx 5 fallos/15 min por zone_id, tabla `zone_claim_attempts`), **ya NO escribe `public_key`**, idempotente y auditado. (c) Cliente: las llamadas al RPC ya no envían `p_public_key`; se detiene la rotación silenciosa de clave en `ensureAuth` (276-302) y `checkAndFixRegistration` (388-391); `updateProfile` preserva la clave archivada (436-455); validación fail-fast `isValidZoneIdFormat`. (d) Fase B (siguiente iteración, pendiente de CTO): identidad de firma **Ed25519** (las claves actuales son X25519/ECDH y no firman) + códigos de recuperación + `update_public_key` firmado + transfer firmado.
+- **Dependencias:** Z-103 (verify_zone_id, mismo lote), Z-207 (ensureAuth).
+- **Prueba:** ✅ `flutter test` 5/5 (incluye `test/zone_id_format_test.dart`); ✅ `flutter analyze` sin findings nuevos; SQL con 7 pruebas de verificación documentadas en `supabase_migrations/secure_claim_zone_id.sql` (anon→403, formato, rate-limit, claim no altera public_key, idempotencia, sin oráculo).
+- **Estado:** FIXED_LOCAL — **REQUIRES_REMOTE_VERIFICATION** (migración `supabase_migrations/secure_claim_zone_id.sql` + baselines `schema`/`deploy` actualizados; aplicar en remoto vía supabase CLI y ejecutar las 7 pruebas SQL).
 
 ### Z-002 · RLS SELECT de `users` filtra TODAS las columnas a cualquier autenticado
 - **Severidad:** P0
@@ -139,10 +139,10 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Impacto:** Confirmación de existencia y fuga de uid de cuentas; base para robo (Z-001) y para targeting.
 - **Causa raíz:** GRANT anon + SECURITY DEFINER innecesario; función muerta.
 - **Riesgo:** Medio-alto.
-- **Solución:** Revocar a anon; eliminar la función o integrarla en el flujo de login con prueba de posesión; nunca exponer `id` de terceros.
+- **Solución (FASE 1.2 aplicada — mismo lote que Z-001):** `verify_zone_id` endurecido: `REVOKE` de `anon`/`PUBLIC` (solo `authenticated`), formato estricto, rate-limit compartido (`zone_claim_attempts`) y **ya no expone `id` ni `zone_id`** (devuelve `{exists, display_name, avatar_url}`). La función queda disponible solo para el flujo login autenticado.
 - **Dependencias:** Z-001.
-- **Prueba:** SQL: anon consulta → 403/denegado.
-- **Estado:** ABIERTO — FASE 1 pendiente.
+- **Prueba:** ✅ `flutter analyze` sin findings nuevos; SQL: prueba 1 y 7 del bloque de verificación de `supabase_migrations/secure_claim_zone_id.sql`.
+- **Estado:** FIXED_LOCAL — **REQUIRES_REMOTE_VERIFICATION** (aplicar migración en remoto vía supabase CLI y verificar 403 para anon).
 
 ### Z-104 · `resolve_bt_token` expuesto a anon; `used` nunca se marca
 - **Severidad:** P1

@@ -8,6 +8,51 @@
 
 ---
 
+## FASE 1.2 — Z-001 (+ Z-103) · Proteger `claim_zone_id` (decisión CTO: Opción 3, Fase A)
+
+**ID:** Z-001 · Z-103
+**Estado:** FIXED_LOCAL → REQUIRES_REMOTE_VERIFICATION (aplicar migración en Supabase vía CLI)
+**Archivos:**
+- `supabase_migrations/secure_claim_zone_id.sql` (NUEVO, idempotente) — RPCs endurecidos + tabla `zone_claim_attempts`.
+- `supabase_schema.sql` / `supabase_deploy.sql` — baselines actualizados con el mismo hardening.
+- `lib/services/zone_id_service.dart` — claim sin `p_public_key`; fin de rotación silenciosa (`ensureAuth`, `checkAndFixRegistration`); `updateProfile` preserva `public_key` archivada; `isValidZoneIdFormat` fail-fast.
+- `test/zone_id_format_test.dart` (NUEVO) — contrato de formato compartido backend/cliente.
+- Docs: `BUG_REGISTER` (Z-001, Z-103), `REMEDIATION_PLAN` (filas 2, 10), `CTO_REVIEW_REQUIRED` (decisión + Fase B).
+
+**Cambio:** ver sección 0 de `docs/CTO_REVIEW_REQUIRED.md`. Fase A = controles de autorización:
+REVOKE anon/PUBLIC (solo `authenticated`), formato estricto `^ZONE-[A-Z0-9]{8}$`, rate-limit
+5 fallos/15 min por zone_id, `claim_zone_id` ya NO escribe `public_key`, `verify_zone_id`
+sin oráculo (no expone `id`), auditoría en `zone_claim_attempts`. Cliente alineado: elimina
+`p_public_key` de las 2 llamadas al RPC y deja de sobrescribir la identidad E2EE archivada.
+
+**Pruebas ejecutadas:**
+- `flutter test`: ✅ 5/5 (widget + 4 tests de contrato de formato).
+- `flutter analyze`: ✅ 0 findings nuevos (solo 15 infos preexistentes).
+- SQL: 7 pruebas de verificación incluidas en la migración (anon→403, formato, rate-limit,
+  claim no altera public_key, idempotencia, sin oráculo). **Pendientes de ejecución remota.**
+
+**Resultado:** el vector "robo de cuenta con ZONE-ID conocido vía anon RPC" queda cerrado
+localmente; la rotación silenciosa de clave E2EE ya no es posible desde el código cliente.
+Riesgo residual documentado: la toma de control con ZONE-ID conocido por un usuario
+`authenticated` persiste hasta la Fase B (posesión por firma Ed25519 + códigos de recuperación).
+
+**Riesgos:**
+- Funciones en producción incompatibles (si el remoto tiene la variante 2-arg) → la migración
+  hace `DROP FUNCTION claim_zone_id(text, text)` y crea la 1-arg endurecida; el cliente nueva
+  versión ya llama 1-arg. Verificar remoto antes de lanzar apps existentes.
+- `verify_zone_id` ya no devuelve `id` — el cliente actual no la usa (grep sin referencias), sin impacto.
+
+**Supabase requerido:** SÍ — aplicar `supabase_migrations/secure_claim_zone_id.sql` en el proyecto
+remoto (vía supabase CLI) y ejecutar las 7 pruebas SQL.
+
+**Estado remoto:** REQUIRES_REMOTE_VERIFICATION (pendiente token CLI + project ref).
+
+**Commit:** `2c36d9b` — `fix(auth): harden zone id claim authorization (Z-001 fase A + Z-103)`
+
+**Checkpoint:** ✅ FASE 1.2 completada y verificada localmente. Siguiente: FASE 1.3 — Z-002 (RLS `users`).
+
+---
+
 ## FASE 1.1 — Z-006 · Recuperar el arranque de forma segura
 
 **ID:** Z-006
@@ -49,9 +94,9 @@
 
 | Fase | Bug | Estado |
 |------|-----|--------|
-| 1.2 | Z-001 — proteger `claim_zone_id` (SECURITY DEFINER, GRANT anon, apropiación vía ZONE-ID) | OPEN |
 | 1.3 | Z-002 — corregir exposición RLS de `users` | OPEN |
 | 1.4 | Z-003 — detener mesh en claro y diseñar protocolo seguro | OPEN |
 | 1.5 | Z-007 — implementar verdadero offline-first en chat | OPEN |
 
-Al completar 1.1–1.5 se emitirá `docs/PHASE_1_COMPLETION_REPORT.md` antes de continuar con los P1 restantes.
+> **FASE 1.2 (Z-001 + Z-103) completada** — ver sección superior.
+> Al completar 1.1–1.5 se emitirá `docs/PHASE_1_COMPLETION_REPORT.md` antes de continuar con los P1 restantes.

@@ -11,7 +11,7 @@
 | # | Bug | Acción | Depende de | Prueba de éxito |
 |---|-----|--------|------------|-----------------|
 | 1 | **Z-006** | ✅ **HECHO (FASE 1.1):** migrado a `--dart-define`/`String.fromEnvironment` (nuevo `lib/utils/env_config.dart`) con fallback dev tolerante; sin `!`; arranque degradable si falta config. | — | ✅ `flutter test` pasa y el log ya no muestra `[Startup] ERROR CRÍTICO`; ✅ sonda con `--dart-define-from-file=.env` confirma inyección; ⏳ falta build release en dispositivo |
-| 2 | **Z-001** | Rediseñar `claim_zone_id`: challenge/response firmado con la clave privada (Ed25519) validando contra `users.public_key`; eliminar GRANT anon; alinear firma del RPC con el cliente (`zone_id_service.dart`); rate-limit y validar formato ZONE-ID (regex). | Z-103, Z-207 | Test SQL: robo de ID sin la clave → denegado; login legítimo → OK |
+| 2 | **Z-001** | ✅ **FASE A HECHA (FASE 1.2):** REVOKE anon; claim solo authenticated con formato+rate-limit (`zone_claim_attempts`), sin tocar `public_key`; cliente sin `p_public_key` y sin rotación silenciosa (`zone_id_service.dart`); fail-fast de formato. **FASE B pendiente de CTO:** identidad Ed25519 + códigos de recuperación + `update_public_key` firmado (las claves actuales son X25519 y no firman). | Z-103, Z-207 | ✅ `flutter test` 5/5; ✅ analyze 0 nuevos; SQL: 7 pruebas de verificación en `supabase_migrations/secure_claim_zone_id.sql`. Remoto: REQUIRES_REMOTE_VERIFICATION |
 | 3 | **Z-002** | Reemplazar SELECT RLS de `users` por RPC/vista que sirva columnas filtradas server-side (handles null si `*_visible=false`; ocultar `gallery_photos` a terceros; excluir `blocked_users`); quitar el filtrado solo-cliente. | — | PostgREST: 2º usuario autenticado NO ve columna "privada" |
 | 4 | **Z-003** | Mesh fail-closed: prohibir envío sin llave de sesión; flujo de solicitud/derivación de llave previo. | Z-004, Z-101 | Unit: `sendMeshMessage` sin llave no transmite |
 | 5 | **Z-004** | Handshake firmado Ed25519 + challenge; atadura endpoint↔identidad; rechazo de perfiles/paquetes no firmados. | — | Peer con `source` falsificado → rechazado |
@@ -24,7 +24,7 @@
 | # | Bug | Acción | Depende de | Prueba |
 |---|-----|--------|-----------|--------|
 | 9 | **Z-104** | `resolve_bt_token`: GRANT solo `authenticated`; marcar/eliminar token tras resolución (idempotente); expiración corta. | — | 2ª resolución del mismo token → NULL |
-| 10 | **Z-103** | `verify_zone_id`: revocar anon; integrar en login únicamente tras prueba de posesión; no devolver `id`. | Z-001 | anon → 403 |
+| 10 | **Z-103** | ✅ **HECHO (FASE 1.2, mismo lote):** `verify_zone_id` solo `authenticated`, formato+rate-limit, sin exponer `id`. | Z-001 | ✅ `flutter analyze` 0 nuevos; SQL pruebas 1/7 migración `secure_claim_zone_id.sql`. Remoto: REQUIRES_REMOTE_VERIFICATION (anon → 403) |
 | 11 | **Z-105** | Trackear y aplicar `add_message_delivery_status.sql`; añadir policy UPDATE para `messages`; invocar receipts desde el chat; RPC `mark_messages_read` con SECURITY DEFINER acotado al lector. | Z-206 | B lee → A ve "leído" |
 | 12 | **Z-106** | Aplicar `supabase_delete_fix.sql` (policy DELETE matches) y consolidarlo en deploy. | — | Eliminar match funciona y persiste |
 | 13 | **Z-107** | IDs locales estables (`client_id`) + upsert idempotente en flush; implementar pull de mensajes por cursor con merge LWW. | Z-007, Z-205 | Sin duplicados tras reintentos; 2º dispositivo ve mensajes |

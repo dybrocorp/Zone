@@ -138,44 +138,33 @@ class ZoneIdService {
       await _storage.write(key: _keyZoneId, value: _zoneId);
       await _storage.write(key: _keySupabaseSession, value: _uid);
 
-      // 4. Obtener datos del perfil previo para no perderlos (Nombre, Avatar)
-      _logger.debug(
-        '[ZoneIdService] Intentando recuperar perfil previo para $zoneId',
-      );
-      final profileQuery = await _supabase
-          .from('users')
-          .select()
-          .eq('zone_id', zoneId)
-          .maybeSingle();
-
-      // 5. Reclamar la propiedad del ZONE-ID (RPC endurecido por Z-001 Fase A).
-      //    El RPC ya NO acepta p_public_key: la rotación de clave queda protegida.
+      // 4. Formato primero (el RPC valida igual server-side, pero evitamos
+      //    trabajo y rate-limit innecesarios)
       if (!isValidZoneIdFormat(zoneId)) {
         _logger.debug('[ZoneIdService] Formato de ZONE-ID inválido en login.');
         return false;
       }
-      await _supabase.rpc(
+
+      // 5. Reclamar la propiedad del ZONE-ID (RPC endurecido por Z-001 Fase A).
+      //    Z-002: claim_zone_id RETORNA el perfil completo tras migrar la fila a
+      //    este UID, así el login NO relee 'users' (ahora self-scoped) y no
+      //    reintroduce la fuga de perfiles. El RPC ya NO acepta p_public_key.
+      final claimed = await _supabase.rpc(
         'claim_zone_id',
         params: {'p_zone_id': zoneId},
       );
 
-      // 6. Si teníamos perfil previo, migrarlo al nuevo UID
-      if (profileQuery != null &&
-          (profileQuery['display_name'] != null ||
-              profileQuery['avatar_url'] != null)) {
+      // 6. Persistir localmente el perfil recuperado (display_name, avatar, handles)
+      if (claimed is Map) {
+        final profileData = Map<String, dynamic>.from(claimed);
         _logger.debug(
-          '[ZoneIdService] Migrando perfil de ID previo a nuevo UID...',
+          '[ZoneIdService] Perfil reclamado: nombre=${profileData['display_name']}, '
+          'avatar=${profileData['avatar_url'] != null}',
         );
-        await _supabase
-            .from('users')
-            .update({
-              'display_name': profileQuery['display_name'],
-              'avatar_url': profileQuery['avatar_url'],
-              'instagram_handle': profileQuery['instagram_handle'],
-              'facebook_handle': profileQuery['facebook_handle'],
-              'tiktok_handle': profileQuery['tiktok_handle'],
-            })
-            .eq('id', _uid!);
+        await _isar.saveProfile({
+          ...profileData,
+          'updatedAt': DateTime.now().toIso8601String(),
+        });
       }
 
       // 7. ASEGURAR que las llaves E2EE se restauren o generen para esta nueva sesión
@@ -459,7 +448,15 @@ class ZoneIdService {
       'updatedAt': DateTime.now().toIso8601String(),
     };
 
-    await _supabase.from('users').upsert(profileData);
+    // La columna remota es updated_at (snake_case); Isar usa updatedAt (camelCase).
+    // Enviar 'updatedAt' a Supabase devolvía 400 y dejaba el radar/pull-sync
+    // sin marca de tiempo (Z-002 · alineación de esquema).
+    final supabaseData = {
+      ...profileData,
+      'updated_at': DateTime.now().toIso8601String(),
+    }..remove('updatedAt');
+
+    await _supabase.from('users').upsert(supabaseData);
     await _isar.saveProfile(profileData);
   }
 

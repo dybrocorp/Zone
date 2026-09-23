@@ -87,7 +87,7 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
     if (widget.realUid == null) return;
     try {
       final res = await Supabase.instance.client
-          .from('users')
+          .from('v_profile')
           .select('avatar_is_public, gallery_photos')
           .eq('id', widget.realUid!)
           .maybeSingle();
@@ -105,16 +105,16 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
   }
 
   void _precacheVisibleImages() {
+    // Z-002 · Decisión A (estricto server-side): sin bypass por conexión mesh.
+    // El servidor (v_profile) ya NULIFICA avatar/galería no públicos; aquí solo
+    // precacheamos lo que el servidor declaró visible.
     final urls = <String>[
       if (widget.avatarUrl != null &&
           widget.avatarUrl!.trim().isNotEmpty &&
-          (_avatarIsPublic || _connectionState == 3))
+          _avatarIsPublic)
         widget.avatarUrl!,
       ..._galleryPhotos
-          .where(
-            (p) =>
-                p is Map && (p['is_public'] == true || _connectionState == 3),
-          )
+          .where((p) => p is Map && p['is_public'] == true)
           .map((photo) => (photo as Map)['url']?.toString() ?? '')
           .where((url) => url.trim().isNotEmpty),
     ];
@@ -293,9 +293,8 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
           Row(
             children: [
               UserAvatar(
-                avatarUrl: _avatarIsPublic || _connectionState == 3
-                    ? widget.avatarUrl
-                    : null,
+                // Z-002 (A estricto): sin bypass mesh. El servidor ya decidió.
+                avatarUrl: _avatarIsPublic ? widget.avatarUrl : null,
                 displayName: widget.userName,
                 radius: 40,
                 fallbackColor: Colors.grey.shade800,
@@ -374,9 +373,7 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
 
           if (_galleryPhotos
               .where(
-                (p) =>
-                    p is Map &&
-                    (p['is_public'] == true || _connectionState == 3),
+                (p) => p is Map && p['is_public'] == true,
               )
               .isNotEmpty) ...[
             const Align(
@@ -393,9 +390,7 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
                 scrollDirection: Axis.horizontal,
                 children: _galleryPhotos
                     .where(
-                      (p) =>
-                          p is Map &&
-                          (p['is_public'] == true || _connectionState == 3),
+                      (p) => p is Map && p['is_public'] == true,
                     )
                     .map((photo) {
                       return Container(

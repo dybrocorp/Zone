@@ -446,24 +446,20 @@ class SupabaseService {
   //  PERFIL PÚBLICO
   // ──────────────────────────────────────────────────────────
 
-  /// Busca un perfil por ZONE-ID público.
+  /// Busca un perfil por ZONE-ID público (vía v_profile, Z-002: filtros
+  /// server-side: shadowban, bloqueos bidireccionales y privacidad avatar/handles).
   Future<Map<String, dynamic>?> getProfileByZoneId(String zoneId) async {
     final result = await _supabase
-        .from('users')
+        .from('v_profile')
         .select()
         .eq('zone_id', zoneId)
-        .eq('is_shadowbanned', false)
         .maybeSingle();
-    
+
     if (result == null) return null;
     if (result['stealth_mode'] == true) return null;
 
-    final filtered = Map<String, dynamic>.from(result);
-    if (result['ig_visible'] != true) filtered['instagram_handle'] = null;
-    if (result['fb_visible'] != true) filtered['facebook_handle'] = null;
-    if (result['tiktok_visible'] != true) filtered['tiktok_handle'] = null;
-
-    return filtered;
+    // Z-002: el servidor ya NULIFICA handles/avatar no públicos; no re-filtrar.
+    return result;
   }
 
   /// Obtiene todos los usuarios activos recientemente (últimos 24h) para el radar global.
@@ -480,12 +476,12 @@ class SupabaseService {
         _logger.debug('[SupabaseService] RPC get_active_users_for_radar no disponible, usando fallback: $e');
       }
       
-      // Fallback: Consulta directa con índices optimizados
+      // Fallback: Consulta directa con índices optimizados (vista v_profile,
+      // Z-002: shadowban/bloqueos/privacidad ya filtrados server-side)
       final since = DateTime.now().subtract(const Duration(hours: 24)).toUtc().toIso8601String();
       final result = await _supabase
-          .from('users')
-          .select('id, zone_id, display_name, avatar_url, public_key, stealth_mode')
-          .eq('is_shadowbanned', false)
+          .from('v_profile')
+          .select('id, zone_id, display_name, avatar_url, public_key, stealth_mode, updated_at')
           .eq('stealth_mode', false)
           .gte('updated_at', since)
           .order('updated_at', ascending: false)

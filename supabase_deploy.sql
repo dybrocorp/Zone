@@ -34,7 +34,10 @@ CREATE TABLE IF NOT EXISTS public.users (
     reports_count INT DEFAULT 0,
     is_shadowbanned BOOLEAN DEFAULT FALSE,
     avatar_url TEXT,
-    created_at TIMESTAMPTZ DEFAULT now() NOT NULL
+    avatar_is_public BOOLEAN DEFAULT TRUE,
+    gallery_photos JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS public.bt_tokens (
@@ -151,9 +154,11 @@ CREATE INDEX IF NOT EXISTS idx_zone_claim_attempts_zone_time
 REVOKE ALL ON public.zone_claim_attempts FROM anon, authenticated, PUBLIC;
 ALTER TABLE public.zone_claim_attempts ENABLE ROW LEVEL SECURITY;
 
--- claim_zone_id endurecido (autenticación, formato, rate-limit; NO escribe public_key)
+-- claim_zone_id endurecido → RETORNA jsonb (perfil completo tras el reclamo).
+-- (Z-001: auth + formato + rate-limit, NO escribe public_key · Z-002: devuelve
+--  el perfil migrado para el login sin releer 'users', ahora self-scoped)
 CREATE OR REPLACE FUNCTION public.claim_zone_id(p_zone_id text)
-RETURNS void
+RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
@@ -162,6 +167,7 @@ DECLARE
   v_uid        uuid := auth.uid();
   v_failures   bigint;
   v_target     uuid;
+  v_profile    jsonb;
 BEGIN
   IF v_uid IS NULL THEN
     RAISE EXCEPTION 'Se requiere sesión autenticada';
@@ -183,9 +189,32 @@ BEGIN
     VALUES (p_zone_id, v_uid, FALSE);
     RAISE EXCEPTION 'ZONE-ID no encontrado';
   END IF;
-  UPDATE public.users SET id = v_uid WHERE zone_id = p_zone_id;
+  UPDATE public.users u SET id = v_uid
+  WHERE u.zone_id = p_zone_id
+  RETURNING jsonb_build_object(
+    'id',               u.id,
+    'zone_id',          u.zone_id,
+    'display_name',     u.display_name,
+    'public_key',       u.public_key,
+    'avatar_hash',      u.avatar_hash,
+    'stealth_mode',     u.stealth_mode,
+    'instagram_handle', u.instagram_handle,
+    'ig_visible',       u.ig_visible,
+    'facebook_handle',  u.facebook_handle,
+    'fb_visible',       u.fb_visible,
+    'tiktok_handle',    u.tiktok_handle,
+    'tiktok_visible',   u.tiktok_visible,
+    'reports_count',    u.reports_count,
+    'is_shadowbanned',  u.is_shadowbanned,
+    'avatar_url',       u.avatar_url,
+    'avatar_is_public', u.avatar_is_public,
+    'gallery_photos',   u.gallery_photos,
+    'created_at',       u.created_at,
+    'updated_at',       u.updated_at
+  ) INTO v_profile;
   INSERT INTO public.zone_claim_attempts (zone_id, uid, success)
   VALUES (p_zone_id, v_uid, TRUE);
+  RETURN v_profile;
 END;
 $$;
 
@@ -193,7 +222,8 @@ REVOKE EXECUTE ON FUNCTION public.claim_zone_id(text) FROM PUBLIC, anon;
 DROP FUNCTION IF EXISTS public.claim_zone_id(text, text); -- variantes obsoletas 2-arg
 GRANT EXECUTE ON FUNCTION public.claim_zone_id(text) TO authenticated;
 
--- verify_zone_id endurecido (solo authenticated, sin oráculo: no expone 'id')
+-- verify_zone_id endurecido (solo authenticated, sin oráculo: no expone 'id';
+-- Z-002: avatar_url NULL si avatar_is_public = false)
 CREATE OR REPLACE FUNCTION public.verify_zone_id(p_zone_id text)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -222,7 +252,7 @@ BEGIN
   SELECT jsonb_build_object(
     'exists', TRUE,
     'display_name', display_name,
-    'avatar_url', avatar_url
+    'avatar_url', CASE WHEN avatar_is_public THEN avatar_url ELSE NULL END
   ) INTO v_user_data
   FROM public.users
   WHERE zone_id = p_zone_id;
@@ -292,8 +322,9 @@ ALTER TABLE public.reports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.blocked_users ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Ver perfiles públicos" ON public.users;
-CREATE POLICY "Ver perfiles públicos" ON public.users
-    FOR SELECT TO authenticated USING (is_shadowbanned = FALSE);
+DROP POLICY IF EXISTS "Ver propio perfil" ON public.users;
+CREATE POLICY "Ver propio perfil" ON public.users
+    FOR SELECT TO authenticated USING (auth.uid() = id);
 
 DROP POLICY IF EXISTS "Actualizar propio perfil" ON public.users;
 CREATE POLICY "Actualizar propio perfil" ON public.users
@@ -302,6 +333,43 @@ CREATE POLICY "Actualizar propio perfil" ON public.users
 DROP POLICY IF EXISTS "Registrar propio usuario" ON public.users;
 CREATE POLICY "Registrar propio usuario" ON public.users
     FOR INSERT TO authenticated WITH CHECK (auth.uid() = id);
+
+-- ─── VISTA v_profile (Z-002) — único camino de lectura de terceros ────────
+-- Semántica "security definer" (privilegios del dueño) para poder filtrar
+-- server-side: excluye shadowban + bloqueos bidireccionales y NULIFICA
+-- avatar/galería/handles no públicos. NO usar security_invoker (rompería el
+-- radar al re-aplicar el RLS self-scoped de users).
+CREATE OR REPLACE VIEW public.v_profile AS
+SELECT
+  u.id,
+  u.zone_id,
+  u.display_name,
+  CASE WHEN u.avatar_is_public THEN u.avatar_url ELSE NULL END      AS avatar_url,
+  u.avatar_is_public,
+  CASE WHEN u.avatar_is_public
+       THEN (SELECT jsonb_agg(p ORDER BY ord)
+             FROM jsonb_array_elements(u.gallery_photos) WITH ORDINALITY AS t(p, ord)
+             WHERE p->>'is_public' = 'true')::jsonb
+       ELSE NULL END                                                AS gallery_photos,
+  u.public_key,
+  u.stealth_mode,
+  CASE WHEN u.ig_visible THEN u.instagram_handle ELSE NULL END      AS instagram_handle,
+  u.ig_visible,
+  CASE WHEN u.fb_visible THEN u.facebook_handle ELSE NULL END       AS facebook_handle,
+  u.fb_visible,
+  CASE WHEN u.tiktok_visible THEN u.tiktok_handle ELSE NULL END     AS tiktok_handle,
+  u.tiktok_visible,
+  u.created_at,
+  u.updated_at
+FROM public.users u
+WHERE u.is_shadowbanned = FALSE
+  AND NOT EXISTS (
+    SELECT 1 FROM public.blocked_users b
+    WHERE (b.blocker_id = u.id      AND b.blocked_id = auth.uid())
+       OR (b.blocker_id = auth.uid() AND b.blocked_id = u.id)
+  );
+REVOKE ALL ON public.v_profile FROM anon, PUBLIC;
+GRANT SELECT ON public.v_profile TO authenticated;
 
 DROP POLICY IF EXISTS "Ver propio token" ON public.bt_tokens;
 CREATE POLICY "Ver propio token" ON public.bt_tokens

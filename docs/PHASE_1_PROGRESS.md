@@ -54,7 +54,7 @@
 
 **Commit:** `ca456eb` — `fix(auth): enforce server-side profile privacy via v_profile view (Z-002)` · `6cd231d` — docs FASE 1.3 · (enmendada en la cola de aplicación remota con DO-block+REVOKE+encoding).
 
-**Checkpoint:** ✅ FASE 1.3 completada y verificada localmente. Siguiente: FASE 1.4 — Z-003 (mesh en claro).
+**Checkpoint:** ✅ FASE 1.3 completada y verificada localmente. FASE 1.4 (Z-003) IMPLEMENTADA (commit `fd1e60d`). Siguiente: FASE 1.5 — Z-007 (offline-first chat).
 
 ---
 
@@ -151,7 +151,7 @@ Riesgo residual documentado: la toma de control con ZONE-ID conocido por un usua
 | Fase | Bug | Estado |
 |------|-----|--------|
 | 1.3 | Z-002 — corregir exposición RLS de `users` | ✅ REMOTE_APPLIED + VERIFIED (ver sección superior) |
-| 1.4 | Z-003 — detener mesh en claro y diseñar protocolo seguro | 🟡 IN_PROGRESS — SOLO DISEÑO (decisión CTO §9 de `docs/CTO_REVIEW_REQUIRED.md`); código intacto |
+| 1.4 | Z-003 — detener mesh en claro y diseñar protocolo seguro | ✅ IMPLEMENTED — fail-closed aprobado (CTO 2026-09-23): emisor nunca envía en claro (cola con reintento), relay/receptor descartan `isEncrypted != true` (commit `fd1e60d`, tests 12/12) |
 | 1.5 | Z-007 — implementar verdadero offline-first en chat | OPEN |
 
 ## Operativos cerrados (2026-09-23, mismo checkpoint remoto)
@@ -168,12 +168,22 @@ Riesgo residual documentado: la toma de control con ZONE-ID conocido por un usua
   con la corrección (DO-block anti-drift de policies, REVOKE de default privileges en `v_profile`,
   lectura UTF-8 estricta en el aplicador).
 
-## FASE 1.4 — Z-003 · Mesh en claro → diseño en curso (SIN implementar)
+## FASE 1.4 — Z-003 · Mesh en claro → fail-closed IMPLEMENTADO (decisión CTO 2026-09-23)
 
-**ID:** Z-003 · **Estado:** IN_PROGRESS (fase de DISEÑO; CTO decisión pendiente en `CTO_REVIEW_REQUIRED` §9).
-**Regla:** cambio de protocolo mesh/cripto requiere decisión explícita del CTO — el código NO se ha tocado.
-**Evidencia recolectada:** `sendMeshMessage` construye el paquete con `'text'` + `'isEncrypted': false`
-antes del cifrado (1016-1018); falla abierta si no hay `sessionKey` o el cifrado lanza (catch 1036-1038
-solo loguea); relay en claro a toda la malla (1057-1111); la llave de sesión solo existe tras
-`profile_exchange` (905-917). **Opciones propuestas (1 fail-closed, 2 bootstrap, 3 handshake Ed25519
-acoplado a Fase B):** ver §9. **Checkpoint:** 4 preguntas de decisión al CTO antes de codificar.
+**ID:** Z-003 · **Estado:** ✅ IMPLEMENTADO + VERIFICADO localmente (commit `fd1e60d`, 2026-09-23).
+**Decisión CTO (2026-09-23, registrada en `CTO_REVIEW_REQUIRED` §9):** Opción 1 **fail-closed mínimo** —
+la malla NUNCA transporta `mesh_msg` en claro:
+- **Emisor** (`sendMeshMessage`): si no hay llave de sesión o el cifrado AEAD falla, el mensaje se
+  ENCOLA (`_pendingMeshMessages`, tope 200 con eviction FIFO) y se reintenta automáticamente cuando la
+  llave se deriva (`_handleProfileExchange` → `_flushPendingMeshMessages`). El paquete se construye solo
+  vía `MeshPolicy.ciphertextPacket(...)` (API que no acepta texto en claro por construcción).
+- **Relay/receptor** (`_handleMeshMessage`): descarta al inicio cualquier paquete con `isEncrypted != true`
+  (`MeshPolicy.decideRelay`), antes de dedup y de propagar.
+- **Receptor local** (`_processIncomingMeshMessage`): guard previo — nunca procesa texto en claro.
+- **Nueva pieza pura y testeable:** `lib/services/mesh_policy.dart` (sin dependencias Flutter:
+  `decideSend`, `decideRelay`, `ciphertextPacket`) + `test/mesh_policy_test.dart` (7 casos fail-closed).
+- **Consistente con tu WIP** (stash→implementar→pop): la llave ya se lee/guarda vía Secure Storage
+  (`_security.getSessionKey` / `saveSessionKey`); no se usa `LocalProfile.sessionKey` (removido).
+- **Sin criptografía nueva:** reutiliza X25519/ECDH + AEAD existentes.
+- **Verificación local:** `flutter test` 12/12 ✅ · `flutter analyze` 0 errores (15 infos preexistentes) ✅.
+- Tu WIP en `nearby_service.dart` quedó intacto y sin commitear (documentado en la sección inferior).

@@ -238,7 +238,8 @@ Archivos afectados por la Fase B futura: `lib/services/zone_id_service.dart`,
 ## 9. Z-003 — Mesh en claro · Solicitud de DECISIÓN de diseño (FASE 1.4, 2026-09-23)
 
 > Regla del protocolo: cualquier cambio que afecte criptografía o protocolo mesh NO se implementa
-> sin decisión explícita del CTO. Este documento presenta el diseño; **no se ha tocado código**.
+> sin decisión explícita del CTO. **DECISIÓN TOMADA 2026-09-23 (CTO):** Opción 1 fail-closed;
+> **IMPLEMENTADO en commit `fd1e60d`** (todo lo de abajo es el diseño según fue aprobado).
 
 **Evidencia (código, solo lectura — `lib/services/nearby_service.dart`):**
 - `sendMeshMessage` (1008-1055): construye el paquete con `'text': <texto>` y `'isEncrypted': false`
@@ -271,11 +272,22 @@ Archivos afectados por la Fase B futura: `lib/services/zone_id_service.dart`,
   depende de la identidad de firma de la Fase B) + llave derivada por par + solo cifrado.
   Correcto a medio plazo; NO bloquear FASE 1.4 con esto.
 
-**Decisiones pedidas al CTO:**
-1. ¿Opción 1 para FASE 1.4? (fail-closed, sin cripto nuevo, reutilizando X25519+AEAD existentes)
-2. UX en emisor sin llave: ¿encolar con reintento automático o descartar con aviso al usuario?
-3. ¿El relay debe descartar paquetes no cifrados (`isEncrypted != true`) incluso de peers conocidos?
-4. ¿Incluir en el mismo lote la prueba unitaria (no hay llave → no se envía; relay descarta en claro)?
+**Decisiones pedidas al CTO — RESUELTAS 2026-09-23:**
+1. ¿Opción 1 para FASE 1.4? → **SÍ** (fail-closed, sin cripto nuevo, reutilizando X25519+AEAD existentes).
+2. UX en emisor sin llave: ¿encolar con reintento automático o descartar con aviso al usuario? → **ENCOLAR**
+   con reintento automático al derivarse la llave (cola local con tope 200 + eviction FIFO + stream de estado).
+3. ¿El relay debe descartar paquetes no cifrados (`isEncrypted != true`) incluso de peers conocidos? → **SÍ**,
+   descarta siempre (antes de dedup y de propagar), con log de warning.
+4. ¿Incluir en el mismo lote la prueba unitaria? → **SÍ** — `test/mesh_policy_test.dart` (7 casos fail-closed,
+   12/12 tests verdes; `flutter analyze` 0 errores).
+
+**Resolución de implementación (commit `fd1e60d`):** `MeshPolicy` puro en `lib/services/mesh_policy.dart`
+(`decideSend`/`decideRelay`/`ciphertextPacket` — API que no acepta texto en claro por construcción);
+`sendMeshMessage` encola en vez de emitir en claro; `_handleMeshMessage` descarta `isEncrypted != true`;
+`_processIncomingMeshMessage` guard previo; flush de la cola en `_handleProfileExchange` tras derivar llave.
+**Nota de convivencia con WIP:** el archivo tenía vuestro WIP (llave vía Secure Storage, dedup, pseudónimos
+OFFLINE) en exactamente las mismas funciones → se aplicó stash→implementar sobre HEAD→pop con resolución
+de 2 conflictos; vuestro WIP quedó intacto y SIN commitear en el working tree.
 
 ## 10. Hallazgos nuevos del dump remoto (2026-09-23) — RPCs drift con GRANT anon
 

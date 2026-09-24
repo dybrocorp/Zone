@@ -27,7 +27,8 @@ y los requerimientos de backend/epics (Z-110 push, Z-111 storage, Z-101 ratchet)
 | 1.3 | Z-002 | ✅ REMOTE_APPLIED + VERIFIED | RLS `users` self-scoped + vista `v_profile` (gating avatar/handles/bloqueos server-side), claim devuelve perfil jsonb; mojibake sanado. |
 | 1.4 | Z-003 | ✅ VERIFIED_LOCAL | Mesh fail-closed: nunca texto en claro; decisión §9. |
 | 1.5 | Z-007 | ✅ CERRADA (app+remoto) | Outbox idempotente por PK estable UUID v4 (`ON CONFLICT (id)`), `markAllMessagesRead` al abrir chat, RPCs SECURITY DEFINER con gate `auth.uid()`; verificación por rol OK; commit `c0b10a6`. |
-| 1.6 | Z-005, Z-106, Z-206, Z-207, Z-201/Z-303, Z-203, Z-209, Z-307(parcial) | ✅ CERRADA (esta tanda) | Mesh msgId UUID v4 + dedup LRU/TTL; policies DELETE/UPDATE remotas (Z-106/Z-206) aplicadas y verificadas; auto-claim eliminado; `flutter analyze` **0 issues**; `flutter test` 18/18. |
+| 1.6 | Z-005, Z-106, Z-206, Z-207, Z-201/Z-303, Z-203, Z-209, Z-307(parcial) | ✅ CERRADA | Mesh msgId UUID v4 + dedup LRU/TTL; policies DELETE/UPDATE remotas (Z-106/Z-206) aplicadas y verificadas; auto-claim eliminado; `flutter analyze` **0 issues**; `flutter test` 18/18. |
+| 1.7 | Z-104, Z-204, Z-308 (acotado), Z-105 reste | ✅ CERRADA (esta tanda) | `resolve_bt_token` **REVOKE anon aplicado + verificado remoto** (anon → 42501); filtro BLE por token propio; catchers silenciosos → log; `markMessageDelivered` cableado al receptor. `flutter analyze` 0 issues · `flutter test` 18/18. |
 
 **Detalle por ítem de la 1.6** (commit de esta tanda):
 - **Z-005** — `mesh_policy.dart` (`Uuid().v4()` + clase `MeshDedup` LRU/TTL 15 min), `nearby_service.dart`
@@ -43,6 +44,13 @@ y los requerimientos de backend/epics (Z-110 push, Z-111 storage, Z-101 ratchet)
 - **Z-209** — `.gitignore` ampliado + artefactos (`hs_err_pid*`, `replay_pid*`, `Zone.apk`) eliminados.
 - **Z-307** — comentario "sync bidireccional" corregido (parcial: `getRadarStats`/`verify_zone_id` sin callers
   quedan pendientes de decisión de limpieza).
+
+**FASE 1.7** (esta tanda, decisión CTO §13 — batch seguro, no toca criptografía):
+- **Z-104** — `resolve_bt_token` REVOKE a `anon`/PUBLIC (solo `authenticated`), aplicado y verificado en
+  remoto (anon → 42501; producción intacta). Decisión: sin single-use estricto (rompería radar multi-vecino).
+- **Z-204** — filtro BLE por nombre de token propio (`_appTokenNamePattern` en `ble_proximity_service.dart`).
+- **Z-308** (acotado) — `catch (_) {}` silenciosos → log con mensaje en 5 archivos.
+- **Z-105 reste** — `markMessageDelivered` cableado al receptor en `chat_screen.dart` (RPC Z-007 existente).
 
 ---
 

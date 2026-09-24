@@ -8,6 +8,40 @@
 
 ---
 
+## FASE 1.7 — Batch seguro CERRADO (Z-104, Z-204, Z-308, Z-105 reste) · 2026-09-23
+
+**Estado:** ✅ CERRADA — revoke anon + filtro BLE + catchers + receipt de entrega cableado.
+**Decisión CTO:** `CTO_REVIEW_REQUIRED` §13 (no toca criptografía; épicos criptográficos siguen pendientes).
+**Alcance aprobado:** "el que sea más seguro sin quitar criptografía".
+
+**`Z-104` — `resolve_bt_token` cierra el vector anon (P1, RLS + remoto)**
+- `supabase_migrations/z104_bt_token_hardening.sql` (NUEVO, idempotente, verificación en-transacción):
+  `REVOKE EXECUTE ... FROM PUBLIC, anon` + `GRANT ... TO authenticated`.
+  **Decisión CTO:** NO single-use estricto (mismo token compartido a todos los vecinos → lo rompería);
+  mitigación = revoke anon + TTL 10 min + rotación 5 min.
+- Consolida en `supabase_schema.sql` / `supabase_deploy.sql`; `fix_radar_bilateral.sql` (parche histórico)
+  actualizado para no reintroducir anon.
+- **✅ REMOTO APLICADO + VERIFICADO (2026-09-23):** V1 `anon=false/auth=true/pg=true`; V2 anon call → **42501**;
+  V3 service_role → null; V4 anon SELECT → 0 filas; V5 producción intacta (2/1/2).
+
+**`Z-204` — filtro BLE (P2)**
+- `lib/services/ble_proximity_service.dart`: regex `_appTokenNamePattern` (UUID v4 o `OFFLINE:`+pseudónimo);
+  `_recordDevice` descarta dispositivos ajenos antes de registrar RSSI.
+
+**`Z-308` — catchers silenciosos (P3, alcance acotado)**
+- `catch (_) {}` → log con mensaje en `env_config.dart` (assert-debug), `premium_service.dart`,
+  `zone_id_service.dart` (session keys), `nearby_service.dart` (pseudónimos), `chat_screen.dart` (descifrado).
+
+**`Z-105` reste — receipt de entrega cableado (P1)**
+- `chat_screen.dart`: al recibir un mensaje del OTRO, `unawaited(markMessageDelivered(msgId, myId))` →
+  RPC SECURITY DEFINER de Z-007 (ya en remoto) marca `delivered_at`; el remitente podrá mostrar "Entregado".
+
+**Verificación final:** ✅ `flutter analyze` 0 issues · ✅ `flutter test` 18/18 · ✅ remoto VERIFIED (Z-104).
+**Checkpoint:** ✅ FASE 1.7 cerrada. Pendientes con decisión pendiente: épicos criptográficos Z-004, Z-101,
+Z-008 (IAP), Z-110 (push), Z-111 (storage) y reste de UX (tick Entregado/Leído en remitente, Z-202).
+
+---
+
 ## FASE 1.6 — Batch CERRADO (Z-005, Z-106, Z-206, Z-207, Z-201/Z-303, Z-203, Z-209, Z-307) · 2026-09-23
 
 **Estado:** ✅ CERRADA — mesh identity, policies RLS remotas, higiene analyze 0. Decisión CTO en `CTO_REVIEW_REQUIRED` §12.

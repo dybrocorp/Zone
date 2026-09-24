@@ -9,6 +9,7 @@
 > **Fecha:** 2026-09-23 · **Estado:** ✔️ Z-002 DECIDIDO (A estricto + vista `v_profile`) → implementado localmente.
 > **Fecha:** 2026-09-23 · **Estado:** ✔️ Z-007 DECIDIDO (Opción 1: PK estable de cliente + mark-leídos al abrir chat) → implementado app+remoto (FASE 1.5, ver §11).
 > **Fecha:** 2026-09-23 · **Estado:** ✔️ FASE 1.6 DECIDIDA (batch mecánico + policies RLS Z-106/Z-206 + mesh Z-005) → implementado y verificado (ver §12).
+> **Fecha:** 2026-09-23 · **Estado:** ✔️ FASE 1.7 DECIDIDA (batch seguro sin tocar criptografía: Z-104 revoke anon, Z-204 filtro BLE, Z-308 catchers, Z-105 reste) → implementado y verificado (ver §13).
 > **⚠️ Remoto (sonda 2026-09-23):** producción VULNERABLE (2-arg GRANT anon viva; oráculo verify anon).
 > **✅ Remoto (2026-09-23, APLICADO + VERIFICADO):** migraciones 1.2 (Z-001/Z-103) y 1.3 (Z-002) aplicadas en
 > transacciones atómicas vía Management API y verificadas en vivo. Detalle y evidencia en `PHASE_1_PROGRESS.md`
@@ -408,3 +409,32 @@ de 2 conflictos; vuestro WIP quedó intacto y SIN commitear en el working tree.
    solo el valor local. El claim queda únicamente en el login explícito (`loginWithExistingID`, RPC
    endurecido de FASE 1.2). No toca RLS/SECURITY DEFINER; la Fase B (firma Ed25519) sigue pendiente de
    decisión de diseño.
+
+---
+
+## 13. FASE 1.7 — Batch seguro (Z-104, Z-204, Z-308, Z-105 reste) · DECISIÓN CTO APROBADA + CERRADA (2026-09-23)
+
+> Alcance aprobado por el CTO (usuario): "ejecuta todos o el que sea más seguro sin quitar criptografía".
+> Se ejecutó el batch **mecánico/RLS** que NO toca criptografía (Z-104, Z-204, Z-308) + el cableado del
+> receipt de entrega (Z-105 reste). Los épicos criptográficos (Z-004 handshake Ed25519, Z-101 ratchet,
+> Z-008 IAP) siguen pendientes de decisión en §14.
+> **Criptografía NO tocada:** el protocolo mesh (X25519/ECDH + AEAD, Z-003) y el cifrado E2EE del chat
+> (Z-004/Z-101 pendientes) permanecen intactos en esta tanda.
+
+**Decisiones registradas:**
+1. **Z-104 (RLS + esquema remoto):** `resolve_bt_token` pasa a ejecutable SOLO por `authenticated`
+   (REVOKE EXECUTE a `anon`/PUBLIC). **NO se aplica single-use estricto** (`used=TRUE` bloqueante): el MISMO
+   token efímero (10 min TTL) se comparte por Nearby a TODOS los vecinos, y cada vecino lo resuelve contra
+   el mismo usuario → marcar usado tras la primera resolución rompería el radar bilateral (solo el primer
+   resolutor obtendría perfil). Mitigación elegida: revoke anon + TTL corto + rotación periódica (5 min) ya
+   existente + RLS en `bt_tokens` (SELECT solo autenticados). Alternativa futura si el threat model lo exige:
+   tokens por-pareja (un token por endpoint) — requiere rediseño de Nearby + cámbia el flujo de resolución.
+   **✅ REMOTO VERIFICADO:** `has_function_privilege('anon')=false`; `SET ROLE anon` → **42501**;
+   authenticated/service_role OK; anon SELECT `bt_tokens` → 0 filas; producción intacta (2/1/2).
+2. **Z-204 (BLE/privacidad):** el escaneo de proximidad ignora dispositivos cuyo nombre no sea un token de
+   la app (UUID v4 o `OFFLINE:`+pseudónimo) — sin cambio de protocolo ni de criptografía.
+3. **Z-105 reste (mensajería):** `markMessageDelivered` se cablea al receptor (chat_screen, mensajes del
+   otro) → receipt de ENTREGA honesto vía RPC SECURITY DEFINER de Z-007 (ya verificado en remoto). No es
+   cambio de formato de mensaje ni de cifrado; solo invocación del RPC existente desde el UI.
+4. **Z-308 (observabilidad, alcance acotado):** catchers totalmente silenciosos → log con contexto. Sin
+   telemetría aún (pendiente de decisión de infraestructura).

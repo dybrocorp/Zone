@@ -325,8 +325,8 @@ END;
 $$;
 
 REVOKE EXECUTE ON FUNCTION public.resolve_bt_token(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.resolve_bt_token(text) FROM anon; -- Z-104: cerrar vector anon
 GRANT EXECUTE ON FUNCTION public.resolve_bt_token(text) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.resolve_bt_token(text) TO anon;
 
 -- =============================================================================
 -- ROW LEVEL SECURITY

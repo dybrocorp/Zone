@@ -3,6 +3,7 @@
 > **Estado: AUTORIZADA (FASE 1).** Orden obligatorio de ejecución autorizado por el CTO:
 > Z-006 → Z-001 → Z-002 → Z-003 → Z-007 (Fase 1.1-1.5) → REPORTE `PHASE_1_COMPLETION_REPORT.md` antes de continuar con P1.
 > FASE 1.6 (2026-09-23): batch mecánico+SQL sin decisión criptográfica — Z-005, Z-106, Z-206, Z-207, Z-201/Z-303, Z-203, Z-209, Z-307 (parcial).
+> FASE 1.7 (2026-09-23): batch seguro sin tocar criptografía — Z-104 (revoke anon resolve_bt_token, remoto verificado), Z-204 (filtro BLE), Z-308 (catchers), Z-105 reste (cableado markMessageDelivered).
 > Progreso detallado en `PHASE_1_PROGRESS.md`.
 
 ---
@@ -24,9 +25,9 @@
 
 | # | Bug | Acción | Depende de | Prueba |
 |---|-----|--------|-----------|--------|
-| 9 | **Z-104** | `resolve_bt_token`: GRANT solo `authenticated`; marcar/eliminar token tras resolución (idempotente); expiración corta. | — | 2ª resolución del mismo token → NULL |
+| 9 | **Z-104** | ✅ **HECHO (FASE 1.7):** `resolve_bt_token` pasa a SOLO `authenticated` — **REVOKE EXECUTE a anon/PUBLIC aplicado en remoto** (`z104_bt_token_hardening.sql`, tx atómica). Decisión CTO: **NO single-use estricto** (cada vecino resuelve el MISMO token compartido → lo rompería); mitigación = revoke anon + TTL 10 min + rotación 5 min. | — | ✅ Remoto V1–V4: anon `has_function_privilege=false`; anon call → **42501**; authenticated/postgres OK; anon SELECT → 0 filas; producción intacta (2/1/2) |
 | 10 | **Z-103** | ✅ **HECHO (FASE 1.2, mismo lote):** `verify_zone_id` solo `authenticated`, formato+rate-limit, sin exponer `id`. **✅ REMOTO APLICADO + VERIFICADO (2026-09-23):** oráculo cerrado; anon → 42501 en vivo; payload final `{exists, display_name, avatar_url}` sin `id`/`zone_id`. | Z-001 | ✅ `flutter analyze` 0 nuevos; SQL pruebas 1/7 migración `secure_claim_zone_id.sql`. Remoto: ✅ REMOTE_VERIFIED |
-| 11 | **Z-105** | Trackear y aplicar `add_message_delivery_status.sql`; añadir policy UPDATE para `messages`; invocar receipts desde el chat; RPC `mark_messages_read` con SECURITY DEFINER acotado al lector. | Z-206 | B lee → A ve "leído" |
+| 11 | **Z-105** | ✅ **PARCIAL→HECHO (FASE 1.5 + 1.7):** columnas + RPC `mark_messages_read`/`mark_message_delivered` via `z007_offline_chat.sql` (canon, remoto verificado); policy UPDATE/DELETE `messages` via Z-206 (FASE 1.6); **`markAllMessagesRead` cableado al abrir chat (1.5) y `markMessageDelivered` cableado al receptor en `chat_screen.dart` (1.7)**. Pendiente menor: mostrar "Entregado/Leído" en el remitente (UI tick) y receipts sobre mensajes mesh directos. | Z-206 | B abre chat → A ve leído (RPC verificado); delivered_on_escucha cableado |
 | 12 | **Z-106** | ✅ **HECHO (FASE 1.6):** policy DELETE para participantes consolidada en `supabase_migrations/z106_z206_policies.sql` (canon) + `supabase_deploy.sql`. **✅ REMOTO APLICADO + VERIFICADO (2026-09-23):** `"Eliminar propio match"` FOR DELETE solo `authenticated`; policy duplicada del parche suelto dropeada en remoto; anon bloqueado; mensajes intactos. | — | ✅ Eliminar match funciona y persiste; remoto: pg_policies `{authenticated}` |
 | 13 | **Z-107** | IDs locales estables (`client_id`) + upsert idempotente en flush; implementar pull de mensajes por cursor con merge LWW. | Z-007, Z-205 | Sin duplicados tras reintentos; 2º dispositivo ve mensajes |
 | 14 | **Z-108** | ✅ **PARCIAL (FASE 1.3):** cliente `updateProfile` escribe `updated_at` (snake_case, columna remota confirmada) en vez de `updatedAt` — **✅ remoto alineado con la migración Z-002**; falta trigger multi-device → Z-205/Z-109. | Z-109 | Editar perfil → persiste; refresco → igual |
@@ -42,9 +43,9 @@
 | # | Bug | Acción | Prueba |
 |---|-----|--------|--------|
 | 21 | **Z-201 / Z-303** | ✅ **HECHO (FASE 1.6):** guards de `mounted` correctos (chats_list 228, donations 46); prints → `stdout.writeln` en scripts/tools. | ✅ `flutter analyze` = **0 issues** |
-| 22 | **Z-202 / Z-308** | Errores tipados y mapeados a textos UX; revisar catches silenciosos en rutas críticas. | Revisión + snackbars correctos |
+| 22 | **Z-202 / Z-308** | ✅ **Z-308 HECHO (FASE 1.7 - alcance acotado):** catchers `catch (_) {}` silenciosos → log con mensaje (env_config, premium_service, zone_id_service, nearby_service, chat_screen). Pendiente: mapeo de errores a textos UX (Z-202) y catchers amplios del resto (Z-308 liste larga) en fase de UX. | Revisión + snackbars correctos |
 | 23 | **Z-203** | ✅ **HECHO (FASE 1.6):** credenciales eliminadas de `test/load_test_simulator.dart`; lee `SUPABASE_URL`/`SUPABASE_ANON_KEY` de entorno y aborta si faltan. | ✅ `git grep -i "sb_publishable|supabaseUrl" test/` sin hits |
-| 24 | **Z-204** | Filtro BLE por UUID/servicio propio; estado pausado en background. | Scan solo reacciona a app |
+| 24 | **Z-204** | ✅ **HECHO (FASE 1.7):** `ble_proximity_service.dart` filtra por nombre de token propio (UUID v4 o `OFFLINE:`+pseudónimo 32); dispositivos ajenos NO se registran. Queda para fase de energía: estados paused en background. | Scan solo reacciona a app |
 | 25 | **Z-206** | ✅ **HECHO (FASE 1.6):** policies UPDATE/DELETE en `messages` para participantes de match aceptado (`z106_z206_policies.sql` + baselines). **✅ REMOTO APLICADO + VERIFICADO (2026-09-23):** UPDATE/DELETE nuevas con roles `{authenticated}`; anon bloqueado. | ✅ SQL tests en remoto |
 | 26 | **Z-205** | ✅ **PARCIAL (FASE 1.3):** columna `updated_at` añadida a schema/deploy (**✅ remoto ya alineado**; columna existía y la migración hace IF NOT EXISTS). Pendiente: trigger base. | Sync LWW funciona |
 | 27 | **Z-207** | ✅ **HECHO (FASE 1.6):** auto-claim de `ensureAuth` ELIMINADO (el arranque ya no reclama con solo el ID local); el claim queda solo en login explícito con formato+rate-limit. | ✅ Sin login no se adueña ID (claim solo vía `loginWithExistingID`) |

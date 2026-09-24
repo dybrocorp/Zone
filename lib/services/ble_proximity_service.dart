@@ -21,6 +21,21 @@ class BleProximityService {
 
   static const Duration _staleAfter = Duration(seconds: 25);
 
+  // Z-204 (FASE 1.7): filtro del escaneo. Los únicos dispositivos que el radar
+  // debe procesar son los que llevan el nombre del token Nearby de la app:
+  //   • token online  → UUID v4 (generado con _uuid.v4() en generateBtToken)
+  //   • token offline → 'OFFLINE:' + pseudónimo base64url (nearby_service)
+  // Cualquier otro dispositivo BLE del entorno (beacons, audífonos, otros
+  // teléfonos) se descarta ANTES de registrar RSSI → menos batería y ruido.
+  static final RegExp _appTokenNamePattern = RegExp(
+    r'^(?:OFFLINE:[A-Za-z0-9_\-]{32}|'
+    r'[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$',
+    caseSensitive: false,
+  );
+
+  static bool _isAppTokenName(String name) =>
+      _appTokenNamePattern.hasMatch(name);
+
   bool get isScanning => _scanSub != null;
 
   Future<void> startScanning() async {
@@ -45,13 +60,15 @@ class BleProximityService {
   }
 
   void _recordDevice(DiscoveredDevice device) {
+    // Z-204: descartar dispositivos ajenos (no llevan el token Nearby de la app).
+    final name = device.name.trim();
+    if (name.isEmpty || !_isAppTokenName(name)) {
+      return;
+    }
+
     final rssi = device.rssi;
     final distance = RadarConfig.distanceFromRssi(rssi);
-    final keys = <String>{device.id};
-    final name = device.name.trim();
-    if (name.isNotEmpty) {
-      keys.add(name);
-    }
+    final keys = <String>{device.id, name};
 
     for (final key in keys) {
       final prev = _tokenRssi[key];

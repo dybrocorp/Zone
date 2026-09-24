@@ -47,7 +47,9 @@ $$;
 
 REVOKE EXECUTE ON FUNCTION public.resolve_bt_token(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.resolve_bt_token(text) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.resolve_bt_token(text) TO anon;
+-- Z-104 (FASE 1.7): anon YA NO ejecuta (ver supabase_migrations/z104_bt_token_hardening.sql).
+-- Este parche histórico queda solo para re-ejecución segura sin reintroducir el vector.
+REVOKE EXECUTE ON FUNCTION public.resolve_bt_token(text) FROM anon;
 
 -- Limpiar tokens marcados como usados (legado) para no bloquear resolución
 UPDATE public.bt_tokens SET used = FALSE WHERE used = TRUE;

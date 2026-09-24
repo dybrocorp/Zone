@@ -280,14 +280,17 @@ class NearbyService with WidgetsBindingObserver {
     try {
       const storage = FlutterSecureStorage();
       await storage.write(key: 'pseudo_$pseudonym', value: zoneId);
-    } catch (_) {}
+    } catch (e) {
+      _logger.debug('[NearbyService] Error guardando pseudónimo: $e');
+    }
   }
 
   Future<String?> _resolvePseudonym(String pseudonym) async {
     try {
       const storage = FlutterSecureStorage();
       return await storage.read(key: 'pseudo_$pseudonym');
-    } catch (_) {
+    } catch (e) {
+      _logger.debug('[NearbyService] Error leyendo pseudónimo: $e');
       return null;
     }
   }

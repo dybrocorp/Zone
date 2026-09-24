@@ -251,7 +251,19 @@ class ChatScreenState extends State<ChatScreen> {
 
           try {
             await _prefetchDecrypted([newMsg]);
-          } catch (_) {}
+          } catch (e) {
+            debugPrint('[ChatScreen] Error descifrando mensaje nuevo: $e');
+          }
+          // Z-105 (FASE 1.7): receipt de ENTREGA honesto. El mensaje del otro
+          // acaba de ser recibido → RPC SECURITY DEFINER `mark_message_delivered`
+          // (gate server-side auth.uid() == p_reader_id + match aceptado) marca
+          // delivered_at para el remitente poder mostrar "Entregado ✓✓".
+          // Solo para mensajes del OTRO (los propios ya van por outbox).
+          if (senderId != myId && msgId != null && myId != null) {
+            unawaited(
+              _supabaseService.markMessageDelivered(msgId, myId),
+            );
+          }
           if (mounted) {
             setState(() => _messages.add(newMsg));
             _scrollToBottom();

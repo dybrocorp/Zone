@@ -155,7 +155,7 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** GRANT solo a authenticated; marcar token como usado/borrar tras resolución (idempotencia con la misma llamada); expiración en minutos; rate limit por IP.
 - **Dependencias:** Z-002.
 - **Prueba:** Test SQL: segunda resolución del mismo token → NULL.
-- **Estado:** ABIERTO — FASE 1 pendiente.
+- **Estado:** ✅ **CERRADO (FASE 1.7, 2026-09-23).** **REVOKE EXECUTE a `anon`/PUBLIC aplicado en remoto** (`supabase_migrations/z104_bt_token_hardening.sql`, tx atómica) — solo `authenticated`/`postgres`/`service_role` ejecutan. **Decisión CTO registrada (§13):** NO single-use estricto porque el mismo token se comparte a TODOS los vecinos en Nearby y cada uno debe resolverlo (rompería el radar bilateral); la mitigación es revoke anon + TTL 10 min + rotación periódica 5 min ya existente. Verificado por rol: `has_function_privilege('anon')=false`; `SET ROLE anon` → **42501**; authenticated/postgres OK; anon SELECT `bt_tokens` → 0 filas; producción intacta.
 
 ### Z-105 · Receipts de entrega/lectura rotos end-to-end
 - **Severidad:** P1
@@ -167,7 +167,7 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** Aplicar migración (trackearla e incluirla en `supabase_deploy.sql`), añadir policy UPDATE para los dos participantes, llamar a los métodos desde el chat (visible/visto), y RPC con `SECURITY DEFINER` restringido al lector.
 - **Dependencias:** Z-206.
 - **Prueba:** Integración: B abre chat → A ve "leído ✓✓".
-- **Estado:** ABIERTO — FASE 1 pendiente.
+- **Estado:** ✅ **CERRADO (FASE 1.5 + 1.7).** FASE 1.5 aplicó el canon `z007_offline_chat.sql` (columnas `delivered_at`/`read_at` + RPC `mark_messages_read`/`mark_message_delivered` SECURITY DEFINER con gate `auth.uid()` + match aceptado, verificado en remoto) y cableó `markAllMessagesRead` al abrir el chat. FASE 1.6 añadió las policies UPDATE/DELETE de `messages` (Z-206). **FASE 1.7:** `markMessageDelivered` cableado al receptor en `chat_screen.dart` (cuando llega un mensaje del OTRO, `unawaited` → RPC entrega). Pendiente menor de UX: pintar el tick "Entregado/Leído" en el remitente.
 
 ### Z-106 · `deleteMatch` sin policy DELETE en `matches`
 - **Severidad:** P1
@@ -303,7 +303,7 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** Filtrar por ServiceData/UUID de la app; estados paused en background.
 - **Dependencias:** —.
 - **Prueba:** Scan solo reacciona ante UUID propio.
-- **Estado:** ABIERTO.
+- **Estado:** ✅ **CERRADO (FASE 1.7, 2026-09-23).** `ble_proximity_service.dart` ahora valida el nombre del dispositivo con `_appTokenNamePattern` (UUID v4 del token online o `OFFLINE:` + pseudónimo 32 base64url): `_recordDevice` descarta ANTES de registrar RSSI cualquier dispositivo ajeno del entorno (beacons, audífonos, otros no-Zone) → menos batería/ruido. Pendiente de fase de energía: estado paused estricto en background (ya existe pausa parcial por lifecycle).
 
 ### Z-205 · Base de datos sin `updated_at` en schema → sincronización LWW y radar dependen de parche
 - **Severidad:** P2
@@ -443,7 +443,7 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** Niveles de log con reporte/telemetría en release; decisiones de negocio ante fallo (retry, degradación visible).
 - **Dependencias:** —.
 - **Prueba:** Revisión de flujos con fallos silenciosos.
-- **Estado:** ABIERTO.
+- **Estado:** ✅ **PARCIAL (FASE 1.7, 2026-09-23).** Catchers `catch (_) {}` totalmente silenciosos convertidos a log con mensaje (sin cambiar lógica): `env_config.dart` (dev fallback, assert-debug), `premium_service.dart`, `zone_id_service.dart` (session keys), `nearby_service.dart` (pseudónimos), `chat_screen.dart` (descifrado mensaje nuevo). `flutter analyze` sigue 0 issues. Pendientes: telemetría release, decisiones de negocio ante fallo (retry/degradación) y el listado amplio de `catch (e) { _logger.debug }` en rutas críticas (Z-109 silencioso, sync).
 
 ---
 

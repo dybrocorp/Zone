@@ -55,7 +55,16 @@ class EnvConfig {
       url = dotenv.env['SUPABASE_URL']?.trim() ?? '';
       anonKey = dotenv.env['SUPABASE_ANON_KEY']?.trim() ?? '';
     } catch (_) {
-      // Sin asset `.env` en este entorno (normal en tests / builds limpios).
+      // Z-308: sin asset `.env` en este entorno (normal en tests / builds limpios).
+      assert(() {
+        // Solo visible en debug para diagnóstico de arranque.
+        // ignore: avoid_print
+        print(
+          '[EnvConfig] Dev fallback: asset .env no disponible; se usará '
+          '--dart-define o configuración ausente.',
+        );
+        return true;
+      }());
     }
 
     if (url.isEmpty || anonKey.isEmpty) {

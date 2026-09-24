@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'zone_id_service.dart';
 
@@ -22,8 +23,9 @@ class PremiumService {
       if (profile?['is_premium'] == true) {
         premium = true;
       }
-    } catch (_) {
-      // Columna is_premium puede no existir aún en Supabase.
+    } catch (e) {
+      // Z-308: columna is_premium puede no existir aún en Supabase.
+      debugPrint('[PremiumService] Error leyendo estado premium: $e');
     }
 
     _cachedPremium = premium;

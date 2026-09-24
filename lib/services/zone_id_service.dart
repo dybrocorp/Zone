@@ -624,7 +624,9 @@ class ZoneIdService {
     // Limpiar todas las session keys almacenadas de forma segura
     try {
       await P2PSecurityService().deleteAllSessionKeys();
-    } catch (_) {}
+    } catch (e) {
+      _logger.debug('[ZoneIdService] Error limpiando session keys: $e');
+    }
 
     await _supabase.auth.signOut();
     _zoneId = null;

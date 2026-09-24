@@ -8,6 +8,63 @@
 
 ---
 
+## FASE 1.5 — Z-007 · Offline-first chat (delivery/read status) · CERRADA
+
+**ID:** Z-007
+**Estado:** ✅ CERRADA (FASE 1.5) — app + remoto + baselines + docs (2026-09-23).
+**Decisión CTO (registrada en `CTO_REVIEW_REQUIRED` §11):** **Opción 1** — idempotencia por
+PK estable de cliente: la app genera el `id` del mensaje como UUID v4 una sola vez y los
+reintentos del outbox reutilizan el MISMO id → `upsert ON CONFLICT (id)` = no-op, sin duplicados;
+**sin columna `client_id`** (el PK ya es estable). Cablear `markAllMessagesRead` al abrir el chat.
+**Aplicación remota:** migración `supabase_migrations/z007_offline_chat.sql` aplicada en remoto
+en transacción atómica + verificación en-transacción (V1–V6): columnas `delivered_at`/`read_at`,
+RPCs `mark_messages_read`/`mark_message_delivered` SECURITY DEFINER con gate `auth.uid() == p_*_id`
+y match aceptado server-side, **sin anon/PUBLIC**, grants `{authenticated, service_role}`, mensajes intactos.
+
+**Archivos (app):**
+- `lib/screens/chat_screen.dart` — **`markAllMessagesRead` cableado en `_setupChat`** (~221): al abrir
+  el chat con `uid` listo se llama al RPC `mark_messages_read` → el tick "Leído" del otro deja de mentir
+  (antes `read_at` quedaba NULL aunque el usuario YA vio los mensajes). **Merge del WIP curado en
+  `_sendMessage`**: `encrypted` se cifra ANTES de `savePendingMessage` (estaba definido después dentro
+  del `if online` → `encrypted['...']` undefined en el outbox) y la llamada a `_sendMessageIdempotent`
+  (método INEXISTENTE) se reemplaza por `_supabaseService.sendMessageIdempotent(messageId, matchId,
+  senderId, encryptedContent, nonce, mac) → bool`. Conservado el flujo mesh (`isPeerReachable`/
+  `sendMeshMessage`) y el `throw` si ni online ni mesh. `outgoingMessageId = Uuid().v4()` se genera UNA
+  vez por envío (estable para reintentos).
+- `lib/services/supabase_service.dart` — `sendMessageIdempotent` (354-379): upsert `ON CONFLICT (id)`;
+  `markAllMessagesRead` RPC `mark_messages_read` (399-409); `markMessageDelivered` RPC (384-394);
+  duplicado de `markAllMessagesRead` ELIMINADO; método muerto `markMessageRead` ELIMINADO (quedó con
+  cuerpo del merge roto: `matchId`/`myUid` undefined, y sin usos en la app).
+- `lib/services/isar_service.dart` — `savePendingMessage` firma con `required String messageId`,
+  setea `LocalPendingMessage.messageId` (PK estable @unique).
+- `lib/services/sync_service.dart` — `_flushPendingMessages` **curado para idempotencia**: el batch del
+  outbox reutiliza `p.messageId` (antes generaba un `Uuid().v4()` nuevo por reintento → habría DUPLICADO
+  mensajes en remoto). Con la cura, reintento = `ON CONFLICT (id)` no-op. Eliminado `_uuid` residual.
+- `lib/models/isar_models.dart` — `LocalPendingMessage.messageId` `@Index(unique: true, replace: true)`
+  (106-107); `LocalMessage.deliveredAt/readAt`.
+- Baselines `supabase_schema.sql`/`supabase_deploy.sql` — columnas + RPCs consolidadas byte a byte.
+
+**Verificación local:** `flutter analyze` → **0 errores, 0 warnings** (solo los 15 `info`
+pre-existentes en scripts/tools y 2 pantallas no tocadas). `flutter test` → **12/12**.
+
+**Verificación remota por rol (2026-09-23, Management API vía PAT, en transacción ROLLBACK — producción intacta):**
+| Proba | Resultado |
+|---|---|
+| `anon` → `mark_messages_read(...)` | **42501 permission denied** ✅ (REVOKE efectivo) |
+| `authenticated` (claims `sub` del reader simulado) → `mark_messages_read` | RPC OK; `read_at` de 1 no-leído del otro → 0 ✅ |
+| `service_role` → `mark_message_delivered(...)` | RPC OK ✅ |
+| Estado persistido tras ROLLBACK | `unread=1`, `delivered=0` — sin cambios ✅ |
+
+**Nota de convivencia con WIP:** `supabase_migrations/add_message_delivery_status.sql` (borrador S5+S6
+del desarrollador) queda **SIN commitear y NO APLICAR**: su RPC `mark_messages_read` NO tiene gate
+`auth.uid()` ni verificación de match aceptado (variante insegura). El canon seguro es
+`z007_offline_chat.sql` (aplicado en remoto). El WIP del usuario en `nearby_service.dart` intacto.
+
+**Checkpoint:** ✅ FASE 1.5 cerrada (Z-007) — offline-first chat con delivery/read honesto en app+remoto,
+idempotencia de outbox verificada, verificación por rol OK. Fin de FASE 1 (Z-001→Z-007, Z-103, Z-109, Z-002, Z-003).
+
+---
+
 ## FASE 1.3 — Z-002 · Proteger la exposición de perfiles (RLS `users`)
 
 **ID:** Z-002
@@ -152,7 +209,7 @@ Riesgo residual documentado: la toma de control con ZONE-ID conocido por un usua
 |------|-----|--------|
 | 1.3 | Z-002 — corregir exposición RLS de `users` | ✅ REMOTE_APPLIED + VERIFIED (ver sección superior) |
 | 1.4 | Z-003 — detener mesh en claro y diseñar protocolo seguro | ✅ IMPLEMENTED — fail-closed aprobado (CTO 2026-09-23): emisor nunca envía en claro (cola con reintento), relay/receptor descartan `isEncrypted != true` (commit `fd1e60d`, tests 12/12) |
-| 1.5 | Z-007 — implementar verdadero offline-first en chat | OPEN |
+| 1.5 | Z-007 — implementar verdadero offline-first en chat | ✅ CERRADA (2026-09-23): mark-leídos al abrir chat + outbox idempotente (PK estable ON CONFLICT id) + merge curado. Ver sección FASE 1.5 arriba |
 
 ## Operativos cerrados (2026-09-23, mismo checkpoint remoto)
 

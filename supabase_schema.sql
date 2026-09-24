@@ -95,7 +95,9 @@ CREATE TABLE IF NOT EXISTS public.messages (
     encrypted_content TEXT NOT NULL,        -- Texto cifrado con ChaCha20-Poly1305
     nonce TEXT NOT NULL,                    -- Nonce de cifrado (base64)
     mac TEXT NOT NULL,                      -- MAC de autenticación (base64)
-    created_at TIMESTAMPTZ DEFAULT now() NOT NULL
+    created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+    delivered_at TIMESTAMPTZ,               -- Z-007: tick entregado en el radar/chat offline
+    read_at TIMESTAMPTZ                     -- Z-007: tick leído
 );
 
 -- ============================================================
@@ -461,6 +463,72 @@ CREATE POLICY "Enviar mensaje con match aceptado" ON public.messages
     );
 
 -- ─── REPORTS ─────────────────────────────────────────────────
+-- Z-007 (2026-09-23): RPCs de delivery/read del chat (consolidadas de la migración
+-- del desarrollador `add_message_delivery_status.sql`, CORREGIDAS: gate de sesión
+-- server-side en auth.uid(), verificación de match aceptado, sin anon, sin escapes
+-- dinámicos, grants {authenticated, service_role} con revoke anon/PUBLIC).
+CREATE OR REPLACE FUNCTION public.mark_messages_read(
+  p_match_id UUID,
+  p_reader_id UUID
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $$
+BEGIN
+  IF auth.uid() IS NULL OR auth.uid() <> p_reader_id THEN
+    RAISE EXCEPTION 'No autorizado';
+  END IF;
+
+  UPDATE public.messages
+     SET read_at = COALESCE(read_at, now())
+   WHERE match_id = p_match_id
+     AND sender_id <> p_reader_id
+     AND read_at IS NULL
+     AND EXISTS (
+       SELECT 1 FROM public.matches m
+       WHERE m.id = messages.match_id
+         AND m.status = 'accepted'
+         AND (m.requester_id = p_reader_id OR m.receiver_id = p_reader_id)
+     );
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.mark_messages_read(uuid, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.mark_messages_read(uuid, uuid) TO authenticated, service_role;
+
+CREATE OR REPLACE FUNCTION public.mark_message_delivered(
+  p_message_id UUID,
+  p_reader_id UUID
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $$
+BEGIN
+  IF auth.uid() IS NULL OR auth.uid() <> p_reader_id THEN
+    RAISE EXCEPTION 'No autorizado';
+  END IF;
+
+  UPDATE public.messages
+     SET delivered_at = COALESCE(delivered_at, now())
+   WHERE id = p_message_id
+     AND sender_id <> p_reader_id
+     AND delivered_at IS NULL
+     AND EXISTS (
+       SELECT 1 FROM public.matches m
+       WHERE m.id = messages.match_id
+         AND m.status = 'accepted'
+         AND (m.requester_id = p_reader_id OR m.receiver_id = p_reader_id)
+     );
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.mark_message_delivered(uuid, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.mark_message_delivered(uuid, uuid) TO authenticated, service_role;
+
 DROP POLICY IF EXISTS "Reportar usuario" ON public.reports;
 CREATE POLICY "Reportar usuario" ON public.reports
     FOR INSERT TO authenticated WITH CHECK (auth.uid() = reporter_id);

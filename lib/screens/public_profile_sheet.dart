@@ -186,16 +186,23 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
   Future<void> _launchUrl(String platform, String? handle) async {
     if (handle == null || handle.isEmpty) return;
 
-    String url = '';
-    String sanitizedHandle = handle.replaceAll('@', '');
+    // Sanitizar: solo alfanuméricos, guiones bajos y puntos (max 30 chars)
+    final sanitized = handle
+        .replaceAll(RegExp(r'[^a-zA-Z0-9_.]'), '')
+        .substring(0, handle.length > 30 ? 30 : handle.length);
 
+    if (sanitized.isEmpty) return;
+
+    String url = '';
     if (platform == 'Instagram') {
-      url = 'https://instagram.com/$sanitizedHandle';
+      url = 'https://instagram.com/$sanitized';
     } else if (platform == 'Facebook') {
-      url = 'https://facebook.com/$sanitizedHandle';
+      url = 'https://facebook.com/$sanitized';
     } else if (platform == 'TikTok') {
-      url = 'https://tiktok.com/@$sanitizedHandle';
+      url = 'https://tiktok.com/@$sanitized';
     }
+
+    if (url.isEmpty) return;
 
     final uri = Uri.parse(url);
     if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {

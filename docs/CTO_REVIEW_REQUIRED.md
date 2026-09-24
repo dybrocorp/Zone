@@ -7,6 +7,7 @@
 > **Hallazgo:** Z-001 — `claim_zone_id` inseguro. **Hallazgo:** Z-002 — RLS `users`.
 > **Fecha:** 2026-09-22 · **Estado:** ✔️ Z-001 DECIDIDO (Opción 3) → **Fase A implementada localmente** · Fase B pendiente de diseño.
 > **Fecha:** 2026-09-23 · **Estado:** ✔️ Z-002 DECIDIDO (A estricto + vista `v_profile`) → implementado localmente.
+> **Fecha:** 2026-09-23 · **Estado:** ✔️ Z-007 DECIDIDO (Opción 1: PK estable de cliente + mark-leídos al abrir chat) → implementado app+remoto (FASE 1.5, ver §11).
 > **⚠️ Remoto (sonda 2026-09-23):** producción VULNERABLE (2-arg GRANT anon viva; oráculo verify anon).
 > **✅ Remoto (2026-09-23, APLICADO + VERIFICADO):** migraciones 1.2 (Z-001/Z-103) y 1.3 (Z-002) aplicadas en
 > transacciones atómicas vía Management API y verificadas en vivo. Detalle y evidencia en `PHASE_1_PROGRESS.md`
@@ -333,3 +334,49 @@ de 2 conflictos; vuestro WIP quedó intacto y SIN commitear en el working tree.
 >
 > Migración: `supabase_migrations/z109_rpc_anon_revoke.sql` (aplicada en remoto en transacción
 > atómica con verificación en-transacción). Evidencia remota y conteos en `PHASE_1_PROGRESS.md`.
+
+---
+
+## 11. Z-007 — Offline-first chat (delivery/read) · DECISIÓN CTO APROBADA + CERRADA (FASE 1.5, 2026-09-23)
+
+> Regla del protocolo: cualquier cambio que afecte RLS / SECURITY DEFINER / esquema remoto NO se
+> implementa sin decisión explícita del CTO. **DECISIÓN TOMADA 2026-09-23:** **Opción 1** —
+> idempotencia por **PK estable de cliente** y marca de leídos al abrir el chat.
+
+**Decisiones registradas (Opción 1, aprobada):**
+1. **Idempotencia del outbox por desviación:** la app genera el PK `id` del mensaje como **UUID v4
+   estable del cliente UNA vez por envío**; cada reintento reutiliza el MISMO id → `upsert`/`insert`
+   con `ON CONFLICT (id)` se convierte en no-op. **Sin columna `client_id`** (el PK ya es estable y
+   único). Esto hace seguro el reintento offline sin duplicados.
+2. **Tick "Leído" honesto:** `markAllMessagesRead(matchId, uid)` se llama al **abrir el chat**
+   (`chat_screen._setupChat`): RPC SECURITY DEFINER `mark_messages_read` marca `read_at` de los
+   mensajes del otro. Antes, `read_at` quedaba NULL aunque el usuario ya viera los mensajes.
+3. **RPCs server-side endurecidas** (canon en `supabase_migrations/z007_offline_chat.sql`):
+   - `mark_messages_read(p_match_id, p_reader_id)` y `mark_message_delivered(p_message_id, p_reader_id)`
+     como **SECURITY DEFINER** con gate `auth.uid() IS NULL OR auth.uid() <> p_reader_id → RAISE`,
+     verificación server-side de **match aceptado y participación** (`status='accepted'` +
+     `requester_id/receiver_id`), `SET search_path='public'`, grants `{authenticated, service_role}`
+     y **REVOKE de anon/PUBLIC**.
+   - Sin uso de concatenación dinámica ni de datos del cliente sin validar.
+4. **Método muerto eliminado:** `markMessageRead(messageId)` (huérfano del merge, con cuerpo
+   `matchId`/`myUid` undefined y sin llamadas) se eliminó; el método real es `markAllMessagesRead`.
+5. **`markMessageDelivered` queda como API lista** del servicio (RPC aplicada en remoto) — cablearlo
+   al receptor era fuera del alcance de la Opción 1; se documenta para su cableado futuro.
+
+**Migraciones:**
+- `supabase_migrations/z007_offline_chat.sql` — **canon definitivo** (columnas + 2 RPC + grants +
+  verificación en-transacción V1–V6). **APLICADA en remoto** (2026-09-23, transacción atómica).
+- ⚠️ `supabase_migrations/add_message_delivery_status.sql` — **borrador S5+S6 del desarrollador,
+  NO APLICAR**: su RPC `mark_messages_read` carece del gate `auth.uid()` y de la verificación de match
+  aceptado (variante insegura). Queda SIN commitear; el canon seguro es `z007_offline_chat.sql`.
+
+**Verificación remota por rol (2026-09-23, Management API vía PAT — transacción ROLLBACK, sin mutar datos):**
+| Proba | Resultado |
+|---|---|
+| `anon` → `mark_messages_read` | **42501 permission denied** ✅ |
+| `authenticated` (claims reales simuladas) → `mark_messages_read` | RPC OK; `read_at` 1→0 ✅ |
+| `service_role` → `mark_message_delivered` | RPC OK ✅ |
+| Producción tras ROLLBACK | unread=1, delivered=0 (intacto) ✅ |
+
+**Verificación local:** `flutter analyze` 0 errores/0 warnings (15 infos pre-existentes) · `flutter test` 12/12.
+**Commit de cierre:** pendiente en esta tanda (el común de FASE 1.5).

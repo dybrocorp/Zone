@@ -22,12 +22,13 @@ class ConnectivityService {
   Stream<bool> get statusStream => _statusController.stream;
 
   Timer? _internetCheckTimer;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
 
   Future<void> initialize() async {
     final result = await _connectivity.checkConnectivity();
     _updateStatus(result);
     
-    _connectivity.onConnectivityChanged.listen((results) {
+    _connectivitySub = _connectivity.onConnectivityChanged.listen((results) {
       // connectivity_plus 6.x devuelve una lista de ConnectivityResult
       _updateStatus(results);
     });
@@ -71,6 +72,7 @@ class ConnectivityService {
   }
 
   void dispose() {
+    _connectivitySub?.cancel();
     _statusController.close();
     _internetCheckTimer?.cancel();
   }

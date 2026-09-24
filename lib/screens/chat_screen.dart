@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'package:cryptography/cryptography.dart';
+import 'package:uuid/uuid.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/supabase_service.dart';
 import '../services/zone_id_service.dart';
@@ -57,6 +58,9 @@ class ChatScreenState extends State<ChatScreen> {
   bool _isOtherTyping = false;
   Timer? _typingTimer;
   final ScrollController _scrollController = ScrollController();
+  bool _hasMoreMessages = true;
+  bool _isLoadingMore = false;
+  DateTime? _oldestMessageDate;
 
   @override
   void initState() {
@@ -64,6 +68,41 @@ class ChatScreenState extends State<ChatScreen> {
     NotificationService.currentActiveMatchId = widget.matchId;
     _setupChat();
     _setupMeshListener();
+    _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
+      _loadMoreMessages();
+    }
+  }
+
+  Future<void> _loadMoreMessages() async {
+    if (_isLoadingMore || !_hasMoreMessages || _oldestMessageDate == null) return;
+    _isLoadingMore = true;
+
+    try {
+      final older = await _supabaseService.getMessagesPaginated(
+        widget.matchId,
+        before: _oldestMessageDate!,
+        limit: 50,
+      );
+      if (older.isEmpty) {
+        _hasMoreMessages = false;
+      } else {
+        await _prefetchDecrypted(older);
+        if (mounted) {
+          setState(() {
+            _messages.insertAll(0, older);
+            _oldestMessageDate = DateTime.parse(older.first['created_at']);
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('[ChatScreen] Error cargando más mensajes: $e');
+    } finally {
+      _isLoadingMore = false;
+    }
   }
 
   void _setupMeshListener() {
@@ -174,6 +213,13 @@ class ChatScreenState extends State<ChatScreen> {
 
       await _prefetchDecrypted(history);
 
+      // Z-007 (S3+S5, aprobado CTO 2026-09-24): al abrir el chat con secreto
+      // listo, marcar como LEÍDOS los mensajes del otro vía RPC SECURITY
+      // DEFINER `mark_messages_read` (gate server-side: solo puede marcar quien
+      // es participante aceptado del match). Sin esto, read_at quedaba NULL en
+      // remoto aunque el usuario YA vio los mensajes → tick "Leído" mentía.
+      await _supabaseService.markAllMessagesRead(widget.matchId, uid);
+
       _subscription = _supabaseService.subscribeToMessages(
         widget.matchId,
         uid,
@@ -226,6 +272,9 @@ class ChatScreenState extends State<ChatScreen> {
             ..clear()
             ..addAll(history);
           _isLoading = false;
+          if (history.isNotEmpty) {
+            _oldestMessageDate = DateTime.parse(history.first['created_at']);
+          }
         });
         _scrollToBottom();
       }
@@ -389,8 +438,10 @@ class ChatScreenState extends State<ChatScreen> {
     if (NotificationService.currentActiveMatchId == widget.matchId) {
       NotificationService.currentActiveMatchId = null;
     }
+    _scrollController.removeListener(_onScroll);
     _meshSubscription?.cancel();
     _subscription?.unsubscribe();
+    _supabaseService.unsubscribeFromMessages(widget.matchId);
     _messageController.dispose();
     _typingTimer?.cancel();
     _scrollController.dispose();
@@ -409,11 +460,17 @@ class ChatScreenState extends State<ChatScreen> {
 
     // ID temporal para la UI optimista
     final tempId = 'temp-${DateTime.now().millisecondsSinceEpoch}';
+
+    // Z-007 (opción 1 CTO 2026-09-24): id de MENSAJE estable, generado una
+    // SOLA vez por envío → un reintento reutiliza el MISMO messageId →
+    // sendMessageIdempotent (ON CONFLICT id) → sin duplicados.
+    final outgoingMessageId = const Uuid().v4();
     final tempMsg = {
       'id': tempId,
       'sender_id': uid,
       'match_id': widget.matchId,
       'created_at': DateTime.now().toUtc().toIso8601String(),
+      'status': 'sending',
     };
 
     // Guardar texto descifrado localmente para el mensaje optimista
@@ -425,7 +482,27 @@ class ChatScreenState extends State<ChatScreen> {
     }
 
     try {
-      // 1. Enviar vía MESH si estamos cerca (Máxima velocidad, Offline)
+      // 0. CIFRAR PRIMERO — el ciphertext se reutiliza para el outbox y el
+      //    envío idempotente (Z-007).
+      final encrypted = await _e2eeService.encryptMessage(
+        controllerText,
+        _sharedSecret!,
+      );
+
+      // 1. PERSISTIR EN OUTBOX (Isar) ANTES de tocar red → el id estable ya
+      // queda asignado. Z-007: un reintento reutiliza el MISMO messageId →
+      // sendMessageIdempotent upsert ON CONFLICT (id) → sin duplicados.
+      await _isar.savePendingMessage(
+        tempId: tempId,
+        messageId: outgoingMessageId,
+        matchId: widget.matchId,
+        senderId: uid,
+        encryptedContent: encrypted['encrypted_content'],
+        nonce: encrypted['nonce'],
+        mac: encrypted['mac'],
+      );
+
+      // 2. Enviar vía MESH si estamos cerca (Máxima velocidad, Offline)
       bool sentViaMesh = false;
       if (_nearbyService.isPeerReachable(widget.otherZoneId)) {
         await _nearbyService.sendMeshMessage(
@@ -436,41 +513,104 @@ class ChatScreenState extends State<ChatScreen> {
         debugPrint('[ChatScreen] Mensaje enviado vía Mesh');
       }
 
-      // 2. Enviar vía SUPABASE si hay conexión (Persistencia y Nube)
+      // 3. Enviar vía SUPABASE (idempotente — no genera un id nuevo)
       if (_connectivity.isOnline) {
-        final encrypted = await _e2eeService.encryptMessage(
-          controllerText,
-          _sharedSecret!,
-        );
-        await _supabaseService.sendMessage(
+        final dbSaved = await _supabaseService.sendMessageIdempotent(
+          messageId: outgoingMessageId,
           matchId: widget.matchId,
           senderId: uid,
           encryptedContent: encrypted['encrypted_content'],
           nonce: encrypted['nonce'],
           mac: encrypted['mac'],
         );
-        debugPrint('[ChatScreen] Mensaje enviado a Supabase');
+        if (!dbSaved) throw Exception('No se pudo guardar en el servidor');
+        debugPrint('[ChatScreen] Mensaje enviado a Supabase (idempotente)');
       } else if (!sentViaMesh) {
-        // Si no hay mesh ni internet, el mensaje falló
         throw Exception('Sin conexión Mesh ni Internet');
       }
 
-      // Marcar transporte en el mensaje optimista si fue solo mesh
-      if (sentViaMesh && !_connectivity.isOnline) {
-        if (mounted) {
-          setState(() {
-            final idx = _messages.indexWhere((m) => m['id'] == tempId);
-            if (idx != -1) _messages[idx]['transport'] = 'mesh';
-          });
-        }
+      // 4. Marcar como enviado + limpiar outbox
+      if (mounted) {
+        setState(() {
+          final idx = _messages.indexWhere((m) => m['id'] == tempId);
+          if (idx != -1) {
+            _messages[idx]['status'] = 'sent';
+            if (sentViaMesh && !_connectivity.isOnline) {
+              _messages[idx]['transport'] = 'mesh';
+            }
+          }
+        });
       }
+      await _isar.deletePendingMessage(tempId);
     } catch (e) {
       debugPrint('[ChatScreen] Error enviando mensaje: $e');
+      // Queda en outbox (Isar) → reintentará SyncService._flushPendingMessages
+      // con el MISMO messageId (idempotente). Solo marcamos failed en la UI.
       if (mounted) {
-        setState(() => _messages.removeWhere((m) => m['id'] == tempId));
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error al enviar: $e')));
+        setState(() {
+          final idx = _messages.indexWhere((m) => m['id'] == tempId);
+          if (idx != -1) {
+            _messages[idx]['status'] = 'failed';
+            _messages[idx]['transport'] = 'mesh';
+          }
+        });
+      }
+    }
+  }
+
+  Future<void> _retryMessage(Map<String, dynamic> msg) async {
+    final tempId = msg['id'] as String;
+    final text = _decryptedByMessageId[tempId];
+    if (text == null) return;
+
+    final uid = _zoneIdService.uid;
+    if (uid == null) return;
+
+    if (mounted) {
+      setState(() {
+        final idx = _messages.indexWhere((m) => m['id'] == tempId);
+        if (idx != -1) _messages[idx]['status'] = 'sending';
+      });
+    }
+
+    try {
+      bool sentViaMesh = false;
+      if (_nearbyService.isPeerReachable(widget.otherZoneId)) {
+        await _nearbyService.sendMeshMessage(widget.otherZoneId, text);
+        sentViaMesh = true;
+      }
+
+      if (_connectivity.isOnline) {
+        final encrypted = await _e2eeService.encryptMessage(text, _sharedSecret!);
+        final dbSaved = await _supabaseService.sendMessage(
+          matchId: widget.matchId,
+          senderId: uid,
+          encryptedContent: encrypted['encrypted_content'],
+          nonce: encrypted['nonce'],
+          mac: encrypted['mac'],
+        );
+        if (!dbSaved) throw Exception('No se pudo guardar en el servidor');
+      } else if (!sentViaMesh) {
+        throw Exception('Sin conexión');
+      }
+
+      if (mounted) {
+        setState(() {
+          final idx = _messages.indexWhere((m) => m['id'] == tempId);
+          if (idx != -1) {
+            _messages[idx]['status'] = 'sent';
+            if (sentViaMesh && !_connectivity.isOnline) {
+              _messages[idx]['transport'] = 'mesh';
+            }
+          }
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          final idx = _messages.indexWhere((m) => m['id'] == tempId);
+          if (idx != -1) _messages[idx]['status'] = 'failed';
+        });
       }
     }
   }
@@ -744,6 +884,82 @@ class ChatScreenState extends State<ChatScreen> {
                                                   ),
                                                 ],
                                               ),
+                                            ),
+                                          ),
+                                        if (msg['status'] == 'failed' && isMe)
+                                          Padding(
+                                            padding: const EdgeInsets.only(top: 4),
+                                            child: GestureDetector(
+                                              onTap: () => _retryMessage(msg),
+                                              child: Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.redAccent.withValues(alpha: 0.2),
+                                                  borderRadius: BorderRadius.circular(4),
+                                                ),
+                                                child: const Row(
+                                                  mainAxisSize: MainAxisSize.min,
+                                                  children: [
+                                                    Icon(Icons.error_outline, size: 10, color: Colors.redAccent),
+                                                    SizedBox(width: 2),
+                                                    Text(
+                                                      'ERROR • TOCA PARA REINTENTAR',
+                                                      style: TextStyle(fontSize: 8, color: Colors.redAccent, fontWeight: FontWeight.bold),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        if (msg['status'] == 'sending' && isMe)
+                                          Padding(
+                                            padding: const EdgeInsets.only(top: 4),
+                                            child: Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                              decoration: BoxDecoration(
+                                                color: Colors.white12,
+                                                borderRadius: BorderRadius.circular(4),
+                                              ),
+                                              child: const Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  SizedBox(width: 8, height: 8, child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.white54)),
+                                                  SizedBox(width: 4),
+                                                  Text('Enviando...', style: TextStyle(fontSize: 8, color: Colors.white54)),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        if (isMe && msg['status'] != 'sending' && msg['status'] != 'failed' && !msg['id'].toString().startsWith('temp-'))
+                                          Padding(
+                                            padding: const EdgeInsets.only(top: 4),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(
+                                                  msg['delivered_at'] != null || msg['read_at'] != null
+                                                      ? Icons.done_all
+                                                      : Icons.done,
+                                                  size: 12,
+                                                  color: msg['read_at'] != null
+                                                      ? const Color(0xFF00D2FF)
+                                                      : Colors.white54,
+                                                ),
+                                                const SizedBox(width: 2),
+                                                Text(
+                                                  msg['read_at'] != null
+                                                      ? 'Leído'
+                                                      : msg['delivered_at'] != null
+                                                          ? 'Entregado'
+                                                          : 'Enviado',
+                                                  style: TextStyle(
+                                                    fontSize: 8,
+                                                    color: msg['read_at'] != null
+                                                        ? const Color(0xFF00D2FF)
+                                                        : Colors.white54,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
                                           ),
                                       ],

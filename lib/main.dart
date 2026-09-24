@@ -1,9 +1,21 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'screens/initial_loading_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const ZoneApp());
+
+  FlutterError.onError = (FlutterErrorDetails details) {
+    debugPrint('[FLUTTER_ERROR] ${details.exception}');
+    debugPrint('[FLUTTER_ERROR] Stack: ${details.stack}');
+  };
+
+  runZonedGuarded(() {
+    runApp(const ZoneApp());
+  }, (error, stackTrace) {
+    debugPrint('[ZONE_ERROR] $error');
+    debugPrint('[ZONE_ERROR] Stack: $stackTrace');
+  });
 }
 
 class ZoneApp extends StatelessWidget {

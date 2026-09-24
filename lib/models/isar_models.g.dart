@@ -57,33 +57,28 @@ const LocalProfileSchema = CollectionSchema(
       name: r'publicKey',
       type: IsarType.string,
     ),
-    r'sessionKey': PropertySchema(
-      id: 8,
-      name: r'sessionKey',
-      type: IsarType.string,
-    ),
     r'tiktokHandle': PropertySchema(
-      id: 9,
+      id: 8,
       name: r'tiktokHandle',
       type: IsarType.string,
     ),
     r'updatedAt': PropertySchema(
-      id: 10,
+      id: 9,
       name: r'updatedAt',
       type: IsarType.dateTime,
     ),
     r'userId': PropertySchema(
-      id: 11,
+      id: 10,
       name: r'userId',
       type: IsarType.string,
     ),
     r'version': PropertySchema(
-      id: 12,
+      id: 11,
       name: r'version',
       type: IsarType.long,
     ),
     r'zoneId': PropertySchema(
-      id: 13,
+      id: 12,
       name: r'zoneId',
       type: IsarType.string,
     )
@@ -172,12 +167,6 @@ int _localProfileEstimateSize(
     }
   }
   {
-    final value = object.sessionKey;
-    if (value != null) {
-      bytesCount += 3 + value.length * 3;
-    }
-  }
-  {
     final value = object.tiktokHandle;
     if (value != null) {
       bytesCount += 3 + value.length * 3;
@@ -202,12 +191,11 @@ void _localProfileSerialize(
   writer.writeBool(offsets[5], object.isSynced);
   writer.writeDateTime(offsets[6], object.lastSeen);
   writer.writeString(offsets[7], object.publicKey);
-  writer.writeString(offsets[8], object.sessionKey);
-  writer.writeString(offsets[9], object.tiktokHandle);
-  writer.writeDateTime(offsets[10], object.updatedAt);
-  writer.writeString(offsets[11], object.userId);
-  writer.writeLong(offsets[12], object.version);
-  writer.writeString(offsets[13], object.zoneId);
+  writer.writeString(offsets[8], object.tiktokHandle);
+  writer.writeDateTime(offsets[9], object.updatedAt);
+  writer.writeString(offsets[10], object.userId);
+  writer.writeLong(offsets[11], object.version);
+  writer.writeString(offsets[12], object.zoneId);
 }
 
 LocalProfile _localProfileDeserialize(
@@ -226,12 +214,11 @@ LocalProfile _localProfileDeserialize(
   object.isSynced = reader.readBool(offsets[5]);
   object.lastSeen = reader.readDateTimeOrNull(offsets[6]);
   object.publicKey = reader.readStringOrNull(offsets[7]);
-  object.sessionKey = reader.readStringOrNull(offsets[8]);
-  object.tiktokHandle = reader.readStringOrNull(offsets[9]);
-  object.updatedAt = reader.readDateTime(offsets[10]);
-  object.userId = reader.readString(offsets[11]);
-  object.version = reader.readLong(offsets[12]);
-  object.zoneId = reader.readString(offsets[13]);
+  object.tiktokHandle = reader.readStringOrNull(offsets[8]);
+  object.updatedAt = reader.readDateTime(offsets[9]);
+  object.userId = reader.readString(offsets[10]);
+  object.version = reader.readLong(offsets[11]);
+  object.zoneId = reader.readString(offsets[12]);
   return object;
 }
 
@@ -261,14 +248,12 @@ P _localProfileDeserializeProp<P>(
     case 8:
       return (reader.readStringOrNull(offset)) as P;
     case 9:
-      return (reader.readStringOrNull(offset)) as P;
-    case 10:
       return (reader.readDateTime(offset)) as P;
-    case 11:
+    case 10:
       return (reader.readString(offset)) as P;
-    case 12:
+    case 11:
       return (reader.readLong(offset)) as P;
-    case 13:
+    case 12:
       return (reader.readString(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -1624,160 +1609,6 @@ extension LocalProfileQueryFilter
   }
 
   QueryBuilder<LocalProfile, LocalProfile, QAfterFilterCondition>
-      sessionKeyIsNull() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(const FilterCondition.isNull(
-        property: r'sessionKey',
-      ));
-    });
-  }
-
-  QueryBuilder<LocalProfile, LocalProfile, QAfterFilterCondition>
-      sessionKeyIsNotNull() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(const FilterCondition.isNotNull(
-        property: r'sessionKey',
-      ));
-    });
-  }
-
-  QueryBuilder<LocalProfile, LocalProfile, QAfterFilterCondition>
-      sessionKeyEqualTo(
-    String? value, {
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.equalTo(
-        property: r'sessionKey',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<LocalProfile, LocalProfile, QAfterFilterCondition>
-      sessionKeyGreaterThan(
-    String? value, {
-    bool include = false,
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.greaterThan(
-        include: include,
-        property: r'sessionKey',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<LocalProfile, LocalProfile, QAfterFilterCondition>
-      sessionKeyLessThan(
-    String? value, {
-    bool include = false,
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.lessThan(
-        include: include,
-        property: r'sessionKey',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<LocalProfile, LocalProfile, QAfterFilterCondition>
-      sessionKeyBetween(
-    String? lower,
-    String? upper, {
-    bool includeLower = true,
-    bool includeUpper = true,
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.between(
-        property: r'sessionKey',
-        lower: lower,
-        includeLower: includeLower,
-        upper: upper,
-        includeUpper: includeUpper,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<LocalProfile, LocalProfile, QAfterFilterCondition>
-      sessionKeyStartsWith(
-    String value, {
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.startsWith(
-        property: r'sessionKey',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<LocalProfile, LocalProfile, QAfterFilterCondition>
-      sessionKeyEndsWith(
-    String value, {
-    bool caseSensitive = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.endsWith(
-        property: r'sessionKey',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<LocalProfile, LocalProfile, QAfterFilterCondition>
-      sessionKeyContains(String value, {bool caseSensitive = true}) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.contains(
-        property: r'sessionKey',
-        value: value,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<LocalProfile, LocalProfile, QAfterFilterCondition>
-      sessionKeyMatches(String pattern, {bool caseSensitive = true}) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.matches(
-        property: r'sessionKey',
-        wildcard: pattern,
-        caseSensitive: caseSensitive,
-      ));
-    });
-  }
-
-  QueryBuilder<LocalProfile, LocalProfile, QAfterFilterCondition>
-      sessionKeyIsEmpty() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.equalTo(
-        property: r'sessionKey',
-        value: '',
-      ));
-    });
-  }
-
-  QueryBuilder<LocalProfile, LocalProfile, QAfterFilterCondition>
-      sessionKeyIsNotEmpty() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.greaterThan(
-        property: r'sessionKey',
-        value: '',
-      ));
-    });
-  }
-
-  QueryBuilder<LocalProfile, LocalProfile, QAfterFilterCondition>
       tiktokHandleIsNull() {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(const FilterCondition.isNull(
@@ -2423,19 +2254,6 @@ extension LocalProfileQuerySortBy
     });
   }
 
-  QueryBuilder<LocalProfile, LocalProfile, QAfterSortBy> sortBySessionKey() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'sessionKey', Sort.asc);
-    });
-  }
-
-  QueryBuilder<LocalProfile, LocalProfile, QAfterSortBy>
-      sortBySessionKeyDesc() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'sessionKey', Sort.desc);
-    });
-  }
-
   QueryBuilder<LocalProfile, LocalProfile, QAfterSortBy> sortByTiktokHandle() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'tiktokHandle', Sort.asc);
@@ -2613,19 +2431,6 @@ extension LocalProfileQuerySortThenBy
     });
   }
 
-  QueryBuilder<LocalProfile, LocalProfile, QAfterSortBy> thenBySessionKey() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'sessionKey', Sort.asc);
-    });
-  }
-
-  QueryBuilder<LocalProfile, LocalProfile, QAfterSortBy>
-      thenBySessionKeyDesc() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'sessionKey', Sort.desc);
-    });
-  }
-
   QueryBuilder<LocalProfile, LocalProfile, QAfterSortBy> thenByTiktokHandle() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'tiktokHandle', Sort.asc);
@@ -2746,13 +2551,6 @@ extension LocalProfileQueryWhereDistinct
     });
   }
 
-  QueryBuilder<LocalProfile, LocalProfile, QDistinct> distinctBySessionKey(
-      {bool caseSensitive = true}) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addDistinctBy(r'sessionKey', caseSensitive: caseSensitive);
-    });
-  }
-
   QueryBuilder<LocalProfile, LocalProfile, QDistinct> distinctByTiktokHandle(
       {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
@@ -2842,12 +2640,6 @@ extension LocalProfileQueryProperty
   QueryBuilder<LocalProfile, String?, QQueryOperations> publicKeyProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'publicKey');
-    });
-  }
-
-  QueryBuilder<LocalProfile, String?, QQueryOperations> sessionKeyProperty() {
-    return QueryBuilder.apply(this, (query) {
-      return query.addPropertyName(r'sessionKey');
     });
   }
 
@@ -4061,53 +3853,63 @@ const LocalMessageSchema = CollectionSchema(
       name: r'createdAt',
       type: IsarType.dateTime,
     ),
-    r'encryptedContent': PropertySchema(
+    r'deliveredAt': PropertySchema(
       id: 1,
+      name: r'deliveredAt',
+      type: IsarType.dateTime,
+    ),
+    r'encryptedContent': PropertySchema(
+      id: 2,
       name: r'encryptedContent',
       type: IsarType.string,
     ),
     r'hopCount': PropertySchema(
-      id: 2,
+      id: 3,
       name: r'hopCount',
       type: IsarType.long,
     ),
     r'isP2p': PropertySchema(
-      id: 3,
+      id: 4,
       name: r'isP2p',
       type: IsarType.bool,
     ),
     r'isSynced': PropertySchema(
-      id: 4,
+      id: 5,
       name: r'isSynced',
       type: IsarType.bool,
     ),
     r'mac': PropertySchema(
-      id: 5,
+      id: 6,
       name: r'mac',
       type: IsarType.string,
     ),
     r'matchId': PropertySchema(
-      id: 6,
+      id: 7,
       name: r'matchId',
       type: IsarType.string,
     ),
     r'messageId': PropertySchema(
-      id: 7,
+      id: 8,
       name: r'messageId',
       type: IsarType.string,
     ),
     r'nonce': PropertySchema(
-      id: 8,
+      id: 9,
       name: r'nonce',
       type: IsarType.string,
     ),
+    r'readAt': PropertySchema(
+      id: 10,
+      name: r'readAt',
+      type: IsarType.dateTime,
+    ),
     r'receiverId': PropertySchema(
-      id: 9,
+      id: 11,
       name: r'receiverId',
       type: IsarType.string,
     ),
     r'senderId': PropertySchema(
-      id: 10,
+      id: 12,
       name: r'senderId',
       type: IsarType.string,
     )
@@ -4189,16 +3991,18 @@ void _localMessageSerialize(
   Map<Type, List<int>> allOffsets,
 ) {
   writer.writeDateTime(offsets[0], object.createdAt);
-  writer.writeString(offsets[1], object.encryptedContent);
-  writer.writeLong(offsets[2], object.hopCount);
-  writer.writeBool(offsets[3], object.isP2p);
-  writer.writeBool(offsets[4], object.isSynced);
-  writer.writeString(offsets[5], object.mac);
-  writer.writeString(offsets[6], object.matchId);
-  writer.writeString(offsets[7], object.messageId);
-  writer.writeString(offsets[8], object.nonce);
-  writer.writeString(offsets[9], object.receiverId);
-  writer.writeString(offsets[10], object.senderId);
+  writer.writeDateTime(offsets[1], object.deliveredAt);
+  writer.writeString(offsets[2], object.encryptedContent);
+  writer.writeLong(offsets[3], object.hopCount);
+  writer.writeBool(offsets[4], object.isP2p);
+  writer.writeBool(offsets[5], object.isSynced);
+  writer.writeString(offsets[6], object.mac);
+  writer.writeString(offsets[7], object.matchId);
+  writer.writeString(offsets[8], object.messageId);
+  writer.writeString(offsets[9], object.nonce);
+  writer.writeDateTime(offsets[10], object.readAt);
+  writer.writeString(offsets[11], object.receiverId);
+  writer.writeString(offsets[12], object.senderId);
 }
 
 LocalMessage _localMessageDeserialize(
@@ -4209,17 +4013,19 @@ LocalMessage _localMessageDeserialize(
 ) {
   final object = LocalMessage();
   object.createdAt = reader.readDateTime(offsets[0]);
-  object.encryptedContent = reader.readString(offsets[1]);
-  object.hopCount = reader.readLong(offsets[2]);
+  object.deliveredAt = reader.readDateTimeOrNull(offsets[1]);
+  object.encryptedContent = reader.readString(offsets[2]);
+  object.hopCount = reader.readLong(offsets[3]);
   object.id = id;
-  object.isP2p = reader.readBool(offsets[3]);
-  object.isSynced = reader.readBool(offsets[4]);
-  object.mac = reader.readString(offsets[5]);
-  object.matchId = reader.readString(offsets[6]);
-  object.messageId = reader.readString(offsets[7]);
-  object.nonce = reader.readString(offsets[8]);
-  object.receiverId = reader.readString(offsets[9]);
-  object.senderId = reader.readString(offsets[10]);
+  object.isP2p = reader.readBool(offsets[4]);
+  object.isSynced = reader.readBool(offsets[5]);
+  object.mac = reader.readString(offsets[6]);
+  object.matchId = reader.readString(offsets[7]);
+  object.messageId = reader.readString(offsets[8]);
+  object.nonce = reader.readString(offsets[9]);
+  object.readAt = reader.readDateTimeOrNull(offsets[10]);
+  object.receiverId = reader.readString(offsets[11]);
+  object.senderId = reader.readString(offsets[12]);
   return object;
 }
 
@@ -4233,15 +4039,15 @@ P _localMessageDeserializeProp<P>(
     case 0:
       return (reader.readDateTime(offset)) as P;
     case 1:
-      return (reader.readString(offset)) as P;
+      return (reader.readDateTimeOrNull(offset)) as P;
     case 2:
-      return (reader.readLong(offset)) as P;
+      return (reader.readString(offset)) as P;
     case 3:
-      return (reader.readBool(offset)) as P;
+      return (reader.readLong(offset)) as P;
     case 4:
       return (reader.readBool(offset)) as P;
     case 5:
-      return (reader.readString(offset)) as P;
+      return (reader.readBool(offset)) as P;
     case 6:
       return (reader.readString(offset)) as P;
     case 7:
@@ -4251,6 +4057,10 @@ P _localMessageDeserializeProp<P>(
     case 9:
       return (reader.readString(offset)) as P;
     case 10:
+      return (reader.readDateTimeOrNull(offset)) as P;
+    case 11:
+      return (reader.readString(offset)) as P;
+    case 12:
       return (reader.readString(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -4643,6 +4453,80 @@ extension LocalMessageQueryFilter
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.between(
         property: r'createdAt',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalMessage, LocalMessage, QAfterFilterCondition>
+      deliveredAtIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'deliveredAt',
+      ));
+    });
+  }
+
+  QueryBuilder<LocalMessage, LocalMessage, QAfterFilterCondition>
+      deliveredAtIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'deliveredAt',
+      ));
+    });
+  }
+
+  QueryBuilder<LocalMessage, LocalMessage, QAfterFilterCondition>
+      deliveredAtEqualTo(DateTime? value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'deliveredAt',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalMessage, LocalMessage, QAfterFilterCondition>
+      deliveredAtGreaterThan(
+    DateTime? value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'deliveredAt',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalMessage, LocalMessage, QAfterFilterCondition>
+      deliveredAtLessThan(
+    DateTime? value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'deliveredAt',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalMessage, LocalMessage, QAfterFilterCondition>
+      deliveredAtBetween(
+    DateTime? lower,
+    DateTime? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'deliveredAt',
         lower: lower,
         includeLower: includeLower,
         upper: upper,
@@ -5455,6 +5339,79 @@ extension LocalMessageQueryFilter
   }
 
   QueryBuilder<LocalMessage, LocalMessage, QAfterFilterCondition>
+      readAtIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'readAt',
+      ));
+    });
+  }
+
+  QueryBuilder<LocalMessage, LocalMessage, QAfterFilterCondition>
+      readAtIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'readAt',
+      ));
+    });
+  }
+
+  QueryBuilder<LocalMessage, LocalMessage, QAfterFilterCondition> readAtEqualTo(
+      DateTime? value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'readAt',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalMessage, LocalMessage, QAfterFilterCondition>
+      readAtGreaterThan(
+    DateTime? value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'readAt',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalMessage, LocalMessage, QAfterFilterCondition>
+      readAtLessThan(
+    DateTime? value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'readAt',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalMessage, LocalMessage, QAfterFilterCondition> readAtBetween(
+    DateTime? lower,
+    DateTime? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'readAt',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalMessage, LocalMessage, QAfterFilterCondition>
       receiverIdEqualTo(
     String value, {
     bool caseSensitive = true,
@@ -5747,6 +5704,19 @@ extension LocalMessageQuerySortBy
     });
   }
 
+  QueryBuilder<LocalMessage, LocalMessage, QAfterSortBy> sortByDeliveredAt() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'deliveredAt', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalMessage, LocalMessage, QAfterSortBy>
+      sortByDeliveredAtDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'deliveredAt', Sort.desc);
+    });
+  }
+
   QueryBuilder<LocalMessage, LocalMessage, QAfterSortBy>
       sortByEncryptedContent() {
     return QueryBuilder.apply(this, (query) {
@@ -5845,6 +5815,18 @@ extension LocalMessageQuerySortBy
     });
   }
 
+  QueryBuilder<LocalMessage, LocalMessage, QAfterSortBy> sortByReadAt() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'readAt', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalMessage, LocalMessage, QAfterSortBy> sortByReadAtDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'readAt', Sort.desc);
+    });
+  }
+
   QueryBuilder<LocalMessage, LocalMessage, QAfterSortBy> sortByReceiverId() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'receiverId', Sort.asc);
@@ -5882,6 +5864,19 @@ extension LocalMessageQuerySortThenBy
   QueryBuilder<LocalMessage, LocalMessage, QAfterSortBy> thenByCreatedAtDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'createdAt', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalMessage, LocalMessage, QAfterSortBy> thenByDeliveredAt() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'deliveredAt', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalMessage, LocalMessage, QAfterSortBy>
+      thenByDeliveredAtDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'deliveredAt', Sort.desc);
     });
   }
 
@@ -5995,6 +5990,18 @@ extension LocalMessageQuerySortThenBy
     });
   }
 
+  QueryBuilder<LocalMessage, LocalMessage, QAfterSortBy> thenByReadAt() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'readAt', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalMessage, LocalMessage, QAfterSortBy> thenByReadAtDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'readAt', Sort.desc);
+    });
+  }
+
   QueryBuilder<LocalMessage, LocalMessage, QAfterSortBy> thenByReceiverId() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'receiverId', Sort.asc);
@@ -6026,6 +6033,12 @@ extension LocalMessageQueryWhereDistinct
   QueryBuilder<LocalMessage, LocalMessage, QDistinct> distinctByCreatedAt() {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'createdAt');
+    });
+  }
+
+  QueryBuilder<LocalMessage, LocalMessage, QDistinct> distinctByDeliveredAt() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'deliveredAt');
     });
   }
 
@@ -6083,6 +6096,12 @@ extension LocalMessageQueryWhereDistinct
     });
   }
 
+  QueryBuilder<LocalMessage, LocalMessage, QDistinct> distinctByReadAt() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'readAt');
+    });
+  }
+
   QueryBuilder<LocalMessage, LocalMessage, QDistinct> distinctByReceiverId(
       {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
@@ -6109,6 +6128,13 @@ extension LocalMessageQueryProperty
   QueryBuilder<LocalMessage, DateTime, QQueryOperations> createdAtProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'createdAt');
+    });
+  }
+
+  QueryBuilder<LocalMessage, DateTime?, QQueryOperations>
+      deliveredAtProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'deliveredAt');
     });
   }
 
@@ -6158,6 +6184,12 @@ extension LocalMessageQueryProperty
   QueryBuilder<LocalMessage, String, QQueryOperations> nonceProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'nonce');
+    });
+  }
+
+  QueryBuilder<LocalMessage, DateTime?, QQueryOperations> readAtProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'readAt');
     });
   }
 
@@ -7155,6 +7187,2077 @@ extension MeshRouteQueryProperty
   QueryBuilder<MeshRoute, String, QQueryOperations> targetZoneIdProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'targetZoneId');
+    });
+  }
+}
+
+// coverage:ignore-file
+// ignore_for_file: duplicate_ignore, non_constant_identifier_names, constant_identifier_names, invalid_use_of_protected_member, unnecessary_cast, prefer_const_constructors, lines_longer_than_80_chars, require_trailing_commas, inference_failure_on_function_invocation, unnecessary_parenthesis, unnecessary_raw_strings, unnecessary_null_checks, join_return_with_assignment, prefer_final_locals, avoid_js_rounded_ints, avoid_positional_boolean_parameters, always_specify_types
+
+extension GetLocalPendingMessageCollection on Isar {
+  IsarCollection<LocalPendingMessage> get localPendingMessages =>
+      this.collection();
+}
+
+const LocalPendingMessageSchema = CollectionSchema(
+  name: r'LocalPendingMessage',
+  id: -7878835783187601990,
+  properties: {
+    r'createdAt': PropertySchema(
+      id: 0,
+      name: r'createdAt',
+      type: IsarType.dateTime,
+    ),
+    r'encryptedContent': PropertySchema(
+      id: 1,
+      name: r'encryptedContent',
+      type: IsarType.string,
+    ),
+    r'mac': PropertySchema(
+      id: 2,
+      name: r'mac',
+      type: IsarType.string,
+    ),
+    r'matchId': PropertySchema(
+      id: 3,
+      name: r'matchId',
+      type: IsarType.string,
+    ),
+    r'messageId': PropertySchema(
+      id: 4,
+      name: r'messageId',
+      type: IsarType.string,
+    ),
+    r'nonce': PropertySchema(
+      id: 5,
+      name: r'nonce',
+      type: IsarType.string,
+    ),
+    r'retryCount': PropertySchema(
+      id: 6,
+      name: r'retryCount',
+      type: IsarType.long,
+    ),
+    r'senderId': PropertySchema(
+      id: 7,
+      name: r'senderId',
+      type: IsarType.string,
+    ),
+    r'tempId': PropertySchema(
+      id: 8,
+      name: r'tempId',
+      type: IsarType.string,
+    )
+  },
+  estimateSize: _localPendingMessageEstimateSize,
+  serialize: _localPendingMessageSerialize,
+  deserialize: _localPendingMessageDeserialize,
+  deserializeProp: _localPendingMessageDeserializeProp,
+  idName: r'id',
+  indexes: {
+    r'tempId': IndexSchema(
+      id: 2461988663639479411,
+      name: r'tempId',
+      unique: true,
+      replace: true,
+      properties: [
+        IndexPropertySchema(
+          name: r'tempId',
+          type: IndexType.hash,
+          caseSensitive: true,
+        )
+      ],
+    ),
+    r'messageId': IndexSchema(
+      id: -635287409172016016,
+      name: r'messageId',
+      unique: true,
+      replace: true,
+      properties: [
+        IndexPropertySchema(
+          name: r'messageId',
+          type: IndexType.hash,
+          caseSensitive: true,
+        )
+      ],
+    ),
+    r'matchId': IndexSchema(
+      id: -6517933327003962923,
+      name: r'matchId',
+      unique: false,
+      replace: false,
+      properties: [
+        IndexPropertySchema(
+          name: r'matchId',
+          type: IndexType.hash,
+          caseSensitive: true,
+        )
+      ],
+    )
+  },
+  links: {},
+  embeddedSchemas: {},
+  getId: _localPendingMessageGetId,
+  getLinks: _localPendingMessageGetLinks,
+  attach: _localPendingMessageAttach,
+  version: '3.1.0+1',
+);
+
+int _localPendingMessageEstimateSize(
+  LocalPendingMessage object,
+  List<int> offsets,
+  Map<Type, List<int>> allOffsets,
+) {
+  var bytesCount = offsets.last;
+  bytesCount += 3 + object.encryptedContent.length * 3;
+  bytesCount += 3 + object.mac.length * 3;
+  bytesCount += 3 + object.matchId.length * 3;
+  bytesCount += 3 + object.messageId.length * 3;
+  bytesCount += 3 + object.nonce.length * 3;
+  bytesCount += 3 + object.senderId.length * 3;
+  bytesCount += 3 + object.tempId.length * 3;
+  return bytesCount;
+}
+
+void _localPendingMessageSerialize(
+  LocalPendingMessage object,
+  IsarWriter writer,
+  List<int> offsets,
+  Map<Type, List<int>> allOffsets,
+) {
+  writer.writeDateTime(offsets[0], object.createdAt);
+  writer.writeString(offsets[1], object.encryptedContent);
+  writer.writeString(offsets[2], object.mac);
+  writer.writeString(offsets[3], object.matchId);
+  writer.writeString(offsets[4], object.messageId);
+  writer.writeString(offsets[5], object.nonce);
+  writer.writeLong(offsets[6], object.retryCount);
+  writer.writeString(offsets[7], object.senderId);
+  writer.writeString(offsets[8], object.tempId);
+}
+
+LocalPendingMessage _localPendingMessageDeserialize(
+  Id id,
+  IsarReader reader,
+  List<int> offsets,
+  Map<Type, List<int>> allOffsets,
+) {
+  final object = LocalPendingMessage();
+  object.createdAt = reader.readDateTime(offsets[0]);
+  object.encryptedContent = reader.readString(offsets[1]);
+  object.id = id;
+  object.mac = reader.readString(offsets[2]);
+  object.matchId = reader.readString(offsets[3]);
+  object.messageId = reader.readString(offsets[4]);
+  object.nonce = reader.readString(offsets[5]);
+  object.retryCount = reader.readLong(offsets[6]);
+  object.senderId = reader.readString(offsets[7]);
+  object.tempId = reader.readString(offsets[8]);
+  return object;
+}
+
+P _localPendingMessageDeserializeProp<P>(
+  IsarReader reader,
+  int propertyId,
+  int offset,
+  Map<Type, List<int>> allOffsets,
+) {
+  switch (propertyId) {
+    case 0:
+      return (reader.readDateTime(offset)) as P;
+    case 1:
+      return (reader.readString(offset)) as P;
+    case 2:
+      return (reader.readString(offset)) as P;
+    case 3:
+      return (reader.readString(offset)) as P;
+    case 4:
+      return (reader.readString(offset)) as P;
+    case 5:
+      return (reader.readString(offset)) as P;
+    case 6:
+      return (reader.readLong(offset)) as P;
+    case 7:
+      return (reader.readString(offset)) as P;
+    case 8:
+      return (reader.readString(offset)) as P;
+    default:
+      throw IsarError('Unknown property with id $propertyId');
+  }
+}
+
+Id _localPendingMessageGetId(LocalPendingMessage object) {
+  return object.id;
+}
+
+List<IsarLinkBase<dynamic>> _localPendingMessageGetLinks(
+    LocalPendingMessage object) {
+  return [];
+}
+
+void _localPendingMessageAttach(
+    IsarCollection<dynamic> col, Id id, LocalPendingMessage object) {
+  object.id = id;
+}
+
+extension LocalPendingMessageByIndex on IsarCollection<LocalPendingMessage> {
+  Future<LocalPendingMessage?> getByTempId(String tempId) {
+    return getByIndex(r'tempId', [tempId]);
+  }
+
+  LocalPendingMessage? getByTempIdSync(String tempId) {
+    return getByIndexSync(r'tempId', [tempId]);
+  }
+
+  Future<bool> deleteByTempId(String tempId) {
+    return deleteByIndex(r'tempId', [tempId]);
+  }
+
+  bool deleteByTempIdSync(String tempId) {
+    return deleteByIndexSync(r'tempId', [tempId]);
+  }
+
+  Future<List<LocalPendingMessage?>> getAllByTempId(List<String> tempIdValues) {
+    final values = tempIdValues.map((e) => [e]).toList();
+    return getAllByIndex(r'tempId', values);
+  }
+
+  List<LocalPendingMessage?> getAllByTempIdSync(List<String> tempIdValues) {
+    final values = tempIdValues.map((e) => [e]).toList();
+    return getAllByIndexSync(r'tempId', values);
+  }
+
+  Future<int> deleteAllByTempId(List<String> tempIdValues) {
+    final values = tempIdValues.map((e) => [e]).toList();
+    return deleteAllByIndex(r'tempId', values);
+  }
+
+  int deleteAllByTempIdSync(List<String> tempIdValues) {
+    final values = tempIdValues.map((e) => [e]).toList();
+    return deleteAllByIndexSync(r'tempId', values);
+  }
+
+  Future<Id> putByTempId(LocalPendingMessage object) {
+    return putByIndex(r'tempId', object);
+  }
+
+  Id putByTempIdSync(LocalPendingMessage object, {bool saveLinks = true}) {
+    return putByIndexSync(r'tempId', object, saveLinks: saveLinks);
+  }
+
+  Future<List<Id>> putAllByTempId(List<LocalPendingMessage> objects) {
+    return putAllByIndex(r'tempId', objects);
+  }
+
+  List<Id> putAllByTempIdSync(List<LocalPendingMessage> objects,
+      {bool saveLinks = true}) {
+    return putAllByIndexSync(r'tempId', objects, saveLinks: saveLinks);
+  }
+
+  Future<LocalPendingMessage?> getByMessageId(String messageId) {
+    return getByIndex(r'messageId', [messageId]);
+  }
+
+  LocalPendingMessage? getByMessageIdSync(String messageId) {
+    return getByIndexSync(r'messageId', [messageId]);
+  }
+
+  Future<bool> deleteByMessageId(String messageId) {
+    return deleteByIndex(r'messageId', [messageId]);
+  }
+
+  bool deleteByMessageIdSync(String messageId) {
+    return deleteByIndexSync(r'messageId', [messageId]);
+  }
+
+  Future<List<LocalPendingMessage?>> getAllByMessageId(
+      List<String> messageIdValues) {
+    final values = messageIdValues.map((e) => [e]).toList();
+    return getAllByIndex(r'messageId', values);
+  }
+
+  List<LocalPendingMessage?> getAllByMessageIdSync(
+      List<String> messageIdValues) {
+    final values = messageIdValues.map((e) => [e]).toList();
+    return getAllByIndexSync(r'messageId', values);
+  }
+
+  Future<int> deleteAllByMessageId(List<String> messageIdValues) {
+    final values = messageIdValues.map((e) => [e]).toList();
+    return deleteAllByIndex(r'messageId', values);
+  }
+
+  int deleteAllByMessageIdSync(List<String> messageIdValues) {
+    final values = messageIdValues.map((e) => [e]).toList();
+    return deleteAllByIndexSync(r'messageId', values);
+  }
+
+  Future<Id> putByMessageId(LocalPendingMessage object) {
+    return putByIndex(r'messageId', object);
+  }
+
+  Id putByMessageIdSync(LocalPendingMessage object, {bool saveLinks = true}) {
+    return putByIndexSync(r'messageId', object, saveLinks: saveLinks);
+  }
+
+  Future<List<Id>> putAllByMessageId(List<LocalPendingMessage> objects) {
+    return putAllByIndex(r'messageId', objects);
+  }
+
+  List<Id> putAllByMessageIdSync(List<LocalPendingMessage> objects,
+      {bool saveLinks = true}) {
+    return putAllByIndexSync(r'messageId', objects, saveLinks: saveLinks);
+  }
+}
+
+extension LocalPendingMessageQueryWhereSort
+    on QueryBuilder<LocalPendingMessage, LocalPendingMessage, QWhere> {
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterWhere> anyId() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(const IdWhereClause.any());
+    });
+  }
+}
+
+extension LocalPendingMessageQueryWhere
+    on QueryBuilder<LocalPendingMessage, LocalPendingMessage, QWhereClause> {
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterWhereClause>
+      idEqualTo(Id id) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IdWhereClause.between(
+        lower: id,
+        upper: id,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterWhereClause>
+      idNotEqualTo(Id id) {
+    return QueryBuilder.apply(this, (query) {
+      if (query.whereSort == Sort.asc) {
+        return query
+            .addWhereClause(
+              IdWhereClause.lessThan(upper: id, includeUpper: false),
+            )
+            .addWhereClause(
+              IdWhereClause.greaterThan(lower: id, includeLower: false),
+            );
+      } else {
+        return query
+            .addWhereClause(
+              IdWhereClause.greaterThan(lower: id, includeLower: false),
+            )
+            .addWhereClause(
+              IdWhereClause.lessThan(upper: id, includeUpper: false),
+            );
+      }
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterWhereClause>
+      idGreaterThan(Id id, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(
+        IdWhereClause.greaterThan(lower: id, includeLower: include),
+      );
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterWhereClause>
+      idLessThan(Id id, {bool include = false}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(
+        IdWhereClause.lessThan(upper: id, includeUpper: include),
+      );
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterWhereClause>
+      idBetween(
+    Id lowerId,
+    Id upperId, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IdWhereClause.between(
+        lower: lowerId,
+        includeLower: includeLower,
+        upper: upperId,
+        includeUpper: includeUpper,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterWhereClause>
+      tempIdEqualTo(String tempId) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.equalTo(
+        indexName: r'tempId',
+        value: [tempId],
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterWhereClause>
+      tempIdNotEqualTo(String tempId) {
+    return QueryBuilder.apply(this, (query) {
+      if (query.whereSort == Sort.asc) {
+        return query
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'tempId',
+              lower: [],
+              upper: [tempId],
+              includeUpper: false,
+            ))
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'tempId',
+              lower: [tempId],
+              includeLower: false,
+              upper: [],
+            ));
+      } else {
+        return query
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'tempId',
+              lower: [tempId],
+              includeLower: false,
+              upper: [],
+            ))
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'tempId',
+              lower: [],
+              upper: [tempId],
+              includeUpper: false,
+            ));
+      }
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterWhereClause>
+      messageIdEqualTo(String messageId) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.equalTo(
+        indexName: r'messageId',
+        value: [messageId],
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterWhereClause>
+      messageIdNotEqualTo(String messageId) {
+    return QueryBuilder.apply(this, (query) {
+      if (query.whereSort == Sort.asc) {
+        return query
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'messageId',
+              lower: [],
+              upper: [messageId],
+              includeUpper: false,
+            ))
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'messageId',
+              lower: [messageId],
+              includeLower: false,
+              upper: [],
+            ));
+      } else {
+        return query
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'messageId',
+              lower: [messageId],
+              includeLower: false,
+              upper: [],
+            ))
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'messageId',
+              lower: [],
+              upper: [messageId],
+              includeUpper: false,
+            ));
+      }
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterWhereClause>
+      matchIdEqualTo(String matchId) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.equalTo(
+        indexName: r'matchId',
+        value: [matchId],
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterWhereClause>
+      matchIdNotEqualTo(String matchId) {
+    return QueryBuilder.apply(this, (query) {
+      if (query.whereSort == Sort.asc) {
+        return query
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'matchId',
+              lower: [],
+              upper: [matchId],
+              includeUpper: false,
+            ))
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'matchId',
+              lower: [matchId],
+              includeLower: false,
+              upper: [],
+            ));
+      } else {
+        return query
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'matchId',
+              lower: [matchId],
+              includeLower: false,
+              upper: [],
+            ))
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'matchId',
+              lower: [],
+              upper: [matchId],
+              includeUpper: false,
+            ));
+      }
+    });
+  }
+}
+
+extension LocalPendingMessageQueryFilter on QueryBuilder<LocalPendingMessage,
+    LocalPendingMessage, QFilterCondition> {
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      createdAtEqualTo(DateTime value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'createdAt',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      createdAtGreaterThan(
+    DateTime value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'createdAt',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      createdAtLessThan(
+    DateTime value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'createdAt',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      createdAtBetween(
+    DateTime lower,
+    DateTime upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'createdAt',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      encryptedContentEqualTo(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'encryptedContent',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      encryptedContentGreaterThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'encryptedContent',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      encryptedContentLessThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'encryptedContent',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      encryptedContentBetween(
+    String lower,
+    String upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'encryptedContent',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      encryptedContentStartsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.startsWith(
+        property: r'encryptedContent',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      encryptedContentEndsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.endsWith(
+        property: r'encryptedContent',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      encryptedContentContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.contains(
+        property: r'encryptedContent',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      encryptedContentMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.matches(
+        property: r'encryptedContent',
+        wildcard: pattern,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      encryptedContentIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'encryptedContent',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      encryptedContentIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        property: r'encryptedContent',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      idEqualTo(Id value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'id',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      idGreaterThan(
+    Id value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'id',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      idLessThan(
+    Id value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'id',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      idBetween(
+    Id lower,
+    Id upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'id',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      macEqualTo(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'mac',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      macGreaterThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'mac',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      macLessThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'mac',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      macBetween(
+    String lower,
+    String upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'mac',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      macStartsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.startsWith(
+        property: r'mac',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      macEndsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.endsWith(
+        property: r'mac',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      macContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.contains(
+        property: r'mac',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      macMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.matches(
+        property: r'mac',
+        wildcard: pattern,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      macIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'mac',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      macIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        property: r'mac',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      matchIdEqualTo(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'matchId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      matchIdGreaterThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'matchId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      matchIdLessThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'matchId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      matchIdBetween(
+    String lower,
+    String upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'matchId',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      matchIdStartsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.startsWith(
+        property: r'matchId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      matchIdEndsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.endsWith(
+        property: r'matchId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      matchIdContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.contains(
+        property: r'matchId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      matchIdMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.matches(
+        property: r'matchId',
+        wildcard: pattern,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      matchIdIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'matchId',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      matchIdIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        property: r'matchId',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      messageIdEqualTo(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'messageId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      messageIdGreaterThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'messageId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      messageIdLessThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'messageId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      messageIdBetween(
+    String lower,
+    String upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'messageId',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      messageIdStartsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.startsWith(
+        property: r'messageId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      messageIdEndsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.endsWith(
+        property: r'messageId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      messageIdContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.contains(
+        property: r'messageId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      messageIdMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.matches(
+        property: r'messageId',
+        wildcard: pattern,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      messageIdIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'messageId',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      messageIdIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        property: r'messageId',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      nonceEqualTo(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'nonce',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      nonceGreaterThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'nonce',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      nonceLessThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'nonce',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      nonceBetween(
+    String lower,
+    String upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'nonce',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      nonceStartsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.startsWith(
+        property: r'nonce',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      nonceEndsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.endsWith(
+        property: r'nonce',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      nonceContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.contains(
+        property: r'nonce',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      nonceMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.matches(
+        property: r'nonce',
+        wildcard: pattern,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      nonceIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'nonce',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      nonceIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        property: r'nonce',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      retryCountEqualTo(int value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'retryCount',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      retryCountGreaterThan(
+    int value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'retryCount',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      retryCountLessThan(
+    int value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'retryCount',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      retryCountBetween(
+    int lower,
+    int upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'retryCount',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      senderIdEqualTo(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'senderId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      senderIdGreaterThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'senderId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      senderIdLessThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'senderId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      senderIdBetween(
+    String lower,
+    String upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'senderId',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      senderIdStartsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.startsWith(
+        property: r'senderId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      senderIdEndsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.endsWith(
+        property: r'senderId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      senderIdContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.contains(
+        property: r'senderId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      senderIdMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.matches(
+        property: r'senderId',
+        wildcard: pattern,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      senderIdIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'senderId',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      senderIdIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        property: r'senderId',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      tempIdEqualTo(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'tempId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      tempIdGreaterThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'tempId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      tempIdLessThan(
+    String value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'tempId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      tempIdBetween(
+    String lower,
+    String upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'tempId',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      tempIdStartsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.startsWith(
+        property: r'tempId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      tempIdEndsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.endsWith(
+        property: r'tempId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      tempIdContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.contains(
+        property: r'tempId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      tempIdMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.matches(
+        property: r'tempId',
+        wildcard: pattern,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      tempIdIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'tempId',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterFilterCondition>
+      tempIdIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        property: r'tempId',
+        value: '',
+      ));
+    });
+  }
+}
+
+extension LocalPendingMessageQueryObject on QueryBuilder<LocalPendingMessage,
+    LocalPendingMessage, QFilterCondition> {}
+
+extension LocalPendingMessageQueryLinks on QueryBuilder<LocalPendingMessage,
+    LocalPendingMessage, QFilterCondition> {}
+
+extension LocalPendingMessageQuerySortBy
+    on QueryBuilder<LocalPendingMessage, LocalPendingMessage, QSortBy> {
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      sortByCreatedAt() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'createdAt', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      sortByCreatedAtDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'createdAt', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      sortByEncryptedContent() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'encryptedContent', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      sortByEncryptedContentDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'encryptedContent', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      sortByMac() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'mac', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      sortByMacDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'mac', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      sortByMatchId() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'matchId', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      sortByMatchIdDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'matchId', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      sortByMessageId() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'messageId', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      sortByMessageIdDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'messageId', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      sortByNonce() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'nonce', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      sortByNonceDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'nonce', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      sortByRetryCount() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'retryCount', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      sortByRetryCountDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'retryCount', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      sortBySenderId() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'senderId', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      sortBySenderIdDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'senderId', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      sortByTempId() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'tempId', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      sortByTempIdDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'tempId', Sort.desc);
+    });
+  }
+}
+
+extension LocalPendingMessageQuerySortThenBy
+    on QueryBuilder<LocalPendingMessage, LocalPendingMessage, QSortThenBy> {
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      thenByCreatedAt() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'createdAt', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      thenByCreatedAtDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'createdAt', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      thenByEncryptedContent() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'encryptedContent', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      thenByEncryptedContentDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'encryptedContent', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      thenById() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'id', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      thenByIdDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'id', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      thenByMac() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'mac', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      thenByMacDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'mac', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      thenByMatchId() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'matchId', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      thenByMatchIdDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'matchId', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      thenByMessageId() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'messageId', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      thenByMessageIdDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'messageId', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      thenByNonce() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'nonce', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      thenByNonceDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'nonce', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      thenByRetryCount() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'retryCount', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      thenByRetryCountDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'retryCount', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      thenBySenderId() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'senderId', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      thenBySenderIdDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'senderId', Sort.desc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      thenByTempId() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'tempId', Sort.asc);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QAfterSortBy>
+      thenByTempIdDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'tempId', Sort.desc);
+    });
+  }
+}
+
+extension LocalPendingMessageQueryWhereDistinct
+    on QueryBuilder<LocalPendingMessage, LocalPendingMessage, QDistinct> {
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QDistinct>
+      distinctByCreatedAt() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'createdAt');
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QDistinct>
+      distinctByEncryptedContent({bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'encryptedContent',
+          caseSensitive: caseSensitive);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QDistinct>
+      distinctByMac({bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'mac', caseSensitive: caseSensitive);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QDistinct>
+      distinctByMatchId({bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'matchId', caseSensitive: caseSensitive);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QDistinct>
+      distinctByMessageId({bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'messageId', caseSensitive: caseSensitive);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QDistinct>
+      distinctByNonce({bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'nonce', caseSensitive: caseSensitive);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QDistinct>
+      distinctByRetryCount() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'retryCount');
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QDistinct>
+      distinctBySenderId({bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'senderId', caseSensitive: caseSensitive);
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, LocalPendingMessage, QDistinct>
+      distinctByTempId({bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'tempId', caseSensitive: caseSensitive);
+    });
+  }
+}
+
+extension LocalPendingMessageQueryProperty
+    on QueryBuilder<LocalPendingMessage, LocalPendingMessage, QQueryProperty> {
+  QueryBuilder<LocalPendingMessage, int, QQueryOperations> idProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'id');
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, DateTime, QQueryOperations>
+      createdAtProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'createdAt');
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, String, QQueryOperations>
+      encryptedContentProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'encryptedContent');
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, String, QQueryOperations> macProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'mac');
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, String, QQueryOperations>
+      matchIdProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'matchId');
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, String, QQueryOperations>
+      messageIdProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'messageId');
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, String, QQueryOperations> nonceProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'nonce');
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, int, QQueryOperations>
+      retryCountProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'retryCount');
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, String, QQueryOperations>
+      senderIdProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'senderId');
+    });
+  }
+
+  QueryBuilder<LocalPendingMessage, String, QQueryOperations> tempIdProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'tempId');
     });
   }
 }

@@ -21,7 +21,6 @@ class LocalProfile {
   String? tiktokHandle;
 
   String? publicKey; // X25519 Public Key (Base64)
-  String? sessionKey; // Derived Shared Secret (Base64)
 
   DateTime? lastSeen;
   
@@ -71,6 +70,10 @@ class LocalMessage {
   bool isP2p = false;
   bool isSynced = false;
 
+  // Z-007: estado de entrega/lectura (sync con columnas remotas delivered_at/read_at)
+  DateTime? deliveredAt;
+  DateTime? readAt;
+
   // Para Mesh Routing
   int hopCount = 0;
 }
@@ -87,4 +90,30 @@ class MeshRoute {
 
   int distance = 1; // Número de saltos
   DateTime lastUpdate = DateTime.now();
+}
+
+@collection
+class LocalPendingMessage {
+  Id id = Isar.autoIncrement;
+
+  @Index(unique: true, replace: true)
+  late String tempId;
+
+  /// Z-007: PK estable y único generado por el CLIENTE (UUID v4).
+  /// Es el MISMO id que se usa como PK en la tabla remota `messages`, de modo
+  /// que los reintentos del outbox reutilizan el id → INSERT idempotente
+  /// (upsert con ignoreDuplicates / ON CONFLICT (id) DO NOTHING).
+  @Index(unique: true, replace: true)
+  late String messageId;
+
+  @Index()
+  late String matchId;
+
+  late String senderId;
+  late String encryptedContent;
+  late String nonce;
+  late String mac;
+
+  int retryCount = 0;
+  DateTime createdAt = DateTime.now();
 }

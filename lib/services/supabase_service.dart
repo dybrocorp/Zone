@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'logger_service.dart';
 import 'notification_service.dart';
+import '../utils/retry_helper.dart';
 import 'package:uuid/uuid.dart';
 
 /// Servicio central para todas las operaciones de Supabase:
@@ -239,7 +240,8 @@ class SupabaseService {
   // ──────────────────────────────────────────────────────────
 
   /// Envía un mensaje cifrado. Solo funciona si hay un match aceptado.
-  Future<void> sendMessage({
+  /// Retorna true si se guardó en DB correctamente, false si falló.
+  Future<bool> sendMessage({
     required String matchId,
     required String senderId,
     required String encryptedContent,
@@ -257,13 +259,23 @@ class SupabaseService {
       'created_at': DateTime.now().toUtc().toIso8601String(),
     };
 
-    // 1. Insertar en DB para persistencia (Segundo plano)
-    // No esperamos al insert para el broadcast, así es más rápido
-    _supabase.from('messages').insert(payload).then((_) {
-      _logger.debug('[SupabaseService] Mensaje guardado en DB');
-    }).catchError((e) {
-      _logger.debug('[SupabaseService] Error guardando mensaje en DB: $e');
-    });
+    // 1. Insertar en DB con retry (backoff exponencial + jitter)
+    bool dbSaved = false;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        await _supabase.from('messages').insert(payload);
+        dbSaved = true;
+        _logger.debug('[SupabaseService] Mensaje guardado en DB');
+        break;
+      } catch (e) {
+        _logger.debug('[SupabaseService] Intento ${attempt + 1}/3 falló guardando mensaje: $e');
+        if (attempt < 2) {
+          final baseDelay = 500 * (1 << attempt);
+          final jitter = (baseDelay * 0.5 * (DateTime.now().millisecondsSinceEpoch % 100) / 100).toInt();
+          await Future.delayed(Duration(milliseconds: baseDelay + jitter));
+        }
+      }
+    }
 
     // 2. Enviar via Broadcast para inmediatez (WebSocket puro)
     final normalizedMatchId = matchId.trim().toLowerCase();
@@ -278,6 +290,8 @@ class SupabaseService {
     } else {
       _logger.debug('[SupabaseService] Broadcast falló: Canal no suscrito ($channelName)');
     }
+
+    return dbSaved;
   }
 
   /// Obtiene mensajes de un match, ordernados por fecha.
@@ -290,7 +304,128 @@ class SupabaseService {
     return List<Map<String, dynamic>>.from(result);
   }
 
+  /// Obtiene mensajes paginados (cursor-based).
+  Future<List<Map<String, dynamic>>> getMessagesPaginated(
+    String matchId, {
+    required DateTime before,
+    int limit = 50,
+  }) async {
+    final result = await _supabase
+        .from('messages')
+        .select()
+        .eq('match_id', matchId)
+        .lt('created_at', before.toUtc().toIso8601String())
+        .order('created_at', ascending: false)
+        .limit(limit);
+    return List<Map<String, dynamic>>.from(result).reversed.toList();
+  }
+
+  /// Envía múltiples mensajes en lote (para cola offline / outbox Z-007).
+  /// IDEMPOTENTE: cada mensaje lleva su id PK estable (UUID v4 generado por el
+  /// CLIENTE una sola vez). En los reintentos se reutiliza el MISMO id → el
+  /// upsert con ON CONFLICT (id) DO NOTHING lo convierte en no-op. Sin esto un
+  /// reintento duplicaría el mensaje (auditoría Z-DUP-*).
+  Future<int> sendMessagesBatch(List<Map<String, dynamic>> messages) async {
+    int sent = 0;
+    for (final msg in messages) {
+      final result = await RetryHelper.withRetry<bool>(
+        () async {
+          // PostgREST `upsert` con onConflict('id') → INSERT ... ON CONFLICT (id)
+          // DO NOTHING cuando el payload ya incluye 'id' (cliente estable).
+          await _supabase.from('messages').upsert(
+            msg,
+            onConflict: 'id',
+            // ignoreDuplicates solo aplica si el servidor genera el id; aquí el
+            // id lo genera el cliente, así que el conflicto cae en DO NOTHING.
+          );
+          return true;
+        },
+        maxRetries: 3,
+        label: 'batch_msg',
+      );
+      if (result == true) sent++;
+    }
+    return sent;
+  }
+
+  /// Envía un mensaje de forma idempotente reutilizando el [messageId] que la
+  /// app YA generó (PK estable). Si el mensaje ya existe (reintento offline),
+  /// el INSERT ... ON CONFLICT (id) DO NOTHING lo ignora → sin duplicados.
+  Future<bool> sendMessageIdempotent({
+    required String messageId,
+    required String matchId,
+    required String senderId,
+    required String encryptedContent,
+    required String nonce,
+    required String mac,
+    String? p2pMessageId,
+  }) async {
+    try {
+      final payload = {
+        'id': messageId,
+        'match_id': matchId,
+        'sender_id': senderId,
+        'encrypted_content': encryptedContent,
+        'nonce': nonce,
+        'mac': mac,
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+      };
+      await _supabase.from('messages').upsert(payload, onConflict: 'id');
+      return true;
+    } catch (e) {
+      _logger.debug('[SupabaseService] Error enviando mensaje idempotente: $e');
+      return false;
+    }
+  }
+
+  /// Marca un mensaje como entregado para el lector dado.
+  /// Z-007: usa RPC SECURITY DEFINER `mark_message_delivered` (gate server-side
+  /// auth.uid() == p_reader_id → sin anon, sin exposiciones públicas).
+  Future<void> markMessageDelivered(String messageId, String readerId) async {
+    try {
+      await _supabase.rpc('mark_message_delivered', params: {
+        'p_message_id': messageId,
+        'p_reader_id': readerId,
+      });
+    } catch (e) {
+      _logger.debug(
+          '[SupabaseService] Error marcando mensaje como entregado: $e');
+    }
+  }
+
+  /// Marca todos los mensajes de un match como LEÍDOS para el lector dado.
+  /// Z-007: RPC SECURITY DEFINER `mark_messages_read` — el PK → read_at;
+  /// gate auth.uid() == p_reader_id + match aceptado server-side.
+  Future<void> markAllMessagesRead(String matchId, String readerId) async {
+    try {
+      await _supabase.rpc('mark_messages_read', params: {
+        'p_match_id': matchId,
+        'p_reader_id': readerId,
+      });
+    } catch (e) {
+      _logger.debug(
+          '[SupabaseService] Error marcando mensajes como leídos: $e');
+    }
+  }
+
+  /// Elimina un mensaje propio.
+  Future<void> deleteMessage(String messageId) async {
+    try {
+      await _supabase.from('messages').delete().eq('id', messageId);
+    } catch (e) {
+      _logger.debug('[SupabaseService] Error eliminando mensaje: $e');
+    }
+  }
+
   final Map<String, RealtimeChannel> _activeChatChannels = {};
+
+  /// Desuscribe y limpia el canal de chat para un match dado.
+  void unsubscribeFromMessages(String matchId) {
+    final normalizedMatchId = matchId.trim().toLowerCase();
+    final channelName = 'msgs:$normalizedMatchId';
+    final channel = _activeChatChannels.remove(channelName);
+    channel?.unsubscribe();
+  }
 
   /// Escucha mensajes en tiempo real para un match activo.
   RealtimeChannel subscribeToMessages(
@@ -502,6 +637,32 @@ class SupabaseService {
     }
   }
 
+  /// Obtiene perfiles modificados recientemente (últimas 24h) para pull sync.
+  /// Z-002: vista v_profile (filtros server-side). Nota: 'bio' se elimina del
+  /// SELECT porque la columna no existe en public.users en remoto (400).
+  Future<List<Map<String, dynamic>>> getRecentlyActiveProfiles() async {
+    try {
+      final since = DateTime.now()
+          .subtract(const Duration(hours: 24))
+          .toUtc()
+          .toIso8601String();
+      final result = await _supabase
+          .from('v_profile')
+          .select('id, zone_id, display_name, avatar_url, public_key, '
+              'instagram_handle, facebook_handle, tiktok_handle, '
+              'ig_visible, fb_visible, tiktok_visible, '
+              'updated_at, created_at')
+          .eq('stealth_mode', false)
+          .gte('updated_at', since)
+          .order('updated_at', ascending: false)
+          .limit(200);
+      return List<Map<String, dynamic>>.from(result);
+    } catch (e) {
+      _logger.debug('[SupabaseService] Error obteniendo perfiles activos: $e');
+      return [];
+    }
+  }
+
   /// Obtiene estadísticas del radar para monitoreo interno/debugging.
   /// No es llamado desde ninguna pantalla — disponible para herramientas de diagnóstico.
   Future<Map<String, dynamic>?> getRadarStats() async {
@@ -516,12 +677,24 @@ class SupabaseService {
     return null;
   }
 
+  RealtimeChannel? _globalMessagesChannel;
+  RealtimeChannel? _globalMatchesChannel;
+
+  /// Detiene las escuchas globales de notificaciones.
+  void stopGlobalNotificationListener() {
+    _globalMessagesChannel?.unsubscribe();
+    _globalMessagesChannel = null;
+    _globalMatchesChannel?.unsubscribe();
+    _globalMatchesChannel = null;
+  }
+
   /// Escucha notificaciones globales (mensajes y nuevos matches) para el usuario.
   void startGlobalNotificationListener(String myUid) {
+    stopGlobalNotificationListener();
     _logger.debug('[SupabaseService] Iniciando escucha global de notificaciones para $myUid');
 
     // 1. Escuchar Nuevos Mensajes en cualquier match
-    _supabase
+    _globalMessagesChannel = _supabase
         .channel('global_messages')
         .onPostgresChanges(
           event: PostgresChangeEvent.insert,
@@ -549,7 +722,7 @@ class SupabaseService {
         });
 
     // 2. Escuchar Nuevos Matches (Solicitudes)
-    _supabase
+    _globalMatchesChannel = _supabase
         .channel('global_matches')
         .onPostgresChanges(
           event: PostgresChangeEvent.insert,

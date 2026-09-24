@@ -18,6 +18,7 @@ class IsarService {
       LocalEncounterSchema,
       LocalMessageSchema,
       MeshRouteSchema,
+      LocalPendingMessageSchema,
     ], directory: dir.path);
   }
 
@@ -54,7 +55,6 @@ class IsarService {
         ..tiktokHandle = data['tiktok_handle']
         ..publicKey =
             data['public_key'] ?? data['publicKey'] ?? existing?.publicKey
-        ..sessionKey = data['sessionKey'] ?? existing?.sessionKey
         ..lastSeen = DateTime.now()
         ..updatedAt = newUpdatedAt;
 
@@ -169,6 +169,81 @@ class IsarService {
       if (message != null) {
         message.isSynced = true;
         await isar.localMessages.put(message);
+      }
+    });
+  }
+
+  /// Elimina todos los datos locales de Isar.
+  /// Usado durante eliminación de cuenta o logout seguro.
+  Future<void> clearAll() async {
+    await isar.writeTxn(() async {
+      await isar.localProfiles.clear();
+      await isar.localEncounters.clear();
+      await isar.localMessages.clear();
+      await isar.meshRoutes.clear();
+      await isar.localPendingMessages.clear();
+    });
+  }
+
+  // ──────────────────────────────────────────────────────────
+  //  PENDING MESSAGES (Cola offline)
+  // ──────────────────────────────────────────────────────────
+
+  Future<void> savePendingMessage({
+    required String tempId,
+    required String messageId,
+    required String matchId,
+    required String senderId,
+    required String encryptedContent,
+    required String nonce,
+    required String mac,
+  }) async {
+    final pending = LocalPendingMessage()
+      ..tempId = tempId
+      ..messageId = messageId
+      ..matchId = matchId
+      ..senderId = senderId
+      ..encryptedContent = encryptedContent
+      ..nonce = nonce
+      ..mac = mac;
+
+    await isar.writeTxn(() async {
+      await isar.localPendingMessages.putByTempId(pending);
+    });
+  }
+
+  Future<List<LocalPendingMessage>> getPendingMessages() async {
+    return await isar.localPendingMessages.where().findAll();
+  }
+
+  Future<List<LocalPendingMessage>> getPendingMessagesForMatch(String matchId) async {
+    return await isar.localPendingMessages
+        .filter()
+        .matchIdEqualTo(matchId)
+        .findAll();
+  }
+
+  Future<void> deletePendingMessage(String tempId) async {
+    await isar.writeTxn(() async {
+      final pending = await isar.localPendingMessages
+          .filter()
+          .tempIdEqualTo(tempId)
+          .findFirst();
+      if (pending != null) {
+        await isar.localPendingMessages.delete(pending.id);
+      }
+    });
+  }
+
+  Future<void> incrementRetryCount(String tempId) async {
+    await isar.writeTxn(() async {
+      final pending = await isar.localPendingMessages
+          .filter()
+          .tempIdEqualTo(tempId)
+          .findFirst();
+      if (pending != null) {
+        pending.retryCount++;
+        await isar.localPendingMessages.put(pending);
       }
     });
   }

@@ -62,4 +62,55 @@ class P2PSecurityService {
       return null;
     }
   }
+
+  // ──────────────────────────────────────────────────────────
+  //  Session Key Storage (encriptado en KeyStore/Keychain)
+  // ──────────────────────────────────────────────────────────
+
+  static const _sessionKeyPrefix = 'sk_';
+
+  String _sessionKeyStorageId(String remoteZoneId) {
+    return '$_sessionKeyPrefix$remoteZoneId';
+  }
+
+  Future<void> saveSessionKey(String remoteZoneId, String sessionKeyBase64) async {
+    try {
+      await _storage.write(
+        key: _sessionKeyStorageId(remoteZoneId),
+        value: sessionKeyBase64,
+      );
+    } catch (e) {
+      _logger.debug('[P2PSecurityService] Error guardando session key: $e');
+    }
+  }
+
+  Future<String?> getSessionKey(String remoteZoneId) async {
+    try {
+      return await _storage.read(key: _sessionKeyStorageId(remoteZoneId));
+    } catch (e) {
+      _logger.debug('[P2PSecurityService] Error leyendo session key: $e');
+      return null;
+    }
+  }
+
+  Future<void> deleteSessionKey(String remoteZoneId) async {
+    try {
+      await _storage.delete(key: _sessionKeyStorageId(remoteZoneId));
+    } catch (e) {
+      _logger.debug('[P2PSecurityService] Error eliminando session key: $e');
+    }
+  }
+
+  Future<void> deleteAllSessionKeys() async {
+    try {
+      final all = await _storage.readAll();
+      for (final key in all.keys) {
+        if (key.startsWith(_sessionKeyPrefix)) {
+          await _storage.delete(key: key);
+        }
+      }
+    } catch (e) {
+      _logger.debug('[P2PSecurityService] Error eliminando todas las session keys: $e');
+    }
+  }
 }

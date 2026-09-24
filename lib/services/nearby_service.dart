@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/widgets.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'notification_service.dart';
 import 'package:nearby_connections/nearby_connections.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -128,6 +129,10 @@ class NearbyService with WidgetsBindingObserver {
   final Map<String, MeshRoute> _routingTable = {};
   static const int _maxMeshHops = 5;
 
+  // Mesh Dedup: Evitar procesar mensajes duplicados
+  final Set<String> _seenMessageIds = {};
+  static const int _maxSeenMessageIds = 500;
+
   int get routingTableSize => _routingTable.values.where(_isRouteActive).length;
 
   bool _isRouteActive(MeshRoute route) {
@@ -238,17 +243,52 @@ class NearbyService with WidgetsBindingObserver {
         _currentToken = token;
         _logger.debug('[NearbyService] Token BT renovado via Supabase');
       } else {
-        // Fallback Offline: Usar ZoneID directamente si no hay internet
-        _currentToken = 'OFFLINE:$_myZoneId';
+        // Fallback Offline: usar pseudónimo HMAC (no expone el ZONE-ID real)
+        final pseudonym = await _offlinePseudonym(_myZoneId);
+        await _savePseudonymMapping(pseudonym, _myZoneId);
+        _currentToken = 'OFFLINE:$pseudonym';
         _logger.debug(
-          '[NearbyService] Advertencia: Usando token OFFLINE ($_currentToken)',
+          '[NearbyService] Advertencia: Usando token OFFLINE pseudónimo',
         );
       }
     } catch (e) {
-      _currentToken = 'OFFLINE:$_myZoneId';
+      final pseudonym = await _offlinePseudonym(_myZoneId);
+      await _savePseudonymMapping(pseudonym, _myZoneId);
+      _currentToken = 'OFFLINE:$pseudonym';
       _logger.debug(
-        '[NearbyService] Error renovando token, usando fallback OFFLINE: $e',
+        '[NearbyService] Error renovando token, usando fallback OFFLINE pseudónimo: $e',
       );
+    }
+  }
+
+  /// Genera un pseudónimo determinístico a partir del zoneId usando HMAC-SHA256.
+  /// Ambos dispositivos independientemente producen el mismo resultado sin exponer el zoneId real.
+  Future<String> _offlinePseudonym(String zoneId) async {
+    final hmac = Hmac.sha256();
+    final mac = await hmac.calculateMac(
+      utf8.encode(zoneId),
+      secretKey: SecretKey(utf8.encode(zoneId)),
+    );
+    return base64Url.encode(mac.bytes).substring(0, 32);
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  //  Pseudonym ↔ ZoneId Cache (en SecureStorage)
+  // ──────────────────────────────────────────────────────────────
+
+  Future<void> _savePseudonymMapping(String pseudonym, String zoneId) async {
+    try {
+      const storage = FlutterSecureStorage();
+      await storage.write(key: 'pseudo_$pseudonym', value: zoneId);
+    } catch (_) {}
+  }
+
+  Future<String?> _resolvePseudonym(String pseudonym) async {
+    try {
+      const storage = FlutterSecureStorage();
+      return await storage.read(key: 'pseudo_$pseudonym');
+    } catch (_) {
+      return null;
     }
   }
 
@@ -482,8 +522,12 @@ class NearbyService with WidgetsBindingObserver {
     // Cuando Nearby encuentra un dispositivo activo, eliminar entradas mesh
     // para ese mismo usuario y evitar duplicados.
     if (receivedToken.startsWith('OFFLINE:')) {
-      final zoneId = receivedToken.replaceFirst('OFFLINE:', '');
-      _discoveredUsers.remove('MESH:$zoneId');
+      final pseudonym = receivedToken.replaceFirst('OFFLINE:', '');
+      unawaited(_resolvePseudonym(pseudonym).then((zoneId) {
+        if (zoneId != null) {
+          _discoveredUsers.remove('MESH:$zoneId');
+        }
+      }));
     }
 
     if (!_discoveredUsers.containsKey(id)) {
@@ -509,27 +553,36 @@ class NearbyService with WidgetsBindingObserver {
       Map<String, dynamic>? profile;
       String? resolvedZoneId;
 
-      // 1. Manejo de tokens Offline directo
+      // 1. Manejo de tokens Offline con pseudónimos
       if (token.startsWith('OFFLINE:')) {
-        resolvedZoneId = token.replaceFirst('OFFLINE:', '');
-        _logger.debug(
-          '[NearbyService] Token Offline detectado para $resolvedZoneId',
-        );
-        // Buscar INMEDIATAMENTE en Isar para resolución bilateral rápida
-        final cachedLocal = await _isar.getProfile(resolvedZoneId);
-        if (cachedLocal != null) {
-          profile = {
-            'id': cachedLocal.userId,
-            'zone_id': cachedLocal.zoneId,
-            'display_name': cachedLocal.displayName,
-            'avatar_url': cachedLocal.avatarUrl,
-            'publicKey': cachedLocal.publicKey,
-            'public_key': cachedLocal.publicKey,
-            'updatedAt': cachedLocal.updatedAt.toIso8601String(),
-          };
+        final pseudonym = token.replaceFirst('OFFLINE:', '');
+        resolvedZoneId = await _resolvePseudonym(pseudonym);
+        if (resolvedZoneId != null) {
           _logger.debug(
-            '[NearbyService] Perfil OFFLINE resuelto desde Isar para $resolvedZoneId',
+            '[NearbyService] Pseudónimo offline resuelto: $pseudonym → $resolvedZoneId',
           );
+        } else {
+          _logger.debug(
+            '[NearbyService] Pseudónimo offline sin caché: $pseudonym (esperando P2P)',
+          );
+        }
+        // Buscar INMEDIATAMENTE en Isar para resolución bilateral rápida
+        if (resolvedZoneId != null) {
+          final cachedLocal = await _isar.getProfile(resolvedZoneId);
+          if (cachedLocal != null) {
+            profile = {
+              'id': cachedLocal.userId,
+              'zone_id': cachedLocal.zoneId,
+              'display_name': cachedLocal.displayName,
+              'avatar_url': cachedLocal.avatarUrl,
+              'publicKey': cachedLocal.publicKey,
+              'public_key': cachedLocal.publicKey,
+              'updatedAt': cachedLocal.updatedAt.toIso8601String(),
+            };
+            _logger.debug(
+              '[NearbyService] Perfil OFFLINE resuelto desde Isar para $resolvedZoneId',
+            );
+          }
         }
       }
 
@@ -862,17 +915,15 @@ class NearbyService with WidgetsBindingObserver {
     final remotePublicKey =
         (profileData['publicKey'] as String?) ??
         (profileData['public_key'] as String?);
-    if (remotePublicKey != null) {
+    final remoteZoneId = profileData['zone_id'] as String?;
+    if (remotePublicKey != null && remoteZoneId != null) {
       _logger.debug('[NearbyService] Derivando llave de sesión P2P...');
       final sessionKey = await _security.deriveSessionKey(remotePublicKey);
       if (sessionKey != null) {
-        profileData['sessionKey'] = sessionKey;
-        _logger.debug('[NearbyService] Llave de sesión establecida con éxito.');
+        await _security.saveSessionKey(remoteZoneId, sessionKey);
+        _logger.debug('[NearbyService] Llave de sesión guardada de forma segura.');
         // Z-003 (FASE 1.4): al establecerse la llave, descargar la cola fail-closed.
-        final remoteZoneId = profileData['zone_id'] as String?;
-        if (remoteZoneId != null && remoteZoneId.isNotEmpty) {
-          await _flushPendingMeshMessages(remoteZoneId);
-        }
+        await _flushPendingMeshMessages(remoteZoneId);
       }
     }
 
@@ -893,6 +944,13 @@ class NearbyService with WidgetsBindingObserver {
           profileData['display_name'] ?? profileData['zone_id'] ?? 'Usuario';
       user.zoneId = profileData['zone_id'] ?? '';
       user.profile = profileData;
+
+      // Guardar mapeo pseudonym→zoneId si el token es offline
+      if (user.token.startsWith('OFFLINE:')) {
+        final pseudonym = user.token.replaceFirst('OFFLINE:', '');
+        await _savePseudonymMapping(pseudonym, profileData['zone_id']);
+      }
+
       _emitDiscoveredUsers();
     }
 
@@ -961,7 +1019,7 @@ class NearbyService with WidgetsBindingObserver {
   Future<void> sendMeshMessage(String targetZoneId, String message) async {
     final route = _routingTable[targetZoneId];
 
-    // Z-003 (FASE 1.4): fail-closed — NUNCA se envía texto en claro.
+// Z-003 (FASE 1.4): fail-closed — NUNCA se envía texto en claro.
     // Si no hay llave de sesión o el cifrado falla, el mensaje se encola y se
     // reintenta al derivarse la llave (_handleProfileExchange → _flushPendingMeshMessages).
     final sessionKey = await _security.getSessionKey(targetZoneId);
@@ -1068,6 +1126,20 @@ class NearbyService with WidgetsBindingObserver {
     final target = packet['target'] as String;
     final source = packet['source'] as String;
     final hops = (packet['hops'] as int) + 1;
+    final msgId = packet['msgId'] as String? ?? '';
+
+    // Deduplicación: si ya vimos este mensaje, ignorar completamente
+    if (msgId.isNotEmpty) {
+      if (_seenMessageIds.contains(msgId)) {
+        _logger.debug('[NearbyService] Mensaje Mesh duplicado ignorado: $msgId');
+        return;
+      }
+      _seenMessageIds.add(msgId);
+      // Limitar tamaño del set para evitar memory leak
+      if (_seenMessageIds.length > _maxSeenMessageIds) {
+        _seenMessageIds.clear();
+      }
+    }
 
     if (target == _myZoneId) {
       // Validar si hay un match/permiso antes de procesar

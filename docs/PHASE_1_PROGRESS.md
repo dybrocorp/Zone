@@ -32,13 +32,16 @@
 - `catch (_) {}` → log con mensaje en `env_config.dart` (assert-debug), `premium_service.dart`,
   `zone_id_service.dart` (session keys), `nearby_service.dart` (pseudónimos), `chat_screen.dart` (descifrado).
 
-**`Z-105` reste — receipt de entrega cableado (P1)**
+**`Z-105` reste — receipt de entrega cableado + tick en vivo (P1, CERRADO)**
 - `chat_screen.dart`: al recibir un mensaje del OTRO, `unawaited(markMessageDelivered(msgId, myId))` →
-  RPC SECURITY DEFINER de Z-007 (ya en remoto) marca `delivered_at`; el remitente podrá mostrar "Entregado".
+  RPC SECURITY DEFINER de Z-007 (ya en remoto) marca `delivered_at`.
+- **`supabase_service.dart` `subscribeToMessages`:** nuevo listener `PostgresChangeEvent.update` (filtra
+  receipts `delivered_at`/`read_at`) + callback con `isUpdate` → el remitente hace merge en vivo del
+  mensaje → tick Enviado→Entregado→Leído (UI ya existente) se actualiza sin reinsertar el mensaje.
 
 **Verificación final:** ✅ `flutter analyze` 0 issues · ✅ `flutter test` 18/18 · ✅ remoto VERIFIED (Z-104).
-**Checkpoint:** ✅ FASE 1.7 cerrada. Pendientes con decisión pendiente: épicos criptográficos Z-004, Z-101,
-Z-008 (IAP), Z-110 (push), Z-111 (storage) y reste de UX (tick Entregado/Leído en remitente, Z-202).
+**Checkpoint:** ✅ FASE 1.7 cerrada (Z-104, Z-204, Z-308, Z-105 completo). Pendientes con decisión pendiente:
+épicos criptográficos Z-004, Z-101, Z-008 (IAP), Z-110 (push), Z-111 (storage) y reste UX Z-202.
 
 ---
 

@@ -223,10 +223,29 @@ class ChatScreenState extends State<ChatScreen> {
       _subscription = _supabaseService.subscribeToMessages(
         widget.matchId,
         uid,
-        (newMsg) async {
+        (newMsg, {isUpdate = false}) async {
           final msgId = newMsg['id']?.toString();
           final senderId = newMsg['sender_id'];
           final myId = _zoneIdService.uid;
+
+          // Z-105 (FASE 1.7): UPDATE de receipts (delivered_at/read_at).
+          // El remitente repinta su mensaje en vivo: "Enviado → Entregado →
+          // Leído". Los updates de otros campos (p. ej. edits futuros) también
+          // harían merge aquí.
+          if (isUpdate && msgId != null) {
+            final existingIdx = _messages.indexWhere((m) => m['id'] == msgId);
+            if (existingIdx != -1) {
+              if (mounted) {
+                setState(() {
+                  _messages[existingIdx] = {
+                    ..._messages[existingIdx],
+                    ...newMsg,
+                  };
+                });
+              }
+            }
+            return;
+          }
 
           debugPrint('[ChatScreen] Nuevo mensaje recibido: $msgId');
 

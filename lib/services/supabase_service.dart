@@ -428,10 +428,14 @@ class SupabaseService {
   }
 
   /// Escucha mensajes en tiempo real para un match activo.
+  /// `onMessage` recibe inserciones y broadcasts; `isUpdate` distingue los
+  /// eventos UPDATE (receipts `delivered_at`/`read_at`) para que el remitente
+  /// repinte su tick Enviado→Entregado→Leído sin tratar el reemplazo como
+  /// un mensaje nuevo.
   RealtimeChannel subscribeToMessages(
     String matchId,
     String myUid,
-    void Function(Map<String, dynamic> message) onMessage,
+    void Function(Map<String, dynamic> message, {bool isUpdate}) onMessage,
     void Function(bool isOnline)? onPresenceChange,
     void Function(bool isTyping)? onTypingChange,
   ) {
@@ -497,6 +501,25 @@ class SupabaseService {
             final recMatchId = (newRec['match_id'] as String?)?.trim().toLowerCase();
             if (recMatchId == normalizedMatchId) {
               onMessage(newRec);
+            }
+          },
+        )
+        // 5. Escuchar UPDATEs de RECEIPTS (Z-105, FASE 1.7): cuando el otro
+        //    participante marca entregado/leído un mensaje, `delivered_at`/
+        //    `read_at` cambian vía RPC. Sin este listener, el remitente seguía
+        //    viendo "Enviado" para siempre. El merge lo hace el chat (isUpdate).
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'messages',
+          callback: (payload) {
+            final updRec = payload.newRecord;
+            final hasReceipt =
+                updRec['delivered_at'] != null || updRec['read_at'] != null;
+            if (!hasReceipt) return;
+            final recMatchId = (updRec['match_id'] as String?)?.trim().toLowerCase();
+            if (recMatchId == normalizedMatchId) {
+              onMessage(updRec, isUpdate: true);
             }
           },
         );

@@ -167,7 +167,7 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** Aplicar migración (trackearla e incluirla en `supabase_deploy.sql`), añadir policy UPDATE para los dos participantes, llamar a los métodos desde el chat (visible/visto), y RPC con `SECURITY DEFINER` restringido al lector.
 - **Dependencias:** Z-206.
 - **Prueba:** Integración: B abre chat → A ve "leído ✓✓".
-- **Estado:** ✅ **CERRADO (FASE 1.5 + 1.7).** FASE 1.5 aplicó el canon `z007_offline_chat.sql` (columnas `delivered_at`/`read_at` + RPC `mark_messages_read`/`mark_message_delivered` SECURITY DEFINER con gate `auth.uid()` + match aceptado, verificado en remoto) y cableó `markAllMessagesRead` al abrir el chat. FASE 1.6 añadió las policies UPDATE/DELETE de `messages` (Z-206). **FASE 1.7:** `markMessageDelivered` cableado al receptor en `chat_screen.dart` (cuando llega un mensaje del OTRO, `unawaited` → RPC entrega). Pendiente menor de UX: pintar el tick "Entregado/Leído" en el remitente.
+- **Estado:** ✅ **CERRADO (FASE 1.5 → 1.7).** FASE 1.5: canon `z007_offline_chat.sql` (columnas + RPC SECURITY DEFINER con gate `auth.uid()` + match aceptado, remoto verificado) y `markAllMessagesRead` al abrir chat. FASE 1.6: policies UPDATE/DELETE `messages` (Z-206). FASE 1.7: `markMessageDelivered` cableado al receptor (`chat_screen.dart`) **+ listener `PostgresChangeEvent.update` en `subscribeToMessages`** → el remitente hace merge en vivo del receipt (tick Enviado→Entregado→Leído ya presente en UI). `flutter analyze` 0 · `flutter test` 18/18.
 
 ### Z-106 · `deleteMatch` sin policy DELETE en `matches`
 - **Severidad:** P1

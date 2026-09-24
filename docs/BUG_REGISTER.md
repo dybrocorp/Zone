@@ -67,7 +67,7 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** `msgId` = UUIDv4 o HMAC(zona+contador+epoch); dedup con LRU y TTL (no clear global), o ventana deslizante horaria.
 - **Dependencias:** Z-004.
 - **Prueba:** Unit: 2 mensajes en mismo ms → IDs distintos; dedup LRU no pierde entradas nuevas.
-- **Estado:** ABIERTO — FASE 1 pendiente.
+- **Estado:** ✅ **CERRADO (FASE 1.6, 2026-09-23).** `msgId` ahora es **UUID v4** en `MeshPolicy.ciphertextPacket` (sin colisiones por ms); dedup migrado a **`MeshDedup` LRU con TTL de 15 min** (clase pura en `mesh_policy.dart`) — eviction de UNA sola entrada, **nunca `clear()` global**, cerrando el replay. Cobertura: 6 tests nuevos en `test/mesh_policy_test.dart` (UUID v4 único ×2, duplicado dentro de ventana, distintos en el mismo ms, TTL caducado se olvida, LRU evicta solo la más antigua, replay post-TTL). `flutter analyze` 0 issues · `flutter test` 18/18.
 
 ### Z-006 · La app NO arranca con el pubspec del working tree (`.env` fuera de assets)
 - **Severidad:** P0 (funcional)
@@ -179,7 +179,7 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** Aplicar `supabase_delete_fix.sql` (policy DELETE para participantes) e integrarlo en deploy; verificar también cascadas y storage.
 - **Dependencias:** Z-002 (RLS mirrors).
 - **Prueba:** UI: eliminar match → desaparece de chats_list y de la DB.
-- **Estado:** ABIERTO — FASE 1 pendiente.
+- **Estado:** ✅ **CERRADO (FASE 1.6, 2026-09-23).** Migración `supabase_migrations/z106_z206_policies.sql` aplicada y verificada en remoto (`tdacwsbghmjnrbawxhjk`): `"Eliminar propio match"` FOR DELETE en `matches` (solo participantes, `authenticated`). Verificación por rol: anon → bloqueado por RLS (0 filas); authenticated sin sujeción → 0 filas; mensajes intactos (2). Se dropeó en remoto la policy duplicada pre-existente del parche suelto (`"Eliminar propios matches"`, mismo qual) → remoto = canon. Baselines `schema`/`deploy` consolidados.
 
 ### Z-107 · Sincronización push-only + regenera `id` → duplicados
 - **Severidad:** P1
@@ -267,7 +267,7 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** Guardar `if (!mounted) return;` antes de usar context.
 - **Dependencias:** —.
 - **Prueba:** `flutter analyze` limpio para esas líneas + widget test de doble navegación.
-- **Estado:** ABIERTO.
+- **Estado:** ✅ **CERRADO (FASE 1.6, 2026-09-23).** Guard correctos sobre el contexto real usado tras await: `chats_list_screen.dart:228` → `sheetContext.mounted` (bottom sheet); `donations_screen.dart:44-55` → `dialogContext.mounted` (AlertDialog) + `mounted` del State antes de `ScaffoldMessenger`. `flutter analyze` **0 issues** (también se limpiaron los 13 `avoid_print`, ver Z-303).
 
 ### Z-202 · Errores técnicos crudos expuestos al usuario
 - **Severidad:** P2
@@ -291,7 +291,7 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** Eliminar o mover a fixture con variables de entorno; no trackear credenciales.
 - **Dependencias:** —.
 - **Prueba:** `git grep supabaseUrl` sin hits en test.
-- **Estado:** ABIERTO.
+- **Estado:** ✅ **CERRADO (FASE 1.6, 2026-09-23).** `test/load_test_simulator.dart` ya no contiene URL/anon key hardcodeadas: lee `SUPABASE_URL`/`SUPABASE_ANON_KEY` de `Platform.environment` y **aborta (exit 1)** si faltan, sin golpear ninguna instancia. `git grep -i "supabaseUrl\|sb_publishable" test/` sin hits.
 
 ### Z-204 · BLE lowLatency escanea todos los dispositivos cercanos sin filtro
 - **Severidad:** P2
@@ -327,7 +327,7 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** Policy UPDATE/DELETE limitada a participantes del match aceptado.
 - **Dependencias:** Z-105.
 - **Prueba:** SQL: UPDATE desde participante → OK; tercero → denegado.
-- **Estado:** ABIERTO.
+- **Estado:** ✅ **CERRADO (FASE 1.6, 2026-09-23).** Misma migración `z106_z206_policies.sql`: policies `"Actualizar mensaje con match aceptado"` (UPDATE) y `"Eliminar mensaje con match aceptado"` (DELETE) en `messages`, limitadas a participantes de un match `accepted` (semántica server-side idéntica a las RPC Z-007). Aplicada y verificada en remoto: `pg_policies` muestra UPDATE/DELETE nuevas con roles `{authenticated}`; anon bloqueado; baselines consolidados.
 
 ### Z-207 · `ensureAuth` reclama zone_id en cada arranque con payload roto
 - **Severidad:** P2
@@ -339,7 +339,7 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** Reclamar solo tras login explícito (login_screen), con prueba criptográfica; quitar el auto-claim del arranque.
 - **Dependencias:** Z-001.
 - **Prueba:** Sin login, un dispositivo nuevo no puede adueñarse del ID; logs limpios.
-- **Estado:** ABIERTO.
+- **Estado:** ✅ **CERRADO (FASE 1.6, 2026-09-23).** Eliminado el bloque de auto-claim de `ensureAuth` (`lib/services/zone_id_service.dart`): el arranque ya NO invoca `claim_zone_id` con el ID local como única prueba. El claim queda solo en el login explícito (`loginWithExistingID` → RPC `claim_zone_id` con formato + rate-limit, endurecido en FASE 1.2). Nota: aún resta la Fase B (identidad Ed25519 + firma) para la prueba criptográfica de posesión — ver Z-001/REMEDIATION_PLAN.
 
 ### Z-208 · Radar: endpoints `CACHE:`/`GLOBAL:` esperados por la UI nunca se emiten
 - **Severidad:** P2
@@ -363,7 +363,7 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** Añadir a `.gitignore` y eliminar; mover artefactos a `build/`.
 - **Dependencias:** —.
 - **Prueba:** `git status` limpio de esos archivos.
-- **Estado:** ABIERTO.
+- **Estado:** ✅ **CERRADO (FASE 1.6, 2026-09-23).** `.gitignore` ampliado (`hs_err_pid*.log`, `replay_pid*.log`, `*.hprof`, `*.dex`); artefactos eliminados del working tree (`hs_err_pid1864.log`, `hs_err_pid22224.log`, `hs_err_pid4976.log`, `replay_pid*.log`, `Zone.apk`). Ninguno estaba trackeado (`git ls-files` limpio); `git status` ya no los muestra.
 
 ---
 
@@ -397,7 +397,7 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** Guardar mounted; reemplazar prints por `debugPrint`/logger.
 - **Dependencias:** Z-201.
 - **Prueba:** `flutter analyze` sin findings (0 issues).
-- **Estado:** ABIERTO (2 de ellos son Z-201 — informativos).
+- **Estado:** ✅ **CERRADO (FASE 1.6, 2026-09-23).** `flutter analyze` → **0 issues** (0 errors/0 warnings/0 infos). Los 13 `avoid_print` de `scripts/recolor.dart` y `tools/hard_transparent.dart`/`apply_transparency.dart` se reemplazaron por `stdout.writeln` (CLI puros `dart:io`); los 2 `use_build_context_synchronously` con guards correctos (ver Z-201).
 
 ### Z-304 · Docs legales/README/SECURITY declaran capacidades no implementadas
 - **Severidad:** P3 (riesgo legal)
@@ -434,7 +434,7 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** Alinear comentarios/código; eliminar o completar.
 - **Dependencias:** —.
 - **Prueba:** Lint de dead_code y revisión.
-- **Estado:** ABIERTO.
+- **Estado:** ✅ **PARCIAL (FASE 1.6, 2026-09-23).** Corregido el comentario engañoso "sync bidireccional" en `sync_service.dart:28` (ahora documenta: outbox push idempotente + pull en chat). Pendiente de la tanda: decidir suerte de `getRadarStats` (sin callers) y `verify_zone_id` de cliente (sin uso).
 
 ### Z-308 · Catches vacíos y `debugPrint` de depuración en producción
 - **Severidad:** P3

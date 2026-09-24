@@ -24,7 +24,10 @@ class SyncStatus {
 }
 
 /// Servicio para sincronizar datos locales con Supabase cuando hay conexión.
-/// Soporta exponential backoff, sync bidireccional, y manejo de conflictos LWW.
+/// Z-307: el comentario previo afirmaba "sync bidireccional" — la
+/// implementación real es: outbox de mensajes (push idempotente Z-007) +
+/// backoff exponencial. La sincronización inversa (pull) vive en el chat
+/// (abre directo desde `messages` de Supabase con merge Isar+server).
 class SyncService {
   static final SyncService _instance = SyncService._internal();
   factory SyncService() => _instance;

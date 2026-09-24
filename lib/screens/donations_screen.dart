@@ -42,16 +42,16 @@ class _DonationsScreenState extends State<DonationsScreen> {
           ElevatedButton(
             onPressed: () async {
               await _premiumService.setPremium(true);
-              if (mounted) {
-                Navigator.pop(dialogContext);
-                _loadStatus();
-                ScaffoldMessenger.of(context).showSnackBar(
+              if (!dialogContext.mounted) return;
+              Navigator.pop(dialogContext);
+              if (!mounted) return;
+              _loadStatus();
+              ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                     content: Text('¡Gracias por tu apoyo! Ahora eres Zone Premium.'),
                     backgroundColor: Color(0xFF00D2FF),
                   ),
                 );
-              }
             },
             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00D2FF)),
             child: const Text('Confirmar', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),

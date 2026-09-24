@@ -225,7 +225,7 @@ class ChatsListScreenState extends State<ChatsListScreen> {
                   }
                 });
                 await prefs.setStringList('muted_chats', _mutedMatchIds.toList());
-                if (mounted) Navigator.pop(sheetContext);
+                if (sheetContext.mounted) Navigator.pop(sheetContext);
               },
             ),
             _buildOptionTile(

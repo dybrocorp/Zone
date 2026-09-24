@@ -8,6 +8,62 @@
 
 ---
 
+## FASE 1.6 — Batch CERRADO (Z-005, Z-106, Z-206, Z-207, Z-201/Z-303, Z-203, Z-209, Z-307) · 2026-09-23
+
+**Estado:** ✅ CERRADA — mesh identity, policies RLS remotas, higiene analyze 0. Decisión CTO en `CTO_REVIEW_REQUIRED` §12.
+**Alcance aprobado por el CTO:** batch ejecutable (sin decisiones criptográficas nuevas) + reporte obligatorio.
+
+**`Z-005` — identidad de mensaje + dedup (P0 mesh)**
+- `lib/services/mesh_policy.dart`: `msgId` ahora es **UUID v4** (`const Uuid().v4()`) en `ciphertextPacket`
+  (antes epoch mS → colisiones); nueva clase pura **`MeshDedup` LRU + TTL 15 min** (eviction de UNA
+  entrada, **sin `clear()` global** → replay cerrado).
+- `lib/services/nearby_service.dart`: `_seenMessageIds` pasa de `Set<String>`+clear a `MeshDedup.register()`.
+- `test/mesh_policy_test.dart`: +6 tests (UUID v4 único ×2, duplicado en ventana, distintos en el mismo ms,
+  TTL olvida expirado, LRU evicta solo la más antigua, replay post-TTL).
+
+**`Z-106` + `Z-206` — policies RLS (remoto aplicado + verificado)**
+- `supabase_migrations/z106_z206_policies.sql` (NUEVO, idempotente, verificación en-transacción):
+  `"Eliminar propio match"` (matches DELETE), `"Actualizar mensaje con match aceptado"` (UPDATE),
+  `"Eliminar mensaje con match aceptado"` (DELETE) — solo `authenticated`, solo participantes.
+- `supabase_schema.sql` / `supabase_deploy.sql` — consolidados (misma distribución).
+- **✅ REMOTO APLICADO (2026-09-23, tx atómica) + VERIFICADO:** pg_policies con la 3 nuevas (roles
+  `{authenticated}`); `anon` DELETE → 0 filas (bloqueado por RLS); `authenticated` sin sujeción → 0 filas;
+  mensajes intactos (2). En remoto se dropeó la policy DELETE duplicada del parche suelto pre-existente
+  (`"Eliminar propios matches"`, mismo qual) → producción = canon.
+
+**`Z-207` — auto-claim eliminado**
+- `lib/services/zone_id_service.dart`: el bloque de `claim_zone_id` del arranque (`ensureAuth`) se ELIMINÓ;
+  el claim sigue solo en el login explícito (`loginWithExistingID`), con formato+rate-limit de FASE 1.2.
+
+**`Z-201`/`Z-303` — `flutter analyze` 0 issues**
+- `chats_list_screen.dart:228` → guard `sheetContext.mounted`; `donations_screen.dart:43-55` →
+  `dialogContext.mounted` + `mounted` (reestructuración sin `if` anidado).
+- `scripts/recolor.dart` + `tools/hard_transparent.dart`/`apply_transparency.dart`: `print` → `stdout.writeln`
+  (13 `avoid_print` eliminados).
+- ✅ `flutter analyze`: **0 errors / 0 warnings / 0 infos**.
+
+**`Z-203` — credenciales fuera del repo**
+- `test/load_test_simulator.dart`: URL+anon key de otro proyecto ELIMINADAS → lee `SUPABASE_URL` /
+  `SUPABASE_ANON_KEY` de `Platform.environment` y aborta (exit 1) si faltan.
+
+**`Z-209` — artefactos y `.gitignore`**
+- `.gitignore` + (`hs_err_pid*.log`, `replay_pid*.log`, `*.hprof`, `*.dex`); eliminados de la raíz
+  `hs_err_pid1864/4976/22224.log`, `replay_pid1864/4976.log`, `Zone.apk` (ninguno estaba trackeado).
+
+**`Z-307` — comentario engañoso** (parcial)
+- `lib/services/sync_service.dart:28` documenta ahora outbox push idempotente (Z-007) + pull en chat;
+  quedan pendientes de suerte `getRadarStats` (sin callers) y `verify_zone_id` de cliente.
+
+**Verificación final:** ✅ `flutter analyze` 0 issues · ✅ `flutter test` 18/18 · ✅ remoto VERIFIED (Z-106/Z-206).
+**Borrador eliminado:** `add_message_delivery_status.sql` (decisión del CTO — variante insegura superada).
+**Reporte de cierre de FASE 1:** `docs/PHASE_1_COMPLETION_REPORT.md` (puerta obligatoria antes de P1).
+
+**Checkpoint:** ✅ FASE 1.6 cerrada. Pendientes con decisión pendiente: P0 Z-004 (handshake Ed25519) y
+Z-008 (IAP premium); P1/P2: Z-104, Z-105 (reste: cablear `markMessageDelivered`), Z-107 pull, Z-110 push,
+Z-111 storage, Z-112 radar, epics Z-101/Z-102, y P2/P3 restantes (Z-202/308, Z-204, Z-208, Z-301/302/304/306).
+
+---
+
 ## FASE 1.5 — Z-007 · Offline-first chat (delivery/read status) · CERRADA
 
 **ID:** Z-007

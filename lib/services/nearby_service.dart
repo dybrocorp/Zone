@@ -129,9 +129,9 @@ class NearbyService with WidgetsBindingObserver {
   final Map<String, MeshRoute> _routingTable = {};
   static const int _maxMeshHops = 5;
 
-  // Mesh Dedup: Evitar procesar mensajes duplicados
-  final Set<String> _seenMessageIds = {};
-  static const int _maxSeenMessageIds = 500;
+  // Z-005 (FASE 1.6): Dedup con LRU + TTL (sin clear() global). Reemplaza el
+  // Set<String> con clear() que permitía replay tras reinicio del set.
+  final MeshDedup _seenMessageIds = MeshDedup();
 
   int get routingTableSize => _routingTable.values.where(_isRouteActive).length;
 
@@ -1128,16 +1128,12 @@ class NearbyService with WidgetsBindingObserver {
     final hops = (packet['hops'] as int) + 1;
     final msgId = packet['msgId'] as String? ?? '';
 
-    // Deduplicación: si ya vimos este mensaje, ignorar completamente
+    // Z-005 (FASE 1.6): dedup LRU+TTL — register() devuelve false si ya estaba
+    // dentro de la ventana (duplicado); nunca borra todo el set.
     if (msgId.isNotEmpty) {
-      if (_seenMessageIds.contains(msgId)) {
+      if (!_seenMessageIds.register(msgId)) {
         _logger.debug('[NearbyService] Mensaje Mesh duplicado ignorado: $msgId');
         return;
-      }
-      _seenMessageIds.add(msgId);
-      // Limitar tamaño del set para evitar memory leak
-      if (_seenMessageIds.length > _maxSeenMessageIds) {
-        _seenMessageIds.clear();
       }
     }
 

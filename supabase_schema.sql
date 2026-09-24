@@ -436,6 +436,11 @@ DROP POLICY IF EXISTS "Aceptar o rechazar match" ON public.matches;
 CREATE POLICY "Aceptar o rechazar match" ON public.matches
     FOR UPDATE TO authenticated USING (auth.uid() = receiver_id);
 
+-- Z-106 (FASE 1.6): borrar un match solo por sus participantes (derecho al borrado)
+DROP POLICY IF EXISTS "Eliminar propio match" ON public.matches;
+CREATE POLICY "Eliminar propio match" ON public.matches
+    FOR DELETE TO authenticated USING (auth.uid() = requester_id OR auth.uid() = receiver_id);
+
 -- ─── MESSAGES ────────────────────────────────────────────────
 -- Solo si hay match ACEPTADO entre los dos
 DROP POLICY IF EXISTS "Ver mensajes con match aceptado" ON public.messages;
@@ -457,6 +462,30 @@ CREATE POLICY "Enviar mensaje con match aceptado" ON public.messages
         AND EXISTS (
             SELECT 1 FROM public.matches m
             WHERE m.id = match_id
+              AND m.status = 'accepted'
+              AND (m.requester_id = auth.uid() OR m.receiver_id = auth.uid())
+        )
+    );
+
+-- Z-206 (FASE 1.6): UPDATE/DELETE de mensajes solo entre participantes de un
+-- match ACEPTADO (misma semántica server-side que las RPC Z-007; sin anon/PUBLIC)
+DROP POLICY IF EXISTS "Actualizar mensaje con match aceptado" ON public.messages;
+CREATE POLICY "Actualizar mensaje con match aceptado" ON public.messages
+    FOR UPDATE TO authenticated USING (
+        EXISTS (
+            SELECT 1 FROM public.matches m
+            WHERE m.id = messages.match_id
+              AND m.status = 'accepted'
+              AND (m.requester_id = auth.uid() OR m.receiver_id = auth.uid())
+        )
+    );
+
+DROP POLICY IF EXISTS "Eliminar mensaje con match aceptado" ON public.messages;
+CREATE POLICY "Eliminar mensaje con match aceptado" ON public.messages
+    FOR DELETE TO authenticated USING (
+        EXISTS (
+            SELECT 1 FROM public.matches m
+            WHERE m.id = messages.match_id
               AND m.status = 'accepted'
               AND (m.requester_id = auth.uid() OR m.receiver_id = auth.uid())
         )

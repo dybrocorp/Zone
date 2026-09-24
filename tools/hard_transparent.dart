@@ -4,7 +4,7 @@ import 'package:image/image.dart' as img;
 void main() async {
   final file = File('assets/logo.png');
   if (!file.existsSync()) {
-    print('No se encontró assets/logo.png');
+    stdout.writeln('No se encontró assets/logo.png');
     return;
   }
 
@@ -12,13 +12,13 @@ void main() async {
   var image = img.decodeImage(bytes);
 
   if (image == null) {
-    print('No se pudo decodificar la imagen');
+    stdout.writeln('No se pudo decodificar la imagen');
     return;
   }
 
   // Asegurarnos de que el modo de color soporte transparencia
   if (image.numChannels < 4) {
-    print('Convirtiendo a RGBA...');
+    stdout.writeln('Convirtiendo a RGBA...');
     image = image.convert(numChannels: 4);
   }
 
@@ -40,11 +40,11 @@ void main() async {
     }
   }
 
-  print('Se hicieron transparentes $count píxeles.');
+  stdout.writeln('Se hicieron transparentes $count píxeles.');
 
   final pngBytes = img.encodePng(image);
   await File('assets/logo.png').writeAsBytes(pngBytes);
   await File('assets/app_icon.png').writeAsBytes(pngBytes);
   
-  print('Logo guardado con éxito.');
+  stdout.writeln('Logo guardado con éxito.');
 }

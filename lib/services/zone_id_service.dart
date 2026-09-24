@@ -298,21 +298,11 @@ class ZoneIdService {
       await _e2ee.initFromPrivateBase64(privateKeyBase64);
     }
 
-    // 2. Si tenemos un ZONE-ID, nos aseguramos de que el UID actual sea el dueño en Supabase.
-    // Usamos el RPC claim_zone_id que es idempotente y seguro (Security Definer).
-    if (currentZoneId != null) {
-      try {
-        await _supabase.rpc(
-          'claim_zone_id',
-          params: {'p_zone_id': currentZoneId},
-        );
-        _logger.debug('[ZoneIdService] Reclamo exitoso para $currentZoneId');
-      } catch (e) {
-        _logger.debug(
-          '[ZoneIdService] Aviso: Error al reclamar Zone ID en el inicio: $e',
-        );
-      }
-    }
+    // Z-207 (FASE 1.6): el claim del ZONE-ID NO se ejecuta en el arranque.
+    // Reclamar el ID sin login explícito (con solo el ID local, visible en la
+    // malla P2P) era la ventana de "cualquier reinicio re-autentica sin prueba
+    // de posesión". El claim queda SOLO en el login explícito
+    // (`loginWithExistingID` → RPC `claim_zone_id`), con formato + rate-limit.
   }
 
   Future<void> _restoreSession() async {

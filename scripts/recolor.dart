@@ -4,13 +4,13 @@ import 'package:image/image.dart' as img;
 void main() {
   final file = File('assets/logo.jpg');
   if (!file.existsSync()) {
-    print('El archivo assets/logo.jpg no existe.');
+    stdout.writeln('El archivo assets/logo.jpg no existe.');
     exit(1);
   }
 
   final image = img.decodeImage(file.readAsBytesSync());
   if (image == null) {
-    print('No se decodificó la imagen.');
+    stdout.writeln('No se decodificó la imagen.');
     exit(1);
   }
 
@@ -27,5 +27,5 @@ void main() {
 
   // Guardarlo como un nuevo archivo PNG procesado para los iconos.
   File('assets/app_icon.png').writeAsBytesSync(img.encodePng(image));
-  print('¡Logo App Icon procesado y guardado correctamente en assets/app_icon.png!');
+  stdout.writeln('¡Logo App Icon procesado y guardado correctamente en assets/app_icon.png!');
 }

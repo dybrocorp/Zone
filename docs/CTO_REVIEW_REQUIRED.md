@@ -8,6 +8,7 @@
 > **Fecha:** 2026-09-22 · **Estado:** ✔️ Z-001 DECIDIDO (Opción 3) → **Fase A implementada localmente** · Fase B pendiente de diseño.
 > **Fecha:** 2026-09-23 · **Estado:** ✔️ Z-002 DECIDIDO (A estricto + vista `v_profile`) → implementado localmente.
 > **Fecha:** 2026-09-23 · **Estado:** ✔️ Z-007 DECIDIDO (Opción 1: PK estable de cliente + mark-leídos al abrir chat) → implementado app+remoto (FASE 1.5, ver §11).
+> **Fecha:** 2026-09-23 · **Estado:** ✔️ FASE 1.6 DECIDIDA (batch mecánico + policies RLS Z-106/Z-206 + mesh Z-005) → implementado y verificado (ver §12).
 > **⚠️ Remoto (sonda 2026-09-23):** producción VULNERABLE (2-arg GRANT anon viva; oráculo verify anon).
 > **✅ Remoto (2026-09-23, APLICADO + VERIFICADO):** migraciones 1.2 (Z-001/Z-103) y 1.3 (Z-002) aplicadas en
 > transacciones atómicas vía Management API y verificadas en vivo. Detalle y evidencia en `PHASE_1_PROGRESS.md`
@@ -379,4 +380,31 @@ de 2 conflictos; vuestro WIP quedó intacto y SIN commitear en el working tree.
 | Producción tras ROLLBACK | unread=1, delivered=0 (intacto) ✅ |
 
 **Verificación local:** `flutter analyze` 0 errores/0 warnings (15 infos pre-existentes) · `flutter test` 12/12.
-**Commit de cierre:** pendiente en esta tanda (el común de FASE 1.5).
+**Commit de cierre:** `c0b10a6` — `feat(chat): close FASE 1.5 — offline-first delivery/read status + idempotent outbox (Z-007)`.
+
+---
+
+## 12. FASE 1.6 — Batch mecánico + policies RLS + mesh identity · DECISIÓN CTO APROBADA + CERRADA (2026-09-23)
+
+> Alcance aprobado por el CTO (usuario): ejecutar el "batch ejecutable" — Z-005 (mesh identity/dedup),
+> Z-106/z-206 (policies DELETE/UPDATE), Z-207 (auto-claim), Z-201/Z-303 (analyze 0), Z-203 (credenciales),
+> Z-209 (gitignore/artefactos), Z-307 (comentarios) — y generar `PHASE_1_COMPLETION_REPORT.md`.
+> Borrador inseguro `supabase_migrations/add_message_delivery_status.sql`: **eliminado** (decisión del CTO).
+
+**Decisiones registradas:**
+1. **Z-005 (mesh):** `msgId` pasa a **UUID v4** (generado en `MeshPolicy.ciphertextPacket`) — sin
+   colisiones por epoch; dedup migrado a clase pura **`MeshDedup` LRU con TTL 15 min** (eviction de UNA
+   entrada, nunca `clear()` global). Es un cambio de identidad de mensaje/dedup, NO introduce criptografía
+   nueva (sigue X25519/ECDH + AEAD de Z-003). `flutter test` 18/18.
+2. **Z-106/Z-206 (RLS + esquema remoto):** policies de mínima superficie, SOLO participantes:
+   - `matches` → `"Eliminar propio match"` FOR DELETE `authenticated` (requester OR receiver).
+   - `messages` → `"Actualizar mensaje con match aceptado"` / `"Eliminar mensaje con match aceptado"`
+     (participantes de un match `accepted`), misma semántica server-side que las RPC Z-007, sin anon/PUBLIC.
+   - **✅ APLICADO en remoto** (`z106_z206_policies.sql`, tx atómica vía Management API) + verificación
+     por rol: anon bloqueado (0 filas), authenticated sin sujeción → 0 filas, mensajes intactos (2).
+     En remoto se dropeó la policy duplicada pre-existente del parche suelto (`"Eliminar propios matches"`,
+     mismo qual) → **remoto = canon**.
+3. **Z-207 (auth):** se elimina el auto-claim de `ensureAuth` — el arranque ya NO reclama el ZONE-ID con
+   solo el valor local. El claim queda únicamente en el login explícito (`loginWithExistingID`, RPC
+   endurecido de FASE 1.2). No toca RLS/SECURITY DEFINER; la Fase B (firma Ed25519) sigue pendiente de
+   decisión de diseño.

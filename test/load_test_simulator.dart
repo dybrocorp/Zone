@@ -1,13 +1,24 @@
+// Z-203 (FASE 1.6): las credenciales ya NO están hardcodeadas (eran de un
+// proyecto ajeno/apagado). Se leen del entorno en tiempo de ejecución:
+//   $env:SUPABASE_URL / $env:SUPABASE_ANON_KEY
+// Si faltan, el script aborta sin golpear ninguna instancia.
+import 'dart:io';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 import 'dart:math';
 import 'dart:async';
 
-// Sustituir por las credenciales reales
-const String supabaseUrl = 'https://leejpxwctnubihacudik.supabase.co';
-const String supabaseAnonKey = 'sb_publishable_vl-aeN4Ior-GZ5YB45MFyA_KGxgfZjV';
-
 Future<void> main() async {
+  final supabaseUrl = Platform.environment['SUPABASE_URL'];
+  final supabaseAnonKey = Platform.environment['SUPABASE_ANON_KEY'];
+  if (supabaseUrl == null || supabaseUrl.isEmpty ||
+      supabaseAnonKey == null || supabaseAnonKey.isEmpty) {
+    stdout.writeln(
+      '[load_test_simulator] Faltan SUPABASE_URL / SUPABASE_ANON_KEY en el entorno.',
+    );
+    exit(1);
+  }
+
   // Inicializar cliente
   final client = SupabaseClient(supabaseUrl, supabaseAnonKey);
   

@@ -27,6 +27,12 @@ build/
 *.so
 *.dylib
 
+# JVM/Gradle crash dumps y artifactos de build en la raíz (Z-209)
+hs_err_pid*.log
+replay_pid*.log
+*.hprof
+*.dex
+
 # Test and temp files
 tmp_*.dart
 test_*.dart

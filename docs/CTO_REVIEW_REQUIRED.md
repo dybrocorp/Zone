@@ -9,7 +9,7 @@
 > **Fecha:** 2026-09-23 · **Estado:** ✔️ Z-002 DECIDIDO (A estricto + vista `v_profile`) → implementado localmente.
 > **Fecha:** 2026-09-23 · **Estado:** ✔️ Z-007 DECIDIDO (Opción 1: PK estable de cliente + mark-leídos al abrir chat) → implementado app+remoto (FASE 1.5, ver §11).
 > **Fecha:** 2026-09-23 · **Estado:** ✔️ FASE 1.6 DECIDIDA (batch mecánico + policies RLS Z-106/Z-206 + mesh Z-005) → implementado y verificado (ver §12).
-> **Fecha:** 2026-09-23 · **Estado:** ✔️ FASE 1.7 DECIDIDA (batch seguro sin tocar criptografía: Z-104 revoke anon, Z-204 filtro BLE, Z-308 catchers, Z-105 reste) → implementado y verificado (ver §13).
+> **Fecha:** 2026-09-23 · **Estado:** ✔️ FASE 1.7 DECIDIDA (batch seguro sin tocar criptografía: Z-104 revoke anon, Z-204 filtro BLE, Z-308 catchers, Z-105 reste, Z-202 errores UX) → implementado y verificado (ver §13).
 > **⚠️ Remoto (sonda 2026-09-23):** producción VULNERABLE (2-arg GRANT anon viva; oráculo verify anon).
 > **✅ Remoto (2026-09-23, APLICADO + VERIFICADO):** migraciones 1.2 (Z-001/Z-103) y 1.3 (Z-002) aplicadas en
 > transacciones atómicas vía Management API y verificadas en vivo. Detalle y evidencia en `PHASE_1_PROGRESS.md`
@@ -438,3 +438,8 @@ de 2 conflictos; vuestro WIP quedó intacto y SIN commitear en el working tree.
    cambio de formato de mensaje ni de cifrado; solo invocación del RPC existente desde el UI.
 4. **Z-308 (observabilidad, alcance acotado):** catchers totalmente silenciosos → log con contexto. Sin
    telemetría aún (pendiente de decisión de infraestructura).
+5. **Z-202 (UX/seguridad de la info, sin tocar lógica):** capa `FriendlyErrors` para traducir a texto
+   seguro cualquier error que se muestre en la UI — GETA adicional para no exponer internals (queries,
+   stack, códigos) a usuarios. Solo UX; sin cambios de protocolo ni de datos.
+6. **Z-105 (mensajería, cierre):** listener de receipts por realtime UPDATE + merge en el chat → el
+   remitente ve Entregado/Leído en vivo. Sin cambios de formato ni de cifrado.

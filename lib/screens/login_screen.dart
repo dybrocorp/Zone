@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/zone_id_service.dart';
+import '../utils/friendly_errors.dart';
 import 'radar_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -47,7 +48,11 @@ class _LoginScreenState extends State<LoginScreen> {
       if (mounted) {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al ingresar: $e')),
+          SnackBar(
+            content: Text(FriendlyErrors.message(e)),
+            backgroundColor: Colors.redAccent,
+            duration: const Duration(seconds: 5),
+          ),
         );
       }
     }

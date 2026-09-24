@@ -11,6 +11,7 @@ import '../services/notification_service.dart';
 import '../services/nearby_service.dart';
 import '../services/connectivity_service.dart';
 import '../services/isar_service.dart';
+import '../utils/friendly_errors.dart';
 import '../widgets/user_avatar.dart';
 import 'public_profile_sheet.dart';
 
@@ -313,7 +314,16 @@ class ChatScreenState extends State<ChatScreen> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Error al abrir el chat: $e')));
+        ).showSnackBar(
+          SnackBar(
+            content: Text(
+              FriendlyErrors.message(
+                e,
+                fallback: 'No se pudo abrir el chat.',
+              ),
+            ),
+          ),
+        );
       }
     } finally {
       if (mounted) {

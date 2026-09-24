@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../utils/friendly_errors.dart';
 import 'profile_setup_screen.dart';
 import 'radar_screen.dart';
 import 'login_screen.dart';
@@ -92,7 +93,12 @@ class AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateMi
         setState(() { _isLoading = false; });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error al registrar: $e'),
+            content: Text(
+              FriendlyErrors.message(
+                e,
+                fallback: 'No se pudo registrar. Intenta de nuevo.',
+              ),
+            ),
             backgroundColor: Colors.redAccent,
             duration: const Duration(seconds: 5),
           ),

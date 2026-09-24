@@ -5,6 +5,7 @@ import '../services/permissions_service.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import '../services/nearby_service.dart';
+import '../utils/friendly_errors.dart';
 import '../widgets/user_avatar.dart';
 
 class ProfileEditScreen extends StatefulWidget {
@@ -116,7 +117,14 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error al seleccionar imagen: $e')),
+        SnackBar(
+          content: Text(
+            FriendlyErrors.message(
+              e,
+              fallback: 'No se pudo seleccionar la imagen.',
+            ),
+          ),
+        ),
       );
     }
   }
@@ -139,7 +147,14 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error al seleccionar foto de galería: $e')),
+        SnackBar(
+          content: Text(
+            FriendlyErrors.message(
+              e,
+              fallback: 'No se pudo seleccionar la foto de galería.',
+            ),
+          ),
+        ),
       );
     }
   }
@@ -261,7 +276,12 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error al guardar cambios: $e'),
+            content: Text(
+              FriendlyErrors.message(
+                e,
+                fallback: 'No se pudieron guardar los cambios.',
+              ),
+            ),
             backgroundColor: Colors.redAccent,
           ),
         );
@@ -393,7 +413,12 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
           Navigator.pop(context); // Close loading overlay
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Error al eliminar cuenta: $e'),
+              content: Text(
+                FriendlyErrors.message(
+                  e,
+                  fallback: 'No se pudo eliminar la cuenta.',
+                ),
+              ),
               backgroundColor: Colors.redAccent,
             ),
           );

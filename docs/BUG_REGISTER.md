@@ -279,7 +279,7 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** Mapear errores a textos por código/estado; logger con nivel para dev.
 - **Dependencias:** —.
 - **Prueba:** Revisión UX + test de golden.
-- **Estado:** ABIERTO.
+- **Estado:** ✅ **CERRADO (FASE 1.7, 2026-09-23).** Nueva capa `lib/utils/friendly_errors.dart` (`FriendlyErrors.message(e, fallback:)`) que mapea errores conocidos (red, credenciales, expiración JWT, permisos/RLS, restricciones, Postgrest) a textos breves y seguros; el texto técnico solo se loguea en debug. Aplicada en TODOS los `SnackBar` con `$e` crudo: login (50), auth/registro (95), blocked_users (44), profile_edit (119/142/264/396), profile_setup (70/97), chats_list (67), chat_screen (316), public_profile_sheet (265). **Ningún `$e` crudo restante en SnackBar** (grep 0 hits). 5 tests nuevos en `test/friendly_errors_test.dart` (red, credenciales, RLS, Postgrest, desconocido sin exponer internals). `flutter analyze` 0 · `flutter test` 23/23.
 
 ### Z-203 · Credenciales hardcodeadas de OTRO proyecto Supabase en test
 - **Severidad:** P2

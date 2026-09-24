@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/supabase_service.dart';
 import '../services/zone_id_service.dart';
+import '../utils/friendly_errors.dart';
 
 import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -262,7 +263,14 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
         if (mounted) {
           setState(() => _connectionState = 0);
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error al enviar solicitud: $e')),
+            SnackBar(
+              content: Text(
+                FriendlyErrors.message(
+                  e,
+                  fallback: 'No se pudo enviar la solicitud.',
+                ),
+              ),
+            ),
           );
         }
       }

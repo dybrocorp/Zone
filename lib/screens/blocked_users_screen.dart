@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/supabase_service.dart';
 import '../services/zone_id_service.dart';
+import '../utils/friendly_errors.dart';
 
 class BlockedUsersScreen extends StatefulWidget {
   const BlockedUsersScreen({super.key});
@@ -41,7 +42,14 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
       if (mounted) {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al cargar contactos bloqueados: $e')),
+          SnackBar(
+            content: Text(
+              FriendlyErrors.message(
+                e,
+                fallback: 'No se pudieron cargar los contactos bloqueados.',
+              ),
+            ),
+          ),
         );
       }
     }

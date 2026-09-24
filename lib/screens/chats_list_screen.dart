@@ -5,6 +5,7 @@ import 'chat_screen.dart';
 import 'public_profile_sheet.dart';
 import '../services/supabase_service.dart';
 import '../services/zone_id_service.dart';
+import '../utils/friendly_errors.dart';
 import '../widgets/user_avatar.dart';
 
 class ChatsListScreen extends StatefulWidget {
@@ -63,7 +64,14 @@ class ChatsListScreenState extends State<ChatsListScreen> {
       debugPrint('[ChatsListScreen] Error cargando chats: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al cargar mensajes: $e')),
+          SnackBar(
+            content: Text(
+              FriendlyErrors.message(
+                e,
+                fallback: 'No se pudieron cargar los chats.',
+              ),
+            ),
+          ),
         );
       }
     } finally {

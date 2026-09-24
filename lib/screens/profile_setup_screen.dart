@@ -4,6 +4,7 @@ import '../services/zone_id_service.dart';
 import '../services/permissions_service.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
+import '../utils/friendly_errors.dart';
 
 class ProfileSetupScreen extends StatefulWidget {
   final String generatedId;
@@ -67,7 +68,12 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
         setState(() => _isSaving = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error al guardar perfil: $e'),
+            content: Text(
+              FriendlyErrors.message(
+                e,
+                fallback: 'No se pudo guardar el perfil.',
+              ),
+            ),
             backgroundColor: Colors.redAccent,
           ),
         );
@@ -94,7 +100,14 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error al seleccionar imagen: $e')),
+        SnackBar(
+          content: Text(
+            FriendlyErrors.message(
+              e,
+              fallback: 'No se pudo seleccionar la imagen.',
+            ),
+          ),
+        ),
       );
     }
   }

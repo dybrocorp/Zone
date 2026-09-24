@@ -39,9 +39,16 @@
   receipts `delivered_at`/`read_at`) + callback con `isUpdate` → el remitente hace merge en vivo del
   mensaje → tick Enviado→Entregado→Leído (UI ya existente) se actualiza sin reinsertar el mensaje.
 
-**Verificación final:** ✅ `flutter analyze` 0 issues · ✅ `flutter test` 18/18 · ✅ remoto VERIFIED (Z-104).
-**Checkpoint:** ✅ FASE 1.7 cerrada (Z-104, Z-204, Z-308, Z-105 completo). Pendientes con decisión pendiente:
-épicos criptográficos Z-004, Z-101, Z-008 (IAP), Z-110 (push), Z-111 (storage) y reste UX Z-202.
+**`Z-202` — errores técnicos crudos fuera de la UI (P2, CERRADO)**
+- Nuevo `lib/utils/friendly_errors.dart` (`FriendlyErrors.message(e, fallback:)`): mapea red,
+  credenciales, JWT expirado, permisos/RLS, restricciones y Postgrest a textos seguros; detalle técnico
+  solo en debug (`debugPrint`). Aplicado en los 10 SnackBar con `$e` crudo (login, auth, blocked_users,
+  profile_edit ×4, profile_setup ×2, chats_list, chat_screen, public_profile_sheet). grep: 0 SnackBar
+  con `$e` restantes. 5 tests en `test/friendly_errors_test.dart`.
+
+**Verificación final:** ✅ `flutter analyze` 0 issues · ✅ `flutter test` 23/23 · ✅ remoto VERIFIED (Z-104).
+**Checkpoint:** ✅ FASE 1.7 cerrada (Z-104, Z-204, Z-308, Z-105, Z-202). Pendientes con decisión pendiente:
+épicos criptográficos Z-004, Z-101, Z-008 (IAP), Z-110 (push), Z-111 (storage).
 
 ---
 

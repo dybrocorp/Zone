@@ -28,7 +28,7 @@ y los requerimientos de backend/epics (Z-110 push, Z-111 storage, Z-101 ratchet)
 | 1.4 | Z-003 | ✅ VERIFIED_LOCAL | Mesh fail-closed: nunca texto en claro; decisión §9. |
 | 1.5 | Z-007 | ✅ CERRADA (app+remoto) | Outbox idempotente por PK estable UUID v4 (`ON CONFLICT (id)`), `markAllMessagesRead` al abrir chat, RPCs SECURITY DEFINER con gate `auth.uid()`; verificación por rol OK; commit `c0b10a6`. |
 | 1.6 | Z-005, Z-106, Z-206, Z-207, Z-201/Z-303, Z-203, Z-209, Z-307(parcial) | ✅ CERRADA | Mesh msgId UUID v4 + dedup LRU/TTL; policies DELETE/UPDATE remotas (Z-106/Z-206) aplicadas y verificadas; auto-claim eliminado; `flutter analyze` **0 issues**; `flutter test` 18/18. |
-| 1.7 | Z-104, Z-204, Z-308 (acotado), Z-105 reste | ✅ CERRADA (esta tanda) | `resolve_bt_token` **REVOKE anon aplicado + verificado remoto** (anon → 42501); filtro BLE por token propio; catchers silenciosos → log; `markMessageDelivered` cableado al receptor. `flutter analyze` 0 issues · `flutter test` 18/18. |
+| 1.7 | Z-104, Z-204, Z-308 (acotado), Z-105, Z-202 | ✅ CERRADA | `resolve_bt_token` **REVOKE anon aplicado + verificado remoto** (anon → 42501); filtro BLE por token propio; catchers silenciosos → log; `markMessageDelivered` cableado al receptor + **tick Entregado/Leído en vivo** (UPDATE realtime); **capa `FriendlyErrors`** (10 SnackBar sanados, 0 `$e` crudos). `flutter analyze` 0 issues · `flutter test` **23/23**. |
 
 **Detalle por ítem de la 1.6** (commit de esta tanda):
 - **Z-005** — `mesh_policy.dart` (`Uuid().v4()` + clase `MeshDedup` LRU/TTL 15 min), `nearby_service.dart`

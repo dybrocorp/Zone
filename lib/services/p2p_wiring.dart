@@ -55,15 +55,28 @@ enum P2pAkeRateDecision {
 const String kP2pAkeHelloType = 'ake_hello';
 const String kP2pAkeCertType = 'ake_cert';
 
-/// Campos mínimos de un frame AKE de este wire (forma gruesa; la CRÍPTICA
-/// completa la valida P2PAuthPolicy/P2PHandshakeSession).
+/// Campos OBLIGATORIOS de un frame `ake_hello` del contrato ZONE-P2P-AKE-1
+/// (forma gruesa; la CRÍPTICA completa la valida P2PAuthPolicy/
+/// P2PHandshakeSession). Alineado con `P2pAkeHelloCodec.encode`
+/// (`p2p_ake_coordinator.dart`): el shape reducido anterior NO correspondía
+/// a ningún productor real (no existían emisores) — evitar produce frames
+/// sin shape válido. `prior_transcript` es OPCIONAL (solo lo lleva el
+/// hello del responder; el iniciador no).
 const Set<String> _kAkeHelloRequiredFields = {
   'v',
-  'session_id',
-  'nonce',
+  'version',
+  'zone_id',
+  'account_id',
+  'device_id',
+  'identity_alg',
   'identity_pk',
+  'encryption_alg',
   'encryption_pk',
-  'fp',
+  'encryption_version',
+  'epk',
+  'nonce',
+  'session_id',
+  'issued_at',
   'sig',
 };
 const Set<String> _kAkeCertRequiredFields = {
@@ -226,15 +239,26 @@ class P2pAkeWiring {
     if (data['v'] is! int || (data['v'] as int) < 1) {
       return null;
     }
+    // Shape del hello: los campos numéricos transportados deben ser int
+    // (fail-closed ante float/string del wire).
+    if (type == kP2pAkeHelloType) {
+      if (data['encryption_version'] is! int) return null;
+      if (data['issued_at'] is! int) return null;
+      // prior_transcript es OPCIONAL (responder); presente ⇒ String b64.
+      final prior = data['prior_transcript'];
+      if (prior != null && prior is! String) return null;
+    }
     // Copia fail-closed: SOLO claves conocidas del wire (sin inyección de
-    // campos extraños hacia el handshake).
+    // campos extraños hacia el handshake). Los AKE son JSON puro: strings
+    // e ints.
     final clean = <String, dynamic>{};
     for (final field in {
       ..._kAkeHelloRequiredFields,
       ..._kAkeCertRequiredFields,
+      'prior_transcript',
     }) {
       final v = data[field];
-      if (v is String || v is Uint8List) clean[field] = v;
+      if (v is String || v is Uint8List || v is int) clean[field] = v;
     }
     return clean;
   }

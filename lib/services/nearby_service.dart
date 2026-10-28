@@ -15,12 +15,15 @@ import 'isar_service.dart';
 import 'connectivity_service.dart';
 import 'p2p_security_service.dart';
 import 'chat_e2ee_service.dart';
+import 'p2p_handshake_session.dart' show P2PSessionKeyMaterial;
 import 'supabase_service.dart';
 import 'package:cryptography/cryptography.dart';
 import '../models/isar_models.dart';
 import 'logger_service.dart';
 import 'mesh_policy.dart';
 import 'p2p_wiring.dart';
+import 'p2p_ake_coordinator.dart';
+import 'zone_identity_bootstrap_service.dart';
 
 /// Modelo de usuario descubierto por Nearby Connections.
 class NearbyUser {
@@ -84,6 +87,13 @@ class NearbyService with WidgetsBindingObserver {
   /// (rate-limit local). Sin secretos; el estado AKE vive por endpoint
   /// efímero y muere con la conexión.
   final P2pAkeWiring _akeWiring = P2pAkeWiring();
+
+  /// Z-004 PHASE E/G — cableado REAL del handshake `ZONE-P2P-AKE-1`
+  /// (coordinador puro con transporte/identidad inyectados; ver
+  /// `p2p_ake_coordinator.dart`). Estado por endpoint efímero; material de
+  /// sesión por-conexión (NUNCA persistido y jamás escrito en `sk_<zone>`
+  /// legacy). La demo física H-01…H-15 permanece NOT RUN.
+  P2pAkeCoordinator? _akeCoordinator;
 
   /// P2P_CLUSTER mejora alcance y descubrimiento bilateral en espacios abiertos.
   static const Strategy _strategy = Strategy.P2P_CLUSTER;
@@ -926,6 +936,10 @@ class NearbyService with WidgetsBindingObserver {
       _connectedEndpoints.add(id);
       _sessions.noteConnected(id);
       _lifecycle.endpointConnected();
+      // Z-004 (PHASE E/G): AKE REAL — se abre el handshake `ZONE-P2P-AKE-1`
+      // sobre la conexión establecida (hello Ed25519/X25519 firmado; falla
+      // cerrado si la identidad de la fundación aún no está).
+      unawaited(_startAkeHandshake(id));
       if (_discoveredUsers.containsKey(id)) {
         _discoveredUsers[id]!.isConnected = true;
         _emitDiscoveredUsers();
@@ -957,6 +971,7 @@ class NearbyService with WidgetsBindingObserver {
     // Z-004 WI-2: el estado AKE vive SOLO con el endpoint (efímero); la
     // reconexión re-negocia (WI-6 conserva la ventana de radio).
     _akeWiring.noteDisconnected(id);
+    _akeCoordinator?.onDisconnected(id);
     _lifecycle.endpointDisconnected(_sessions.connectedCount);
     if (_discoveredUsers.containsKey(id)) {
       _discoveredUsers[id]!.isConnected = false;
@@ -1017,6 +1032,7 @@ class NearbyService with WidgetsBindingObserver {
     _connectedEndpoints.remove(endpointId);
     _sessions.noteDisconnected(endpointId);
     _akeWiring.noteDisconnected(endpointId);
+    _akeCoordinator?.onDisconnected(endpointId);
     _lifecycle.endpointDisconnected(_sessions.connectedCount);
     if (_discoveredUsers.containsKey(endpointId)) {
       _discoveredUsers[endpointId]!.isConnected = false;
@@ -1030,6 +1046,136 @@ class NearbyService with WidgetsBindingObserver {
       await _nearby.sendBytesPayload(endpointId, utf8.encode(message));
     } catch (e) {
       _logger.debug('[NearbyService] Error al enviar mensaje: $e');
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // Z-004 (PHASE E/G) — Cableado REAL del handshake ZONE-P2P-AKE-1
+  // (WI-1/WI-2/WI-4 locales). Coordinador puro con transporte/identidad
+  // inyectados. Material de sesión por-conexión: NO se persiste.
+  // ──────────────────────────────────────────────────────────────
+
+  /// Canal protegido del endpoint (o `null` si el AKE no completó —
+  /// fail-closed: una conexión inválida NO intercambia mensajes protegidos).
+  P2pAkeChannel? akeChannel(String endpointId) =>
+      _akeCoordinator?.channel(endpointId);
+
+  P2pAkeCoordinator? _ensureAkeCoordinator() {
+    final existing = _akeCoordinator;
+    if (existing != null) return existing;
+    // Fail-closed: sin bootstrap de identidad no hay material para firmar.
+    final bootstrapSvc = ZoneIdentityBootstrapService();
+    if (!bootstrapSvc.isInitialized) return null;
+    final bootstrap = bootstrapSvc.activeBootstrap;
+    if (bootstrap == null) return null;
+    final coordinator = P2pAkeCoordinator(
+      identityLoader: _loadAkeIdentity,
+      frameSender: _sendAkeFrame,
+      quotaGate: (endpointId) =>
+          _akeWiring.consumeHandshakeQuota(endpointId) ==
+          P2pAkeRateDecision.attemptAllowed,
+      keyMaterialListener: _onAkeKeyMaterial,
+    );
+    _akeCoordinator = coordinator;
+    return coordinator;
+  }
+
+  /// Identidad para el AKE desde la FUNDACIÓN (single-source): contexto
+  /// público + material del dispositivo primario (seeds ya en almacén seguro;
+  /// el runtime usa los PARES en memoria — sin nueva superficie de secretos).
+  Future<P2pAkeIdentityMaterial?> _loadAkeIdentity() async {
+    try {
+      final svc = ZoneIdentityBootstrapService();
+      if (!svc.isInitialized) return null;
+      final bootstrap = svc.activeBootstrap;
+      if (bootstrap == null) return null;
+      final context = svc.context;
+      final material =
+          await bootstrap.registry.loadDeviceKeyMaterial(context.deviceId);
+      // ZONE-ID: verdad del servicio Zone; fallback al metadata de cuenta de
+      // la fundación. Vacío ⇒ sin firma (el policy lo exigiría igual).
+      var zoneId = _zoneIdService.zoneId ?? '';
+      if (zoneId.isEmpty) {
+        final account = await bootstrap.registry.loadAccountMetadata();
+        zoneId = account?.zoneId ?? '';
+      }
+      return P2pAkeIdentityMaterial(
+        zoneId: zoneId,
+        accountId: context.accountId,
+        deviceId: context.deviceId,
+        identityKeyPair: material.signingKeyPair,
+        encryptionKeyPair: material.encryptionKeyPair,
+        encryptionKeyVersion: 1,
+      );
+    } catch (e) {
+      _logger.debug('[NearbyService] Identidad AKE no disponible (fail-closed).');
+      return null;
+    }
+  }
+
+  Future<bool> _sendAkeFrame(
+    String endpointId,
+    Map<String, dynamic> frame,
+  ) async {
+    if (!_connectedEndpoints.contains(endpointId)) return false;
+    try {
+      await _nearby.sendBytesPayload(endpointId, utf8.encode(jsonEncode(frame)));
+      return true;
+    } catch (e) {
+      _logger.debug('[NearbyService] Error enviando frame AKE: $e');
+      return false;
+    }
+  }
+
+  /// Material SETTLED: marca AKE completado (gate WI-2 autenticado para este
+  /// endpoint) y actualiza la etiqueta honesta de UI. El material de sesión
+  /// NO se guarda fuera de memoria viva (por diseño; ver coordinador).
+  void _onAkeKeyMaterial(String endpointId, P2PSessionKeyMaterial material) {
+    _akeWiring.markAkeCompleted(endpointId);
+    _logger.debug(
+      '[NearbyService] AKE completado (${material.transcriptHash.length}B '
+      'transcript, firstContact=${material.firstContact}); material '
+      'por-conexión en memoria; SKs legacy Z-212 intactos.',
+    );
+    final user = _discoveredUsers[endpointId];
+    if (user != null) {
+      // Anclaje OOB aún no implementado: primer contacto ⇒ sigue unverified
+      // (honesto). Cuando exista tienda de anclas, no-firstContact ⇒ true.
+      user.identityVerified = !material.firstContact;
+      _emitDiscoveredUsers();
+    }
+  }
+
+  Future<void> _startAkeHandshake(String endpointId) async {
+    final coordinator = _ensureAkeCoordinator();
+    if (coordinator == null) {
+      _logger.debug(
+        '[NearbyService] AKE no iniciable (bootstrap de identidad pendiente).',
+      );
+      return;
+    }
+    try {
+      await coordinator.onConnected(endpointId);
+    } on Object {
+      _logger.debug('[NearbyService] AKE: error iniciando handshake.');
+    }
+  }
+
+  Future<void> _handleAkeHelloFrame(
+    String endpointId,
+    Map<String, dynamic> clean,
+  ) async {
+    final coordinator = _ensureAkeCoordinator();
+    if (coordinator == null) {
+      _logger.debug('[NearbyService] AKE descartado: sin identidad lista.');
+      return;
+    }
+    final outcome = await coordinator.onPeerHello(endpointId, clean);
+    if (!outcome.accepted && outcome.rejection != null) {
+      final reason = outcome.rejection!.reason.name;
+      _logger.debug(
+        '[NearbyService] AKE hello rechazado (fail-closed): $reason.',
+      );
     }
   }
 
@@ -1065,9 +1211,11 @@ class NearbyService with WidgetsBindingObserver {
       //    llega al registro;
       //  - rate-limit local por endpoint (WI-6) — intentos repetidos no
       //    consumen la radio;
-      //  - registro de progreso hello/cert (WI-1 prep). El AKE COMPLETO
-      //    (claves/acceptConnection) sigue SIN CABLEAR (H-01 pendiente:
-      //    demo física); NADA deriva ni guarda claves aquí.
+      //  - registro de progreso hello/cert y DESPACHO REAL al coordinador
+      //    AKE (WI-1/WI-4 locales): un `ake_hello` entra al handshake
+      //    `ZONE-P2P-AKE-1`; un `ake_cert` (WI-8 prep) solo se registra.
+      //    El AKE COMPLETO ya deriva material POR-CONEXIÓN en memoria; la
+      //    demo física (H-01) sigue NOT RUN por separado.
       if (type is String && data['data'] is Map) {
         final akeData = Map<String, dynamic>.from(data['data'] as Map);
         if (type == kP2pAkeHelloType || type == kP2pAkeCertType) {
@@ -1093,10 +1241,14 @@ class NearbyService with WidgetsBindingObserver {
             endpointId: endpointId,
             isHello: type == kP2pAkeHelloType,
           );
-          _logger.debug(
-            '[NearbyService] Frame AKE registrado ($type, WI-2/WI-6 prep; '
-            'la sesión completa queda pendiente de cableado físico H-01).',
-          );
+          if (type == kP2pAkeHelloType) {
+            unawaited(_handleAkeHelloFrame(endpointId, clean));
+          } else {
+            _logger.debug(
+              '[NearbyService] Frame AKE registrado ($type, WI-8 prep; '
+              'el handshake completo vive en el coordinador AKE).',
+            );
+          }
           return;
         }
       }

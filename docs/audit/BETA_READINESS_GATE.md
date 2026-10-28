@@ -359,6 +359,31 @@ criptográfica externa).
 
 ---
 
+### 8.6 Sesión de implementación 2026-10-27 (III) — AKE real cableado + máquina de transferencia
+
+Segunda ejecución DYBROCORP (master prompt FASE F) sobre baseline
+`a871b886` (ver `BASELINE_FASE_F_2026_10_27.md`). Entregables y etiqueta
+honesta:
+
+| Área | Entregables | Etiqueta |
+|---|---|---|
+| P2P AKE REAL (WI-1/WI-2/WI-4/WI-6 locales) | `lib/services/p2p_ake_coordinator.dart` NUEVO (handshake `ZONE-P2P-AKE-1` completo sobre NearbyService; conflicto simultáneo con fork responder+min-lex; canal protegido ChaCha20-Poly1305 por-conexión; material efímero, sin `sk_<zone>`), cableado en `nearby_service.dart` (autostart al conectar; despachador forma→WI-6→coordinador; `markAkeCompleted` al settle), `validateAkeFrame` al shape real del hello, identidad desde la fundación (`DeviceKeyMaterial.signingKeyPair/encryptionKeyPair` getters) | PROBADO con transporte SIMULADO (14/14 coordinador + 4/4 contrato de fuente); **demo física H-01…H-15 sigue NOT RUN (0/15)** |
+| Transferencia de datos entre dispositivos (§3) | `lib/migration/device_transfer_state_machine.dart` NUEVO (10 estados, eventos sellados, invariantes 1–8: revocación SOLO post-completed, revocación fallida ⇒ completed, chunks idempotentes, restauración incompleta prohibida, binding de cuenta, JSON round-trip) + spec `docs/migration/DEVICE_TRANSFER_STATE_MACHINE.md` | PROBADO LOCALMENTE (14/14); sin driver/persistencia/revocación backend NOT RUN |
+| E2EE (§4) | Sin cambios de protocolo (v3/v4 BLOQUEADO por revisión externa); verificación: `test/e2ee/` 30/30 PASS, docs truthful | VERIFICADO (sin overclaim) |
+| Docs | PHASE_E §7.8.4 + §7.9 actualizada (cableado sim-labeled, huecos nuevos: expectedZoneId, ancla OOB), BASELINE nuevo, este gate §8.6, EXECUTION_REPORT nuevo | — |
+| APK / dispositivo | `flutter build apk --debug` + install en TB305FU (ver EXECUTION_REPORT del día) | ver EXECUTION_REPORT |
+
+Suite completa al cierre: **421/421 PASS** (baseline 398 → +23). `flutter
+analyze --no-pub`: No issues.
+
+**Estado del gate: NO-GO / BLOCKED (sin cambios).** P0-1 §0 sin firmar;
+P0-2 handshake cableado pero demo física 0/15 y ancla OOB ausente
+(Z-004 sigue ABIERTO — §7.9 PHASE_E); P0-3 12/14 aceptaciones pendientes
+de staging; P0-4 keystore release ausente; P0-5 421/421 es local; P0-6
+sin hardware adicional; P0-7 FS v3/v4 BLOQUEADO.
+
+---
+
 ## 9. Firma
 
 | Campo | Valor |

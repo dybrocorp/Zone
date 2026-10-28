@@ -174,29 +174,43 @@ void main() {
   });
 
   group('forma gruesa de frames AKE (fail-closed)', () {
-    test('ake_hello: campos requeridos; v inválida o campo ausente ⇒ null',
+    // Shape ZONE-P2P-AKE-1 completo (alineado con P2pAkeHelloCodec). El
+    // shape reducido previo no correspondía a ningún productor real.
+    final String b64Seed = '4KjVq7cWuJyBCeXzwMprEHtcZPurGxKn';
+    final validHello = <String, dynamic>{
+      'v': 1,
+      'version': 'ZONE-P2P-AKE-1',
+      'zone_id': 'ZONE-ALICE001',
+      'account_id': '11111111-1111-4111-8111-111111111111',
+      'device_id': '33333333-3333-4333-8333-333333333333',
+      'identity_alg': 'Ed25519',
+      'identity_pk': b64Seed,
+      'encryption_alg': 'X25519',
+      'encryption_pk': b64Seed,
+      'encryption_version': 1,
+      'epk': b64Seed,
+      'nonce': b64Seed,
+      'session_id': '55555555-5555-4555-8555-555555555555',
+      'issued_at': 1761225600000,
+      'sig': b64Seed,
+    };
+
+    test('ake_hello: shape completo pasa; v inválida o campo ausente ⇒ null',
         () {
       final wiring = P2pAkeWiring();
-      final valid = <String, dynamic>{
-        'v': 1,
-        'session_id': 'uuid',
-        'nonce': 'base64',
-        'identity_pk': 'base64',
-        'encryption_pk': 'base64',
-        'fp': '20chars',
-        'sig': 'base64',
-      };
       expect(
-        wiring.validateAkeFrame(type: kP2pAkeHelloType, data: valid),
+        wiring.validateAkeFrame(type: kP2pAkeHelloType, data: validHello),
         isNotNull,
       );
 
-      final missingNonce = {...valid}..remove('nonce');
       expect(
-        wiring.validateAkeFrame(type: kP2pAkeHelloType, data: missingNonce),
+        wiring.validateAkeFrame(
+          type: kP2pAkeHelloType,
+          data: {...validHello}..remove('nonce'),
+        ),
         isNull,
       );
-      final badVersion = {...valid}..['v'] = 0;
+      final badVersion = {...validHello}..['v'] = 0;
       expect(
         wiring.validateAkeFrame(type: kP2pAkeHelloType, data: badVersion),
         isNull,
@@ -204,10 +218,65 @@ void main() {
       expect(
         wiring.validateAkeFrame(
           type: kP2pAkeHelloType,
-          data: {...valid, 'nonce': ''},
+          data: {...validHello, 'nonce': ''},
         ),
         isNull,
       );
+    });
+
+    test('ake_hello: campos numéricos no-int ⇒ null (fail-closed ante wire)',
+        () {
+      final wiring = P2pAkeWiring();
+      expect(
+        wiring.validateAkeFrame(
+          type: kP2pAkeHelloType,
+          data: {...validHello}..['issued_at'] = '1761225600000',
+        ),
+        isNull,
+      );
+      expect(
+        wiring.validateAkeFrame(
+          type: kP2pAkeHelloType,
+          data: {...validHello}..['encryption_version'] = 1.0,
+        ),
+        isNull,
+      );
+    });
+
+    test('ake_hello: prior_transcript opcional-String; no-String ⇒ null', () {
+      final wiring = P2pAkeWiring();
+      // Sin prior (hello de iniciador) — válido.
+      expect(
+        wiring.validateAkeFrame(type: kP2pAkeHelloType, data: validHello),
+        isNotNull,
+      );
+      // Con prior String — válido.
+      expect(
+        wiring.validateAkeFrame(
+          type: kP2pAkeHelloType,
+          data: {...validHello}..['prior_transcript'] = b64Seed,
+        ),
+        isNotNull,
+      );
+      // prior con tipo extraño — rechazado.
+      expect(
+        wiring.validateAkeFrame(
+          type: kP2pAkeHelloType,
+          data: {...validHello}..['prior_transcript'] = 77,
+        ),
+        isNull,
+      );
+    });
+
+    test('ake_hello: ints transportados sobreviven el saneado', () {
+      final wiring = P2pAkeWiring();
+      final clean = wiring.validateAkeFrame(
+        type: kP2pAkeHelloType,
+        data: validHello,
+      );
+      expect(clean, isNotNull);
+      expect(clean!['encryption_version'], 1);
+      expect(clean['issued_at'], 1761225600000);
     });
 
     test('ake_cert: campos requeridos; tipo desconocido ⇒ null', () {

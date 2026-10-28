@@ -65,6 +65,15 @@ class DeviceKeyMaterial {
   final SimpleKeyPair _signingKeyPair;
   final SimpleKeyPair _encryptionKeyPair;
 
+  /// Par de firma Ed25519 en memoria (para superficies de protocolo que
+  /// necesita el par crudo, p.ej. `P2PHandshakeSession`). NUNCA escribe ni
+  /// exporta material: misma exposición en memoria que el snapshot de
+  /// `DeviceIdentityBridge`.
+  SimpleKeyPair get signingKeyPair => _signingKeyPair;
+
+  /// Par de cifrado X25519 en memoria (mismas reglas que [signingKeyPair]).
+  SimpleKeyPair get encryptionKeyPair => _encryptionKeyPair;
+
   Future<List<int>> devicePublicKeyBytes() =>
       Ed25519IdentityService.publicKeyBytes(_signingKeyPair);
 

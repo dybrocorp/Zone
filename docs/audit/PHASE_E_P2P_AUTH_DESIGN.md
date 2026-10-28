@@ -667,6 +667,94 @@ documentado.)
   física de dos dispositivos (H-01…H-15) y el ancla OOB hacen falta para el
   cierre.
 
+#### 7.8.4 Cableado REAL del handshake `ZONE-P2P-AKE-1` al transporte (2026-10-27, sesión FASE F — IMPLEMENTADO + PROBADO con transporte SIMULADO)
+
+Esta sección ACTUALIZA §7.8.2 (muchas filas pasan de "SIN CABLEAR" a
+"cableado local") y §7.8.3 (el registro pasivo pasa a despacho activo).
+La demo física H-01…H-15 sigue **NOT RUN** — nada de lo de abajo implica
+radio real. Z-004 sigue ABIERTO (§7.9).
+
+Cambios exactos:
+
+- `lib/services/p2p_ake_coordinator.dart` — NUEVO. `P2pAkeCoordinator`:
+  orquestador por endpoint con transporte/identidad inyectados
+  (testeable en VM). Ejecuta el handshake COMPLETO (base del orquestador
+  probado PHASE E/G): autostart iniciador al conectar, responder al
+  recibir el primer hello, `prior=H(hello_I)` del responder, ECDH
+  X25519 + HKDF key schedule del orquestador. `P2pAkeHelloCodec`
+  (JSON over Nearby, cadenas firmadas SIN normalizar,
+  `prior_transcript` opcional String solo en la respuesta del responder).
+  `P2pAkeChannel`: **canal protegido** ChaCha20-Poly1305 por-conexión
+  (nonce 12 B = 4 B dominio-transcript ‖ u64be(seq); AAD = transcript ‖
+  seq ‖ tag de rol 'i'/'r'; RX anti-replay seq estrictamente creciente —
+  replay Y retroceso rechazados). Fail-closed: sin AKE completado
+  `channel()` devuelve `null` ⇒ una conexión inválida NO intercambia
+  mensajes protegidos.
+- **Conflicto de hellos simultáneos (política CONFIRMADA contra la API y
+  IMPLEMENTADA)**: ambos lados autostart como iniciador; al recibir un
+  hello SIN prior cuando existe pista iniciador, se hace **fork** de una
+  pista RESPONDER con sessionId/nonce/efímeros FRESCOS, se responde con
+  `prior=H(hello_peer)`. Settlement determinista: `min` lexicográfico
+  del hash final del transcript entre candidatos ⇒ ambos lados convergen
+  a la MISMA clave y al MISMO rol. Ventana de espera `settlementWait`
+  (Timer cancelable) y `expirePendingSettlement`.
+- **Material por-conexión, NUNCA persistido**: el material de sesión
+  vive en memoria por endpoint y muere en ambos caminos de desconexión
+  (`onDisconnected`); NO se toca `sk_<zone>` legacy (Z-212 intacto —
+  compatibilidad de flota). Un rechazo del policy jamás deriva.
+- `lib/services/p2p_wiring.dart` — `validateAkeFrame` extendida
+  aditivamente al shape COMPLETO del hello (el shape reducido previo no
+  correspondía a productor alguno: no existían emisores);
+  `prior_transcript` opcional String; ints(`encryption_version`,
+  `issued_at`) exigidos. `markAkeCompleted` ahora TIENE llamador
+  (solo `_onAkeKeyMaterial`, al settle).
+- `lib/services/nearby_service.dart` — al CONNECTED se arranca
+  `unawaited(_startAkeHandshake(id))`; el despachador (orden fail-closed
+  forma gruesa → WI-6 → `_handleAkeHelloFrame`) entrega los hellos
+  limpios al coordinador; `_loadAkeIdentity` usa la FUNDACIÓN
+  (`ZoneIdentityBootstrapService` → `registry.loadDeviceKeyMaterial`;
+  getters `signingKeyPair`/`encryptionKeyPair` añadidos a
+  `DeviceKeyMaterial` — misma exposición en memoria que el snapshot del
+  bridge, sin nueva superficie de persistencia); fail-closed si
+  `isInitialized`/`activeBootstrap` ausentes; `identityVerified`
+  sigue `false` en primer contacto (no-firstContact ⇒ true cuando exista
+  tienda de anclas OOB).
+- `test/p2p_ake_coordinator_test.dart` — 14/14 (criptografía REAL:
+  Ed25519/X25519/HKDF/ChaCha20-Poly1305 sobre transporte simulado):
+  clave idéntica en ambos lados, canal protegido (sellado bidireccional,
+  replay/reordenación/MAC/rol/frame-corto), firma manipulada ⇒
+  `invalidSignature`, TTL ⇒ `staleHandshake`, conflicto simultáneo
+  converge (min-lex) con canal cruzado funcional, pérdida de la
+  respuesta del responder ⇒ settle ASIMÉTRICO fail-closed (A jamás
+  deriva), identidad no lista/zone no canónico/cupo WI-6 agotado ⇒
+  nada se firma ni envía, binding de transcript entre sesiones
+  distintas (frame de M no abre en A↔B), desconexión destruye,
+  settle no se sobreescribe.
+- `test/p2p_wiring_test.dart` — shape de frames actualizado al hello
+  real (ints sobreviven saneado; prior opcional String; numéricos no-int
+  rechazados); `test/p2p_nearby_service_ake_contract_test.dart` — 4/4
+  contrato de fuente (arranque al conectar, orden fail-closed del
+  despachador, `markAkeCompleted`×1, doble vía de desconexión, identidad
+  de la fundación, bloque legacy Z-212 intacto).
+
+Suite completa al cierre: **421/421 PASS** (`flutter test --no-pub`),
+`flutter analyze` sin issues.
+
+### Limitaciones HONESTAS de este cableado (no upgrades)
+
+1. **Física NOT RUN**: H-01…H-15 sigue 0/15; todo lo anterior es
+   cripto real sobre transporte simulado.
+2. **Primer contacto sigue TOFU**: sin tienda de anclas, una sustitución
+   de identidad en el primer contacto NO es detectable (§7.9 fila 2).
+3. **`expectedZoneId` NO se pasa** en `acceptPeerHello` desde el
+   coordinador: el `zoneId` del hello queda BIND al transcript y a la
+   clave (verificado por firma), pero no se exige igualdad de zona entre
+   lados. No restringir en silencio: queda hueco documentado.
+4. **`ake_cert`** sigue WI-8 prep (registro sin uso criptográfico).
+5. **Reintentos**: tras pérdida de la respuesta en radio, el lado que
+   queda sin settle NO retransmite (re-negociación al reconectar con
+   efímeros frescos; settlement dispar queda fail-closed sin canal).
+
 ### 7.9 Huecos que impiden cerrar Z-004
 
 | Hueco | Por qué importa | Estado |
@@ -674,8 +762,10 @@ documentado.)
 | El `hello` v1 no lleva certificado de dispositivo firmado por la cuenta | `account_id` es declarativo; un atacante puede declarar cualquier cuenta con su propia device key | **Abierto** — requiere `device_certificate` v2 o registro firmado |
 | Primer contacto TOFU | Sin OOB, la sustitución de identidad en el primer contacto no es detectable | **Abierto** — requiere UI de fingerprint |
 | Fuente de revocación | El estado `deviceStatus` es una entrada local; no hay lista firmada ni consulta server-side | **Abierto** — Fase F/G |
-| Sin cableado | `NearbyService` sigue aceptando sin handshake | **Abierto** — este diseño no cambia producción |
+| ~~Sin cableado~~ Cableado con transporte SIMULADO | El handshake ahora ARRANCA en producción al conectar (§7.8.4); lo que falta es radio REAL | **ABIERTO (actualizado 2026-10-27)** — H-01…H-15 sigue 0/15 |
 | Rotación legítima | No hay registro firmado de rotación | **Abierto** — Fase F/G |
+| `expectedZoneId` no exigido | El zoneId del peer queda bind al transcript/clave por su firma, pero no se exige igualdad de zonas entre lados | **Abierto (2026-10-27)** — decisión de producto pendiente; documentado en §7.8.4 |
+| Ancla OOB local | `identityVerified` solo puede pasar a `true` tras un contacto ya anclado; no existe tienda de anclas | **Abierto (2026-10-27)** — §7.8.4 |
 
 **Por tanto Z-004 sigue ABIERTO.** Los 18 tests demuestran que la sustitución
 se detecta **cuando ya existe un ancla**; no demuestran que el primer contacto

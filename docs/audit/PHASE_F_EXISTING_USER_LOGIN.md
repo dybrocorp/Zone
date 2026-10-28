@@ -664,3 +664,34 @@ criterio de salida de 3.2.7 (14/14 en staging + revisión CTO).
   secciones 10.3 y 10.4 componen el paquete completo de decisiones que el CTO
   puede firmar en una sola sesión.
 - Cambios de esta sesión: solo documentación. Sin commits, sin remoto.
+
+### 10.7 Actualización 2026-10-27 (II) — reparación fail-closed del login IMPLEMENTADA Y PROBADA
+
+Con el paquete de decisiones de PHASE_J (`docs/audit/PHASE_J_DECISION_REVIEW.md`,
+DEC-F1…DEC-F5, owner-authorized), la ambigüedad #5 de 3.2.5 quedó cerrada: el
+orden del login se congeló y el defecto "corrupción ⇒ borrado masivo" quedó
+reparado en código, con etiqueta PROBADO LOCALMENTE (R-05 y R-13 cubren la
+propiedad; R-01/R-02…R-14 restantes siguen pendientes de staging).
+
+**Cambios de código (implementados en esta sesión):**
+
+- `lib/services/login_recovery_policy.dart` — NUEVO. Política pura del orden
+  frozen: (1) guard de política, (2) validación de formato del blob (pura,
+  fails-closed), (3) `signInAnonymously`, (4) RPC claim, (5) persistencia,
+  (6) `ensureAuth`, (7) commit en memoria AL FINAL. La corrupción produce
+  `StorageCorruptionError` tipado: NUNCA `deleteAll()` dentro de
+  getOrCreate/login.
+- `lib/services/zone_id_service.dart` — reordenado al contrato anterior. El
+  commit en memoria pasa a ser la última escritura (antes podía quedar estado
+  SESIÓN mutado con persistencia fallida y las lecturas posteriores
+  devolvían identidades "fantasma").
+
+**Verificación local:** `test/recovery/recovery_fail_closed_test.dart` — 15/15
+verde (escaneo de contrato del código fuente con comentarios despojados,
+porque `ZoneIdService` no puede instanciarse en VM por el constructor
+Supabase). Cubre: orden exacto, `StorageCorruptionError` para blob corrupto,
+cero `deleteAll()` en el camino de login, conservación de la sesión válida.
+
+**Etiquetas honestas:** PROBADO LOCALMENTE ≠ VALIDADO EN BACKEND. Las
+pruebas R-01/R-02/R-06/R-07/R-08/R-09/R-12 requieren el backend remoto que
+sigue sin exec autorizado (Z-212 §0 unmet). El gate permanece NO-GO.

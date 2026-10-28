@@ -381,7 +381,10 @@ revisada y aplicada solo con autorización (igual que Z-212).
 5. Cloud/mesh unificado.
 6. Multi-dispositivo.
 
-Cada paso es un proyecto con su propia revisión; no se implementa en Fase G.
+Cada paso es un proyecto con su propia revisión. El **paso 2 (v2)** fue
+autorizado por decisión owner en PHASE_J (DEC-G1…DEC-G4, 2026-10-27) y está
+IMPLEMENTADO + PROBADO LOCALMENTE — ver §12. Los pasos 3–6 siguen sin
+implementar (v4/ratchet BLOQUEADO por revisión criptográfica externa).
 
 ---
 
@@ -484,3 +487,78 @@ No se aceptan implementaciones sin KAT.
 - `lib/services/p2p_auth_policy.dart` (Fase E).
 - RFC 5869 (HKDF), RFC 8439 (ChaCha20-Poly1305), RFC 8032 (Ed25519),
   RFC 7748 (X25519).
+
+---
+
+## 12. Anexo 2026-10-27 — paso 2 (v2) IMPLEMENTADO y PROBADO LOCALMENTE
+
+Registro de la autorización PHASE_J (DEC-G1…DEC-G4) y su ejecución. Alcance
+EXACTO: paso 2 de §6.6 — E2EE v2 sobre el secreto estático-estático EXISTENTE
+(v1), con dominio de separación HKDF, AAD vinculante y envelope
+auto-descriptivo. **El mesh NO migra a v2 en esta fase** (según decisión
+DEC-G3); v3/v4/ratchet quedan BLOQUEADOS (revisión criptográfica externa
+pendiente, `docs/E2EE_RATCHET_ALTERNATIVES.md`).
+
+### 12.1 Parámetros criptográficos congelados (KAT-verificados)
+
+```text
+salt   = SHA-256( "ZONE-E2EE-SALT-2" || 0x00 || pkLow || pkHigh )
+         pkLow/pkHigh: claves públicas X25519 de 32 bytes ordenadas
+         lexicográficamente POR BYTES (ambos lados calculan igual).
+A      = el participante con id lexicográficamente MENOR (sender vs receiver).
+keyA2B = HKDF-SHA256(ikm = secreto compartido X25519, salt,
+                     info = "ZONE-E2EE-V2 key" || "A2B")   [32 bytes]
+keyB2A = HKDF-SHA256(…, info = "ZONE-E2EE-V2 key" || "B2A") [32 bytes]
+nonce  = 12 bytes ALEATORIOS (Counter.getCryptographicallySecureRandom).
+aad    = utf8(sin espacios, orden fijo de claves):
+         {"v":2,"s":<senderId>,"r":<receiverId>,"m":<messageId>,"i":<matchId>}
+         serializa SOLO con canonicalJsonString() — ÚNICA verdad del formato.
+envelope = "zt2:" || base64(JSON{v,s,m,i,n,t,h,ap:2})
+         n: nonce b64; t: tag b64; h: ciphertext b64; ap: 2 (app version).
+```
+
+- El enc_protocol **debe comenzar por `zt2:`**: filas v2 llevan
+  `nonce=''/mac=''` en base de datos (compatibles con el esquema actual; la
+  kriptografía vive en el ciphertext+AAD, no en columnas legacy).
+- **Binding de contexto ANTES de AEAD**: el receptor valida
+  `expectedMessageId`/`matchId` contra el envelope y SOLO entonces descifra
+  (`E2eeV2ParseError` tipado `'context'`). Un ciphertext válido de otro
+  contexto NO se acepta.
+- `receiverCandidates` = solo identidades LOCALES (nunca se acepta la pk
+  declarada por el remitente como clave de descifrado).
+- `canonicalJsonString` (base64 escaping mínimo RFC 8259) es pública y
+  compartida por el motor v2 y `device_certificate_v2.dart` — dos
+  formateadores distintos romperían la reproducibilidad de bytes.
+- Sin dependencias nuevas: `package:cryptography` 2.9.0 probadas
+  (Hkdf/Chacha20.poly1305Aead/X25519/Ed25519). Sin primitivas caseras.
+
+### 12.2 Compatibilidad y migración (unidireccional, honesta)
+
+- v1 permanece como **camino de lectura** para el historial viejo: el
+  `chat_screen` enruta por prefijo (`zt2:` ⇒ v2 / resto ⇒ v1). NO existe
+  downgrade silencioso: un mensaje v2 jamás se descifra con el camino v1.
+- **Los builds antiguos NO pueden descifrar mensajes `zt2:`** (migración
+  unidireccional documentada — criterio de versión mínima de app, igual
+  patrón que Z-212).
+
+### 12.3 Verificación local (PROBADO LOCALMENTE — no VALIDADO EN BACKEND)
+
+- `test/e2ee/e2ee_kat_test.dart` 13/13: KAT RFC 5869 (HKDF), RFC 8439
+  (ChaCha20-Poly1305), RFC 7748 (X25519), RFC 8032 (Ed25519), con los
+  parámetros EXACTOS de 12.1.
+- `test/e2ee/e2ee_v2_security_test.dart` 17/17: binding de contexto antes de
+  AEAD, AAD manipulado rechaza, salt por-BYTES determinista, A2B≠B2A, sin
+  claves en claro en el envelope.
+- Regresión completa post-refactor `canonicalJsonString` público: 50/50
+  (kat+security+recovery+sql) en una sola ejecución con `flutter test`.
+
+### 12.4 Límites explícitos de v2 (noclaims)
+
+- Las claves siguen siendo estáticas-estáticas: **No forward secrecy** (esa
+  es la característica de v3/v4, no de v2). El comentario falso de FS se
+  corrigió en el código (paso 1 de §6.6, incluido antes).
+- La confianza de la clave pública sigue el mismo TOFU documentado (Z-004)
+  hasta cablear ZONE-P2P-AKE-1 con anclas OOB.
+- Queda PROHIBIDO (sin revisión externa): ratchet v4, migración del mesh a
+  llaves AKE, y cualquier reuso de claves v2 para otra finalidad (dominio
+  de separación por info-string).

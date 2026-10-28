@@ -128,6 +128,90 @@ void main() {
     );
   });
 
+  test('Z-213: las tablas account/device nacen con RLS estricta (auth.uid() '
+      'only, sin escritura directa autenticada)', () {
+    final z213File = File(
+      '${root.path}${Platform.pathSeparator}supabase_migrations'
+      '${Platform.pathSeparator}z213_account_device_identity.sql',
+    );
+    expect(z213File.existsSync(), isTrue);
+    final z213 = _stripSqlComments(z213File.readAsStringSync());
+
+    for (final table in const <String>[
+      'account_identity',
+      'account_devices',
+      'account_device_requests',
+      'device_revocations',
+    ]) {
+      expect(
+        RegExp(
+            r'alter\s+table\s+public\.' + table +
+                r'\s+enable\s+row\s+level\s+security;',
+            caseSensitive: false)
+            .hasMatch(z213),
+        isTrue,
+        reason: '$table requiere RLS activado (Z-213)',
+      );
+      // EVERY policy of the new tables must be anchored to auth.uid().
+      final policies = RegExp(
+        r'create\s+policy\s+"[^"]+"\s+on\s+public\.' + table + r'[\s\S]*?;',
+        caseSensitive: false,
+      ).allMatches(z213);
+      expect(policies, isNotEmpty,
+          reason: '$table debe declarar sus políticas en la misma migración');
+      for (final p in policies) {
+        expect(
+          p.group(0),
+          contains('auth.uid()'),
+          reason: 'Toda política de $table debe estar gated por auth.uid()',
+        );
+      }
+    }
+
+    // Transiciones únicamente vía SECURITY DEFINER (sin escrituras directas).
+    for (final fn in const <String>[
+      'request_device_binding',
+      'finalize_device_binding',
+      'revoke_device',
+    ]) {
+      expect(
+        RegExp(
+            r'create\s+or\s+replace\s+function\s+public\.' + fn +
+                r'[\s\S]*?security\s+definer',
+            caseSensitive: false)
+            .hasMatch(z213),
+        isTrue,
+        reason: '$fn debe ser SECURITY DEFINER con gates explícitos',
+      );
+      expect(
+        z213,
+        contains("if v_uid is null then\n        raise exception"),
+        reason: '$fn exige sesión autenticada (doble compuerta GRANT + check)',
+      );
+    }
+
+    // DEC-F5: invariant of ONE active device per account (partial unique).
+    expect(
+      z213,
+      contains('uq_account_devices_one_active'),
+      reason: 'single-active-device invariant required (DEC-F5)',
+    );
+    // DEC-F2: messages.device_id provenance trigger.
+    expect(
+      z213,
+      contains('enforce_message_device_provenance'),
+      reason: 'device_id provenance must be integrity-guarded (DEC-F2)',
+    );
+    // claim_zone_id: not redefined here (Z-212 quarantine intact).
+    expect(
+      RegExp(r'CREATE\s+OR\s+REPLACE\s+FUNCTION\s+public\.claim_zone_id',
+              caseSensitive: false)
+          .hasMatch(z213),
+      isFalse,
+      reason: 'z213 does not touch claim_zone_id (Z-212 untouched)',
+    );
+  });
+
   test('controles Z-212 presentes en esquema canónico y deploy', () {
     for (final name in const <String>[
       'supabase_schema.sql',

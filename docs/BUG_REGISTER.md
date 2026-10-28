@@ -58,10 +58,11 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** Handshake firmado (Ed25519) con challenge/nonce entre pares antes de aceptar; vincular `endpointId` ↔ `zone_id` verificada; anclar identidad y clave X25519 en el primer contacto con fingerprint OOB; revocar automáticamente si la firma falla.
 - **Dependencias:** Z-003, Z-005.
 - **Prueba:** El `endpoint` falsifica `source` → debe rechazarse.
-- **Estado:** **ABIERTO — diseño Fase E completado; integración pendiente (Fase G).**
+- **Estado:** **ABIERTO — diseño Fase E completado; prep-wire WI-2/WI-6 IMPLEMENTADO (2026-10-27); handshake completo sin cablear.**
   - Contrato de verificación puro: `lib/services/p2p_auth_policy.dart` (`ZONE-P2P-AKE-1`), sin ECDH/KDF y **no cableado** en `NearbyService`.
   - Tests negativos: `test/p2p_auth_negative_test.dart` — **24/24 PASS** (sustitución de clave, identidad errónea, replay, transcript modificado, revocación, negociación incompleta, reutilización de sesión, rollback/rotación, TTL).
   - Diseño y modelo de amenazas: `docs/audit/PHASE_E_P2P_AUTH_DESIGN.md`.
+  - **Nuevo (2026-10-27, DEC-E1 parcial):** gate WI-2 del despachador + cuota WI-6 (`lib/services/p2p_wiring.dart`, `test/p2p_wiring_test.dart` 12/12). `profile_exchange` sin AKE completado ya NO alimenta derivación de llaves y queda etiquetado `identityVerified=false` (fallback 'unverified' owner-aprobado, NO descarte de conexión). El AKE completo (WI-1/WI-3, `acceptConnection`) sigue SIN CABLEAR — la producción sigue vulnerable hasta el handshake completo + demo física H-01…H-15.
   - La producción **sigue vulnerable** hasta que Fase G integre el handshake, HKDF/AAD y el ratchet.
 
 ### Z-005 · `msgId` = epoch milis + dedup con reinicio a 500 → colisiones y replay
@@ -126,10 +127,10 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** Implementar ratchet (ej. Signal ratchet con keys efímeras intermedias) o al menos rotación DH efímera por mensaje; corregir docs; añadir KDF con estado (contador) para nonces.
 - **Dependencias:** Z-003, Z-102.
 - **Prueba:** Vectors criptográficos: dos ratchets convergen; claves comprometidas no descifran mensajes pasados (FS).
-- **Estado (corregido 2026-10-23 — Fase G):** **ABIERTO — diseño completado, implementación pendiente.**
+- **Estado (actualizado 2026-10-27 — Fase G paso 2):** **ABIERTO — v2 IMPLEMENTADA (HKDF+AAD); FS sigue sin implementar (v3/v4 BLOCKED).**
   - Auditoría y especificación en `docs/audit/PHASE_G_E2EE_KEY_ESTABLISHMENT.md`: confirma que el secreto X25519 crudo se usa como clave AEAD, sin HKDF, AAD ni ratchet, y que cloud y mesh cifran por caminos separados.
   - Migración propuesta v1 (actual) → v2 (HKDF+AAD) → v3 (handshake autenticado) → v4 (ratchet), con compatibilidad de historial v1 y sin downgrade silencioso.
-  - No se implementó criptografía nueva ni se cambió `chat_e2ee_service.dart`; el comentario falso de `chat_e2ee_service.dart:59` sigue presente y debe retirarse.
+  - **Nuevo (2026-10-27, DEC-G2):** paso 2 de §6.6 IMPLEMENTADO y PROBADO LOCALMENTE (`lib/crypto/e2ee_message_crypto.dart`, KAT 13/13 + seguridad 17/17): HKDF-SHA256 con dominios separados + ChaCha20-Poly1305 con AAD vinculante + envelope `zt2:`; v1 se conserva como camino de lectura (sin downgrade). **Las claves siguen estáticas-estáticas: NO hay Forward Secrecy** — el cierre de FS y rotación es el paso v3/v4, BLOQUEADO por revisión criptográfica externa (`E2EE_RATCHET_ALTERNATIVES.md`). El comentario falso de FS ya no existe (`chat_e2ee_service.dart:59` corregido en sesión previa).
   - El gate de beta sigue **NO-GO**.
 
 ### Z-102 · Pérdida local de clave → se empuja clave nueva al servidor rompiendo mensajes pasados

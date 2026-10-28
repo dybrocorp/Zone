@@ -52,6 +52,11 @@ class ChatScreenState extends State<ChatScreen> {
   String? _otherAvatarUrl;
   Map<String, dynamic>? _otherProfile;
   SecretKey? _sharedSecret;
+  /// PHASE G §6.6 paso 2 — clave pública X25519 cruda del peer (32 bytes),
+  /// capturada en `_setupChat` a partir de la MISMA fuente que v1 usa para
+  /// `computeSharedSecret`. Necesaria para derivar la clave v2 por dirección
+  /// y para el AAD (salt) canónico de ambos lados.
+  List<int>? _otherPublicKeyBytes;
   RealtimeChannel? _subscription;
   final Map<String, String> _decryptedByMessageId = {};
 
@@ -202,6 +207,10 @@ class ChatScreenState extends State<ChatScreen> {
               otherPubKeyBase64.toString(),
             );
             if (otherPubKey != null) {
+              // v2: conservar la pk cruda del peer (DEBE ser la misma fuente
+              // que v1: el mismo campo de perfil). El orden lexicográfico por
+              // bytes del salt exige determinismo.
+              _otherPublicKeyBytes = otherPubKey.bytes;
               _sharedSecret = await _e2eeService.computeSharedSecret(
                 otherPubKey,
               );
@@ -344,18 +353,73 @@ class ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  /// PHASE G §6.6 paso 2 — descifrado de una fila para display.
+  ///
+  /// Ruta v2 (`zt2:`): material de claves completo → HKDF/AAD con ORIENTACIÓN
+  /// explícita (quién es sender/receiver según `sender_id` de la fila):
+  /// - Yo envié la fila → sender = yo, receiverCandidates = ids del peer.
+  /// - Fila recibida    → sender = peer, receiverCandidates = ids míos.
+  /// El binding de messageId/matchId ocurre en el motor v2 ANTES del AEAD.
+  ///
+  /// Ruta v1: comportamiento original preservado byte a byte (columnas
+  /// `nonce`/`mac`; `decryptMessage` ya devuelve las cadenas de usuario).
+  /// Clasificación por prefijo `zt2:`: sin downgrade silencioso; si faltara
+  /// material de claves v2, las filas v2 NO vuelven a v1 (devuelven el
+  /// placeholder de no-descifrado).
+  Future<String> _decryptRowForDisplay(Map<String, dynamic> msg) async {
+    final content = msg['encrypted_content']?.toString() ?? '';
+    if (!ChatE2EEService.isV2Envelope(content)) {
+      return _e2eeService.decryptMessage(
+        content,
+        msg['nonce']?.toString() ?? '',
+        msg['mac']?.toString() ?? '',
+        _sharedSecret!,
+      );
+    }
+
+    final ownPub = await _e2eeService.ownPublicKeyBytes();
+    final peerPub = _otherPublicKeyBytes;
+    if (ownPub == null ||
+        peerPub == null ||
+        ownPub.length != 32 ||
+        peerPub.length != 32) {
+      return '[🔒 No se pudo descifrar]';
+    }
+
+    final myId = _zoneIdService.uid;
+    final myZoneId = _zoneIdService.zoneId;
+    final id = msg['id']?.toString() ?? '';
+    final senderId = msg['sender_id']?.toString() ?? '';
+    final iAmSender = myId != null && senderId == myId;
+
+    final receiverCandidates = iAmSender
+        ? <String>[widget.otherUserId ?? '', widget.otherZoneId]
+            .where((v) => v.isNotEmpty)
+            .toList()
+        : <String>[
+            if (myId != null && myId.isNotEmpty) myId,
+            if (myZoneId != null && myZoneId.isNotEmpty) myZoneId,
+          ];
+
+    return _e2eeService.decryptMessageV2(
+      encryptedContent: content,
+      sharedSecret: _sharedSecret!,
+      senderId: senderId,
+      receiverCandidates: receiverCandidates,
+      expectedMessageId: id,
+      expectedMatchId: widget.matchId,
+      senderPublicKeyBytes: iAmSender ? ownPub : peerPub,
+      receiverPublicKeyBytes: iAmSender ? peerPub : ownPub,
+    );
+  }
+
   Future<void> _prefetchDecrypted(List<Map<String, dynamic>> messages) async {
     if (_sharedSecret == null) return;
     for (final msg in messages) {
       final id = msg['id']?.toString();
       if (id == null || _decryptedByMessageId.containsKey(id)) continue;
       try {
-        _decryptedByMessageId[id] = await _e2eeService.decryptMessage(
-          msg['encrypted_content'] ?? '',
-          msg['nonce'] ?? '',
-          msg['mac'] ?? '',
-          _sharedSecret!,
-        );
+        _decryptedByMessageId[id] = await _decryptRowForDisplay(msg);
         debugPrint('[ChatScreen] Mensaje $id descifrado con éxito');
       } catch (e) {
         debugPrint('[ChatScreen] Error descifrando mensaje $id: $e');
@@ -525,10 +589,30 @@ class ChatScreenState extends State<ChatScreen> {
     try {
       // 0. CIFRAR PRIMERO — el ciphertext se reutiliza para el outbox y el
       //    envío idempotente (Z-007).
-      final encrypted = await _e2eeService.encryptMessage(
-        controllerText,
-        _sharedSecret!,
-      );
+      //
+      // PHASE G §6.6 paso 2: si hay material de claves completo (pk propia +
+      // pk del peer) se cifra con v2 (HKDF por dirección + AAD canónico con
+      // messageId/matchId); el envelope `zt2:` lleva `nonce`/`mac` vacíos —
+      // compatible con el esquema de columnas/outbox actual. Sin material
+      // v2 completo → se preserva el circuito v1 (sin degradar la sesión
+      // existente a un camino que no podamos descifrar después).
+      final ownPub = await _e2eeService.ownPublicKeyBytes();
+      final peerPub = _otherPublicKeyBytes;
+      final canUseV2 =
+          ownPub != null && peerPub != null && ownPub.length == 32 &&
+              peerPub.length == 32;
+      final Map<String, dynamic> encrypted = canUseV2
+          ? await _e2eeService.encryptMessageV2(
+              text: controllerText,
+              sharedSecret: _sharedSecret!,
+              senderId: uid,
+              receiverId: widget.otherUserId ?? widget.otherZoneId,
+              messageId: outgoingMessageId,
+              matchId: widget.matchId,
+              senderPublicKeyBytes: ownPub,
+              receiverPublicKeyBytes: peerPub,
+            )
+          : await _e2eeService.encryptMessage(controllerText, _sharedSecret!);
 
       // 1. PERSISTIR EN OUTBOX (Isar) ANTES de tocar red → el id estable ya
       // queda asignado. Z-007: un reintento reutiliza el MISMO messageId →

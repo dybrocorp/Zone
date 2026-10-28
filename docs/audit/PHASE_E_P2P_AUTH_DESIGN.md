@@ -629,6 +629,44 @@ cableado de P0-2 puede implementarse antes con ancla OOB local, pero el cierre
 de la reclamación de cuenta ajena en primer contacto (Z-004) no puede
 declararse sin (1)-(3) y la demostración física (j) §7.8.1.
 
+#### 7.8.3 Cableado de PREPARACIÓN WI-2/WI-6 en producción (2026-10-27, IMPLEMENTADO + PROBADO LOCALMENTE)
+
+Autorizado por PHASE_J (DEC-E1 parcial: gate del despachador + rate-limit;
+el handshake WI-1/WI-3 completo sigue su curso aparte). Cambios:
+
+- `lib/services/p2p_wiring.dart` — NUEVO. `P2pAkeWiring`: estado AKE **por
+  endpoint efímero** (muere con la conexión: `noteDisconnected` en
+  `_onDisconnected` y `disconnectFrom`; la ventana de rate-limit WI-6
+  sobrevive a la reconexión, anclada al par), gate WI-2
+  (`gateProfileExchange`), cuota WI-6 (LRU+TTL 5 intentos/10 min/64
+  endpoints, patrón `MeshDedup`, tiempo inyectable en test), y validator
+  de forma gruesa de frames (`validateAkeFrame`) con lista estricta de
+  claves (sin pasar campos desconocidos del wire hacia el handshake).
+- `lib/services/nearby_service.dart` — despachador: `ake_hello`/`ake_cert`
+  se interceptan **ANTES** de `profile_exchange` (forma gruesa → cuota
+  WI-6 → registro de progreso). El AKE completo NO deriva ni guarda claves
+  aún (WI-1/WI-3 sin cablear: recursos físicos H-01 pendientes). En
+  `_handleProfileExchange`, el gate WI-2 decide: sin AKE completado ⇒
+  bloque Z-212 completo OMITIDO (ni derivación ni conservación ni flush por
+  esta vía) y marca `NearbyUser.identityVerified = false`.
+
+**Decisión owner-aprobada (PHASE_J): fallback 'unverified', NO
+descarte+close.** Un `profile_exchange` sin AKE completado NO descarta la
+conexión: se conserva el perfil visible pero la identidad queda etiquetada
+honestamente como no verificada y NO alimenta la derivación de llaves.
+(Riguroso: ni v1-plano, ni seek de claves — omitir es un tercer estado,
+documentado.)
+
+- `test/p2p_wiring_test.dart` — 12/12 verde: gate WI-2 (sin AKE ⇒
+  unverified; markAkeCompleted ⇒ authenticatedPath), muerte del estado con
+  el endpoint, cuota WI-6 (5 pasan, 6º denegado, ventana TTL, por-endpoint,
+  eviction LRU), forma gruesa fail-closed e inyección de campos extraños.
+- **No se declara Z-004 cerrado** (§7.9 íntegro): lo nuevo es que un
+  intercambio plano ya no puede alimentar la derivación de llaves sin pasar
+  por la marca 'unverified'; el handshake autenticado completo, la demo
+  física de dos dispositivos (H-01…H-15) y el ancla OOB hacen falta para el
+  cierre.
+
 ### 7.9 Huecos que impiden cerrar Z-004
 
 | Hueco | Por qué importa | Estado |

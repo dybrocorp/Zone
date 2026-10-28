@@ -294,6 +294,9 @@ remotas, sin secretos generados**. Gate: sigue **NO-GO / BLOCKED**.
 | `flutter analyze --no-pub` (2.ª ejecución, mismo día — gate CTO; exit 0) | **PASS** — `No issues found!` (25.0 s) |
 | `flutter test --no-pub` (2.ª ejecución; exit 0) | **289/289 PASS** (1:20), 0 fallos. Cifra medida en esta ejecución, no histórica; coincide con la de arriba |
 | `flutter build apk --release --no-pub` (sin firma; exit 1) | **FAIL CLOSED** — `Release signing is not configured. Refusing to build a release with debug keys` (1:30). El build debug sí compila (`app-debug.apk`) |
+| `flutter analyze --no-pub` (3.ª ejecución, 2026-10-27 sesión II, tras implementar v2/login/migración/WI-2/WI-6) | **PASS** — `No issues found!` (21.1 s), proyecto completo |
+| `flutter test --no-pub` (3.ª ejecución, suite completa) | **383/383 PASS**. Baseline 289 + **94 tests nuevos**: E2EE v2 KAT (13) + seguridad v2 (17), login fail-closed (15), SQL Z-213 estricto (+1), device_certificate_v2 (13), device_identity_bridge (6), device_migration_service (17+), p2p_wiring WI-2/WI-6 (12) |
+| `flutter build apk --debug --no-pub --dart-define-from-file=.env` | **PASS** (75,9 s) — `app-debug.apk` 207 903 605 B; SHA-256 `9d65ec84d570904acc835f23911bbd53ecf6aa84b164e6f82cc71269f6baba9a`; package `com.dybrocorp.zone`, versión 1.0.4+5. **Debug only: release sigue FAIL CLOSED (P0-4)** |
 
 ### 8.2 Estado por bloqueador tras esta sesión
 
@@ -331,6 +334,28 @@ remotas, sin secretos generados**. Gate: sigue **NO-GO / BLOCKED**.
   retira la afirmación falsa de FS (mandato explícito de PHASE_G §6.6 paso 1
   y criterio de salida (b) de P0-7); sin cambio de comportamiento; suite y
   analyze re-ejecutados después del cambio (§9.1).
+
+### 8.5 Sesión de implementación 2026-10-27 (II) — decisiones PHASE_J ejecutadas
+
+Con el paquete de decisiones PHASE_J (owner-authorized, commit previo), se
+implementó y probó localmente el trabajo seguro autorizado:
+
+| Área | Entregables | Etiqueta |
+|---|---|---|
+| E2EE v2 (PHASE_G §6.6 paso 2, DEC-G2) | `lib/crypto/e2ee_message_crypto.dart` (motor `zt2:` con HKDF/AAD/AAD-binding ANTES de AEAD), `lib/services/chat_e2ee_service.dart`, `lib/screens/chat_screen.dart` (enrutado v1/v2 por prefijo); `canonicalJsonString` pública compartida | PROBADO LOCALMENTE (KAT 13/13 + seguridad 17/17) |
+| Login fail-closed (DEC-F, PHASE_F §10.7) | `lib/services/login_recovery_policy.dart`, reorder de `zone_id_service.dart` | PROBADO LOCALMENTE (15/15) |
+| Migración dispositivo (fundaciones) | `lib/migration/device_migration_state.dart` + `device_migration_service.dart` (A/B/C/D, NO-destroy-before-confirm, backend fail-closed), `lib/identity/device_certificate_v2.dart` + spec `docs/DEVICE_CERTIFICATE_V2_SPEC.md`, `lib/identity/device_identity_bridge.dart`, `supabase_migrations/z213_account_device_identity.sql` (STAGED — sin exec) | PROBADO LOCALMENTE (17/13/6/5); NO VALIDADO EN BACKEND |
+| P2P wire prep (DEC-E1 parcial) | `lib/services/p2p_wiring.dart` (gate WI-2 + cuota WI-6), integración en `nearby_service.dart` (despachador AKE antes de `profile_exchange`, fallback 'unverified' owner-aprobado, `identityVerified` en `NearbyUser`) | PROBADO LOCALMENTE (12/12); WI-1/WI-3 siguen sin cablear |
+| Docs | PHASE_E §7.8.3, PHASE_F §10.7, PHASE_G §12, BUG_REGISTER (Z-004/Z-101), Z212_RUNBOOK §11 nota, DEVICE_CERTIFICATE_V2_SPEC nuevo, este gate §8.1/§8.5 | — |
+
+**Estado del gate tras esta sesión: NO-GO / BLOCKED (sin cambios).** Motivos
+honestos: P0-1 sin §0 firmado (z213 SOLO staged, sin exec); P0-2 con
+prep-wire IMPLEMENTADO pero handshake completo sin cablear y demo física
+H-01…H-15 en 0/15; P0-3 con R-05/R-13 reparadas localmente pero 12/14
+aceptaciones pendientes de ejecutar en staging; P0-4 keystore real ausente;
+P0-5 suite verde local 383/383 (no es validación en backend); P0-6 sin
+hardware; P0-7 FS (v3/v4) BLOQUEADO (v2 implementada; ratchet exige revisión
+criptográfica externa).
 
 ---
 

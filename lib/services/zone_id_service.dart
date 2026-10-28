@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'chat_e2ee_service.dart';
 import 'isar_service.dart';
 import 'logger_service.dart';
+import 'login_recovery_policy.dart';
 import 'p2p_security_service.dart';
 import 'same_account_claim_policy.dart';
 
@@ -76,17 +77,21 @@ class ZoneIdService {
 
   /// Obtiene o crea el ID ZONE- del usuario.
   /// Se llama solo cuando estamos seguros de que queremos iniciar/restaurar.
+  ///
+  /// PHASE G (regla R-05): ante señal de keystore corrupto YA NO se ejecuta
+  /// `deleteAll()` (destruía el anclaje de identidad ante un error transitorio
+  /// y re-recorría el flujo otra vez). Se lanza [StorageCorruptionError]
+  /// tipado; fail-closed sin destrucción.
   Future<String> getOrCreate() async {
     try {
       return await _getOrCreateInternal();
     } catch (e) {
-      if (e.toString().contains('BadPaddingException') ||
-          e.toString().contains('decryption')) {
+      if (LoginRecoveryPolicy.isStorageCorruptionSignal(e)) {
         _logger.debug(
-          '[ZoneIdService] Corrupción de almacenamiento detectada. Limpiando todo y reintentando...',
+          '[ZoneIdService] Corrupción de almacenamiento detectada. '
+          'Fail-closed SIN limpieza destructiva.',
         );
-        await _storage.deleteAll();
-        return await _getOrCreateInternal();
+        throw StorageCorruptionError('getOrCreate', origin: e);
       }
       rethrow;
     }
@@ -126,56 +131,78 @@ class ZoneIdService {
   /// PRIMERO: fail-closed, sin efectos secundarios (sin sign-in, sin writes,
   /// sin RPC, sin generación de claves). Regla temporal: NEW DEVICE = NEW
   /// ACCOUNT. Solo el futuro puente (2.2.3+) puede levantar la cuarentena.
+  ///
+  /// PHASE G (regla R-13) — orden congelado (`LoginRecoveryPolicy.loginSteps`):
+  /// 1. policy guard (puro, cero efectos) → 2. VALIDACIÓN DE FORMATO (pura,
+  /// ANTES de consumir sesión anónima) → 3. signInAnonymously → 4. RPC claim →
+  /// 5. persistencia local → 6. ensureAuth/llaves → 7. commit en memoria del
+  /// singleton. Ante corrupción: [StorageCorruptionError] tipado, SIN
+  /// `deleteAll()`. Si un paso falla, el estado en memoria previo se RESTAURA
+  /// (el singleton no queda a mitad de camino).
   Future<bool> loginWithExistingID(String zoneId) async {
+    // 1. Policy guard (puro, sin efectos secundarios). Igual que antes.
     SameAccountClaimPolicy.ensureAllowed(zoneId);
+
+    // Captura del estado previo para restaurar si algún paso falla (la
+    // mutación del singleton ocurre SOLO al final, pero seremos reforzados).
+    final previousZoneId = _zoneId;
+    final previousUid = _uid;
+
     try {
       return await _loginWithExistingIDInternal(zoneId);
     } catch (e) {
-      if (e.toString().contains('BadPaddingException') ||
-          e.toString().contains('decryption')) {
+      // R-05: corrupción → error tipado, SIN deleteAll, SIN reintento.
+      if (LoginRecoveryPolicy.isStorageCorruptionSignal(e)) {
         _logger.debug(
-          '[ZoneIdService] Corrupción de almacenamiento detectada en login. Limpiando...',
+          '[ZoneIdService] Corrupción de almacenamiento en login. '
+          'Fail-closed SIN limpieza destructiva.',
         );
-        await _storage.deleteAll();
-        return await _loginWithExistingIDInternal(zoneId);
+        throw StorageCorruptionError('loginWithExistingID', origin: e);
       }
+      // Reintento NO precaución: devolvemos false solo si ya teníamos estado,
+      // restaurando la memoria al estado previo al login.
+      _zoneId = previousZoneId;
+      _uid = previousUid;
+      _logger.debug('[ZoneIdService] Error en loginWithExistingID: $e');
       return false;
     }
   }
 
   Future<bool> _loginWithExistingIDInternal(String zoneId) async {
+    // 2. Formato PRIMERO (contrato R-13: pure, sin efectos secundarios — el
+    //    RPC valida igual server-side; el gate local evita trabajo y
+    //    rate-limit innecesarios, y evita tocar sesión/almacenamiento).
+    if (!LoginRecoveryPolicy.isValidZoneIdFormat(zoneId)) {
+      _logger.debug('[ZoneIdService] Formato de ZONE-ID inválido en login.');
+      throw const LoginFormatError();
+    }
+
     try {
-      // 1. Iniciar sesión anónima PRIMERO para obtener el rol "authenticated"
-      // Esto es OBLIGATORIO porque configuramos RLS: TO authenticated en Supabase
+      // 3. Iniciar sesión anónima para obtener el rol "authenticated"
+      //    (OBLIGATORIO con RLS: TO authenticated en Supabase).
       final response = await _supabase.auth.signInAnonymously();
-      if (response.user == null) return false;
-
-      // 3. Guardar localmente y adueñarse de la row
-      _zoneId = zoneId;
-      _uid = response.user!.id; // El nuevo UID anónimo
-
-      await _storage.write(key: _keyZoneId, value: _zoneId);
-      await _storage.write(key: _keySupabaseSession, value: _uid);
-
-      // 4. Formato primero (el RPC valida igual server-side, pero evitamos
-      //    trabajo y rate-limit innecesarios)
-      if (!isValidZoneIdFormat(zoneId)) {
-        _logger.debug('[ZoneIdService] Formato de ZONE-ID inválido en login.');
+      if (response.user == null) {
+        _logger.debug(
+          '[ZoneIdService] signInAnonymously devolvió null en login.',
+        );
         return false;
       }
 
-      // 5. Reclamar la propiedad del ZONE-ID (RPC endurecido por Z-001 Fase A).
+      // 4. Reclamar la propiedad del ZONE-ID (RPC endurecido por Z-001 Fase A).
       //    Z-212: el claim está en CUARENTENA fail-closed; esta llamada lanzará
       //    'Reclamo de ZONE-ID deshabilitado temporalmente...' hasta que exista
-      //    una prueba de posesión aprobada (Fase F). La guarda
-      //    SameAccountClaimPolicy.ensureAllowed ya bloquea el flujo por defecto.
-      //    El RPC ya NO acepta p_public_key.
+      //    una prueba de posesión aprobada (Fase F). El claim ES el gate
+      //    server-side: si falla, NO persistimos localmente (antes un claim
+      //    fallido dejaba las escrituras locales hechas — estado mitad de
+      //    camino). El RPC ya NO acepta p_public_key.
       final claimed = await _supabase.rpc(
         'claim_zone_id',
         params: {'p_zone_id': zoneId},
       );
 
-      // 6. Persistir localmente el perfil recuperado (display_name, avatar, handles)
+      // 5. Persistir el perfil reclamado + identidad local (después del claim
+      //    exitoso). El perfil vuelve del RPC; el ID/uid se commitea en memoria
+      //    AL FINAL (paso 7) — antes el singleton cambiaba ANTES de persistir.
       if (claimed is Map) {
         final profileData = Map<String, dynamic>.from(claimed);
         _logger.debug(
@@ -187,13 +214,20 @@ class ZoneIdService {
           'updatedAt': DateTime.now().toIso8601String(),
         });
       }
+      await _storage.write(key: _keyZoneId, value: zoneId);
+      await _storage.write(key: _keySupabaseSession, value: response.user!.id);
 
-      // 7. ASEGURAR que las llaves E2EE se restauren o generen para esta nueva sesión
+      // 6. ASEGURAR que las llaves E2EE se restauren o generen para esta
+      //    nueva sesión (mismo paso final que antes).
       await ensureAuth();
 
+      // 7. Commit en memoria — SOLO al final, con todos los efectos hechos.
+      _zoneId = zoneId;
+      _uid = response.user!.id;
+      _logger.debug('[ZoneIdService] Login exitoso para $zoneId');
       return true;
     } catch (e) {
-      _logger.debug('[ZoneIdService] Error en loginWithExistingID: $e');
+      _logger.debug('[ZoneIdService] Error en login interno: $e');
       rethrow;
     }
   }
@@ -581,10 +615,9 @@ class ZoneIdService {
 
   /// Valida el formato canónico de un ZONE-ID: `ZONE-` + 8×[A-Z0-9].
   /// Contrato compartido con el backend (claim_zone_id / verify_zone_id).
-  static bool isValidZoneIdFormat(String? zoneId) {
-    if (zoneId == null || zoneId.isEmpty) return false;
-    return RegExp(r'^ZONE-[A-Z0-9]{8}$').hasMatch(zoneId);
-  }
+  /// Delega en [LoginRecoveryPolicy] (una sola verdad del formato).
+  static bool isValidZoneIdFormat(String? zoneId) =>
+      LoginRecoveryPolicy.isValidZoneIdFormat(zoneId);
 
   String _generateZoneId() {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';

@@ -455,6 +455,15 @@ Hasta recibir esa autorización, **no se conectará ni modificará staging**. No
 solicitan credenciales en este documento; se usarán las variables/CLI seguras ya
 configuradas.
 
+**Actualización 2026-10-27 (II) — sin cambio de estado.** El enfoque de esta
+sesión fue implementativo (E2EE v2, login fail-closed, fundaciones de
+migración de dispositivo, WI-2/WI-6). Z-212 **NO cambió en staging ni en
+producción**; la puerta §0 sigue cerrada y sin confirmación firmada. Nota
+para cuando la puerta se abra: `z213_account_device_identity.sql` permanece
+en estado "staged" (diseño local + tests, aplicado SOLAMENTE en el
+PostgreSQL aislado de tests); se aplicará en remoto con la MISMA puerta §0 y
+preflight/backup de este runbook, nunca antes.
+
 ---
 
 ## 12. Evidencia local ya disponible

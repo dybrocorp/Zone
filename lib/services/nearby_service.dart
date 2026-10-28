@@ -20,26 +20,35 @@ import 'package:cryptography/cryptography.dart';
 import '../models/isar_models.dart';
 import 'logger_service.dart';
 import 'mesh_policy.dart';
+import 'p2p_wiring.dart';
 
 /// Modelo de usuario descubierto por Nearby Connections.
 class NearbyUser {
-  final String endpointId;
-  final String token; // Token efímero recibido
-  String userName; // Resuelto desde Supabase
-  String zoneId; // ZONE-ID real resuelto
-  bool isConnected;
-  double? distanceMeters; // Estimado por RSSI BLE
-  Map<String, dynamic>? profile; // Perfil completo de Supabase
-
   NearbyUser({
     required this.endpointId,
     required this.token,
     this.userName = '...',
     this.zoneId = '',
     this.isConnected = false,
+    this.identityVerified = false,
     this.distanceMeters,
     this.profile,
   });
+
+  final String endpointId;
+  final String token; // Token efímero recibido
+  String userName; // Resuelto desde Supabase
+  String zoneId; // ZONE-ID real resuelto
+  bool isConnected;
+
+  /// Z-004 WI-2 (PHASE E/G): `true` SOLO si el endpoint completó un AKE
+  /// (`ZONE-P2P-AKE-1`) con claves ancladas/verificables. `profile_exchange`
+  /// recibido sin AKE completado deja esta marca en `false` (identidad
+  /// 'unverified' — el despachador NO deriva llave de sesión para él).
+  bool identityVerified;
+
+  double? distanceMeters; // Estimado por RSSI BLE
+  Map<String, dynamic>? profile; // Perfil completo de Supabase
 }
 
 /// Modelo de mensaje recibido via payload.
@@ -70,6 +79,11 @@ class NearbyService with WidgetsBindingObserver {
   final _security = P2PSecurityService();
   final _chatE2EE = ChatE2EEService();
   final _logger = LoggerService();
+
+  /// Z-004 PHASE E/G — cable WI-2 (gate del despachador) + WI-6
+  /// (rate-limit local). Sin secretos; el estado AKE vive por endpoint
+  /// efímero y muere con la conexión.
+  final P2pAkeWiring _akeWiring = P2pAkeWiring();
 
   /// P2P_CLUSTER mejora alcance y descubrimiento bilateral en espacios abiertos.
   static const Strategy _strategy = Strategy.P2P_CLUSTER;
@@ -940,6 +954,9 @@ class NearbyService with WidgetsBindingObserver {
     _connectedEndpoints.remove(id);
     _pendingConnections.remove(id);
     _sessions.noteDisconnected(id);
+    // Z-004 WI-2: el estado AKE vive SOLO con el endpoint (efímero); la
+    // reconexión re-negocia (WI-6 conserva la ventana de radio).
+    _akeWiring.noteDisconnected(id);
     _lifecycle.endpointDisconnected(_sessions.connectedCount);
     if (_discoveredUsers.containsKey(id)) {
       _discoveredUsers[id]!.isConnected = false;
@@ -999,6 +1016,7 @@ class NearbyService with WidgetsBindingObserver {
     _nearby.disconnectFromEndpoint(endpointId);
     _connectedEndpoints.remove(endpointId);
     _sessions.noteDisconnected(endpointId);
+    _akeWiring.noteDisconnected(endpointId);
     _lifecycle.endpointDisconnected(_sessions.connectedCount);
     if (_discoveredUsers.containsKey(endpointId)) {
       _discoveredUsers[endpointId]!.isConnected = false;
@@ -1040,6 +1058,48 @@ class NearbyService with WidgetsBindingObserver {
       }
       final data = Map<String, dynamic>.from(decoded);
       final type = data['type'];
+
+      // Z-004 WI-2/WI-6 (PHASE E/G): los frames AKE se despachan ANTES que
+      // `profile_exchange`. Reglas:
+      //  - forma gruesa fail-closed (validateAkeFrame) — nada malformado
+      //    llega al registro;
+      //  - rate-limit local por endpoint (WI-6) — intentos repetidos no
+      //    consumen la radio;
+      //  - registro de progreso hello/cert (WI-1 prep). El AKE COMPLETO
+      //    (claves/acceptConnection) sigue SIN CABLEAR (H-01 pendiente:
+      //    demo física); NADA deriva ni guarda claves aquí.
+      if (type is String && data['data'] is Map) {
+        final akeData = Map<String, dynamic>.from(data['data'] as Map);
+        if (type == kP2pAkeHelloType || type == kP2pAkeCertType) {
+          final clean = _akeWiring.validateAkeFrame(
+            type: type,
+            data: akeData,
+          );
+          if (clean == null) {
+            _logger.debug(
+              '[NearbyService] Frame AKE malformado descartado ($type).',
+            );
+            return;
+          }
+          if (_akeWiring.consumeHandshakeQuota(endpointId) ==
+              P2pAkeRateDecision.attemptDenied) {
+            _logger.debug(
+              '[NearbyService] Rate-limit WI-6 agotado para el endpoint; '
+              'frame AKE descartado (WI-6).',
+            );
+            return;
+          }
+          _akeWiring.noteAkeFrameReceived(
+            endpointId: endpointId,
+            isHello: type == kP2pAkeHelloType,
+          );
+          _logger.debug(
+            '[NearbyService] Frame AKE registrado ($type, WI-2/WI-6 prep; '
+            'la sesión completa queda pendiente de cableado físico H-01).',
+          );
+          return;
+        }
+      }
 
       if (type == 'profile_exchange') {
         // PHASE 2.2.6 (§6): validar ANTES de tocar estado — identidad
@@ -1131,8 +1191,23 @@ class NearbyService with WidgetsBindingObserver {
         (profileData['publicKey'] as String?) ??
         (profileData['public_key'] as String?);
     final remoteZoneId = profileData['zone_id'] as String?;
-    if (remotePublicKey != null && remoteZoneId != null) {
-      _logger.debug('[NearbyService] Derivando llave de sesión P2P...');
+
+    // Z-004 WI-2 (PHASE E/G): gate del despachador. `profile_exchange`
+    // SIN AKE completado en este endpoint NO alimenta la derivación de
+    // llaves: marca 'unverified' (fallback propietario aprobado — NO es
+    // descarte de conexión) y el bloque Z-212 completo se OMITE (ni
+    // derivación ni conservación ni flush por esta vía falla cerrada).
+    final akeGate = _akeWiring.gateProfileExchange(endpointId);
+    var identityVerified = akeGate == P2pProfileExchangeGate.authenticatedPath;
+
+    if (akeGate == P2pProfileExchangeGate.unverifiedFallback) {
+      _logger.debug(
+        '[NearbyService] WI-2: profile_exchange sin AKE completado para '
+        '$endpointId — identidad "unverified"; derivación y gestión de '
+        'llave de sesión OMITIDAS para este exchange.',
+      );
+    } else if (remotePublicKey != null && remoteZoneId != null) {
+      _logger.debug('[NearbyService] Derivando llave de sesión P2P (AKE autenticado)...');
       try {
         // Z-212: NUNCA reemplazar una llave ya establecida por una clave que
         // llega sin prueba de posesión (mitiga key-substitution/MITM tras el
@@ -1198,6 +1273,9 @@ class NearbyService with WidgetsBindingObserver {
           profileData['display_name'] ?? profileData['zone_id'] ?? 'Usuario';
       user.zoneId = profileData['zone_id'] ?? '';
       user.profile = profileData;
+      // Z-004 WI-2: etiqueta honesta de verificación de identidad para UI
+      // (true SOLO con AKE completado en este endpoint).
+      user.identityVerified = identityVerified;
 
       // Guardar mapeo pseudonym→zoneId si el token es offline
       if (user.token.startsWith('OFFLINE:')) {

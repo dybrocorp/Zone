@@ -1,7 +1,7 @@
 # Política de Privacidad - DYBROCORP / ZONE
 
-**Versión:** 1.0  
-**Fecha de actualización:** 10 de mayo de 2026  
+**Versión:** 1.1  
+**Fecha de actualización:** 28 de octubre de 2026  
 **Responsable:** DybroCorp (legal@dybrocorp.com)
 
 ---
@@ -22,12 +22,13 @@ Podremos recopilar:
 * **Proporcionada por el usuario:** Nombre, correo, número (si aplica), foto de perfil, ZONE-ID, información de autenticación.
 * **Información técnica:** Dirección IP, tipo de dispositivo, sistema operativo, identificadores únicos.
 * **Información de uso:** Interacciones, tiempo de uso, preferencias, contenido compartido.
+* **Ubicación aproximada (solo con consentimiento):** si activas el descubrimiento por GPS, la app envía tu posición a nuestros servidores para calcular distancias con otros usuarios. Estas coordenadas **no se entregan a otros usuarios**: ellos solo reciben una distancia aproximada (redondeada a rejilla de 10 m) calculada en el servidor. La presencia se elimina automáticamente a los 30 minutos o antes si te ocultas o revocas el consentimiento. El radar Bluetooth (Premium) no utiliza tu ubicación GPS.
 
 ## 4.4 Finalidades del Tratamiento
 La información se utiliza para operar la plataforma, gestionar cuentas, mejorar servicios, garantizar seguridad, detectar fraude y cumplir obligaciones legales.
 
 ## 4.5 Bases Legales del Tratamiento
-El tratamiento se realiza bajo el consentimiento del titular, ejecución contractual, obligaciones legales e intereses legítimos.
+El tratamiento se realiza bajo el consentimiento del titular, ejecución contractual, obligaciones legales e intereses legítimos. El tratamiento de ubicación para el descubrimiento se basa exclusivamente en tu **consentimiento explícito y revocable**: puedes desactivarlo en Ajustes → Descubrimiento en cualquier momento, y al revocarlo tu presencia se borra del servidor.
 
 ## 4.6 Derechos de los Titulares
 Los usuarios pueden conocer, actualizar, corregir o solicitar la eliminación de sus datos, así como revocar la autorización de uso. Las solicitudes deben realizarse a `contacto@dybrocorp.com`.

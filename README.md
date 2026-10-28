@@ -4,7 +4,7 @@
 
 [![Descargar APK](https://img.shields.io/badge/Descargar-Zone%20APK-00D2FF?style=for-the-badge&logo=android)](https://github.com/dybrocorp/Zone/raw/main/Zone.apk)
 
-Zone es una plataforma de red social revolucionaria basada en la proximidad física (vía Bluetooth Low Energy) y el anonimato total. Diseñada con una estética moderna "ShareIt style", Zone te permite detectar personas en tu "radar" local, establecer conexiones seguras y chatear mediante un protocolo de cifrado de extremo a extremo (E2EE) de grado industrial.
+Zone es una plataforma de red social revolucionaria basada en la proximidad física y el seudonimato. Diseñada con una estética moderna "ShareIt style", Zone te permite detectar personas en tu "radar" local, establecer conexiones seguras y chatear mediante un protocolo de cifrado de extremo a extremo (E2EE) de grado industrial.
 
 ---
 
@@ -22,8 +22,10 @@ Consolidar a DybroCorp como una compañía tecnológica líder en Latinoamérica
 
 ## 🚀 Características Principales
 
-- **Radar de Proximidad (BLE)**: Descubrimiento pasivo de usuarios cercanos sin necesidad de GPS, protegiendo tu ubicación exacta.
+- **Descubrimiento por GPS + Red (gratis)**: Encuentra personas cerca de ti con un radio configurable (250 m – 2 km). El servidor nunca comparte tus coordenadas con otros usuarios: solo distancias aproximadas (rejilla de 10 m) calculadas en el servidor.
+- **Radar de Proximidad (BLE) — Premium**: Descubrimiento por Bluetooth Low Energy mediante suscripción (mensual o anual), con entitlement verificado en el servidor antes de habilitar el radar.
 - **Privacidad Radical**: Sin correos, sin números de teléfono. Todo se basa en tu **ZONE-ID** único y claves criptográficas locales.
+- **Control de visibilidad**: Decide cuándo aparecer y cuándo ocultarte; tu presencia caduca sola a los 30 minutos y puedes revocar el consentimiento de ubicación en cualquier momento.
 - **Mensajería E2EE**: Comunicación protegida por **X25519** (intercambio de claves) y **ChaCha20-Poly1305** (cifrado de mensajes).
 - **Social Connect**: Comparte tus perfiles de Instagram, Facebook o TikTok de forma selectiva. Tú decides quién ve qué.
 - **Modo Timidez (Stealth)**: Mira quién está cerca sin ser detectado en el radar de los demás.

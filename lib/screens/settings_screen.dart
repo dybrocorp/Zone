@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'blocked_users_screen.dart';
+import 'premium_screen.dart';
+import '../config/discovery_config.dart';
 import '../config/radar_config.dart';
+import '../services/internet_discovery_provider.dart';
 import '../services/nearby_service.dart';
 import '../services/premium_service.dart';
 
@@ -15,15 +18,95 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _nearbyService = NearbyService();
+  final InternetDiscoveryProvider _discoveryProvider = InternetDiscoveryProvider();
   String _appVersion = '1.0.0';
   double _discoveryRadius = RadarConfig.discoveryRadiusMeters;
   bool _isPremium = false;
+
+  /// Preferencias de descubrimiento GPS leídas del SERVIDOR (fuente única
+  /// de verdad). null = sin sesión o servidor no disponible aún.
+  DiscoveryPrefs? _geoPrefs;
+  String? _geoPrefsNote;
 
   @override
   void initState() {
     super.initState();
     _loadAppInfo();
     _loadRadarRadius();
+    _loadGeoPrefs();
+  }
+
+  Future<void> _loadGeoPrefs() async {
+    try {
+      final prefs = await _discoveryProvider.loadPreferences();
+      if (mounted) {
+        setState(() {
+          _geoPrefs = prefs;
+          _geoPrefsNote = null;
+        });
+      }
+    } on DiscoveryAuthException {
+      if (mounted) {
+        setState(() => _geoPrefsNote =
+            'Inicia sesión para configurar el descubrimiento GPS.');
+      }
+    } on Exception catch (e) {
+      if (mounted) {
+        setState(() => _geoPrefsNote =
+            'No se pudieron cargar tus preferencias de descubrimiento ($e)');
+      }
+    }
+  }
+
+  /// Guarda preferencias en el SERVIDOR (canal único seguro). Si se revoca
+  /// el consentimiento de ubicación, el servidor borra la presencia al vuelo.
+  Future<void> _saveGeoPrefs({
+    bool? discoveryEnabled,
+    bool? locationSharingEnabled,
+    double? radiusMeters,
+  }) async {
+    final current = _geoPrefs;
+    final nextEnabled = discoveryEnabled ?? current?.discoveryEnabled ?? false;
+    final nextConsent =
+        locationSharingEnabled ?? current?.locationSharingEnabled ?? false;
+    final nextRadius = DiscoveryConfig.nearestAllowedRadius(
+      radiusMeters ?? current?.radiusMeters ?? DiscoveryConfig.defaultRadiusMeters,
+    );
+    try {
+      await _discoveryProvider.savePreferences(
+        discoveryEnabled: nextEnabled,
+        locationSharingEnabled: nextConsent,
+        radiusMeters: nextRadius,
+      );
+      if (mounted) {
+        setState(() {
+          _geoPrefs = DiscoveryPrefs(
+            discoveryEnabled: nextEnabled,
+            locationSharingEnabled: nextConsent,
+            radiusMeters: nextRadius,
+          );
+          _geoPrefsNote = null;
+        });
+      }
+    } on DiscoveryAuthException {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Inicia sesión para cambiar estas preferencias.'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } on Exception catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('No se pudo guardar: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _loadRadarRadius() async {
@@ -178,6 +261,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           
           const SizedBox(height: 24),
+          _buildSectionHeader('DESCUBRIMIENTO GPS'),
+          _buildDiscoverySection(),
+          const SizedBox(height: 24),
+          _buildSectionHeader('MEMBRESÍA'),
+          _buildTile(
+            icon: Icons.workspace_premium,
+            title: 'Zone Premium',
+            subtitle: _isPremium
+                ? 'Suscripción activa (verificada en el servidor)'
+                : 'Radar Bluetooth ilimitado y más',
+            onTap: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const PremiumScreen()),
+              );
+              await _loadRadarRadius();
+            },
+          ),
+          const SizedBox(height: 24),
           _buildSectionHeader('RADAR BLUETOOTH'),
           Container(
             margin: const EdgeInsets.only(bottom: 8),
@@ -293,6 +394,116 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 40),
         ],
       ),
+    );
+  }
+
+  /// Sección de descubrimiento GPS: visibilidad, consentimiento de ubicación
+  /// y radio por defecto (diseño §2.6). La verdad vive en el servidor; aquí
+  /// solo se refleja y se guarda vía RPC segura.
+  Widget _buildDiscoverySection() {
+    final prefs = _geoPrefs;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E293B),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: prefs == null
+          ? Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  const Icon(Icons.info_outline,
+                      color: Colors.white38, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _geoPrefsNote ??
+                          'Cargando preferencias de descubrimiento…',
+                      style:
+                          const TextStyle(color: Colors.white38, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          : Column(
+              children: [
+                SwitchListTile(
+                  value: prefs.discoveryEnabled,
+                  onChanged: (v) => _saveGeoPrefs(discoveryEnabled: v),
+                  activeThumbColor: const Color(0xFF00D2FF),
+                  title: const Text('Aparecer en descubrimiento',
+                      style: TextStyle(color: Colors.white)),
+                  subtitle: const Text(
+                      'Otros usuarios con GPS activo pueden verte cerca',
+                      style: TextStyle(color: Colors.white38, fontSize: 11)),
+                ),
+                SwitchListTile(
+                  value: prefs.locationSharingEnabled,
+                  onChanged: (v) => _saveGeoPrefs(locationSharingEnabled: v),
+                  activeThumbColor: const Color(0xFF00D2FF),
+                  title: const Text('Compartir ubicación aproximada',
+                      style: TextStyle(color: Colors.white)),
+                  subtitle: const Text(
+                      'Sin esto, tu presencia se borra del servidor de inmediato',
+                      style: TextStyle(color: Colors.white38, fontSize: 11)),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.social_distance,
+                          color: Colors.white54, size: 18),
+                      const SizedBox(width: 12),
+                      const Text('Radio de búsqueda',
+                          style: TextStyle(color: Colors.white)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 6),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Row(
+                    children: [
+                      for (final r in DiscoveryConfig.radiusOptions)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          child: ChoiceChip(
+                            label: Text('${r.round()} m'),
+                            selected:
+                                prefs.radiusMeters.round() == r.round(),
+                            onSelected: (_) =>
+                                _saveGeoPrefs(radiusMeters: r),
+                            selectedColor: const Color(0xFF00D2FF),
+                            backgroundColor: const Color(0xFF0F172A),
+                            labelStyle: TextStyle(
+                              color: prefs.radiusMeters.round() == r.round()
+                                  ? Colors.black
+                                  : Colors.white70,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                            side: const BorderSide(color: Colors.white12),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 10, 16, 0),
+                  child: Text(
+                    'Tu ubicación exacta nunca se comparte con otros usuarios: '
+                    'el servidor calcula distancias aproximadas (precisión de '
+                    '~10 m) y tu presencia caduca automáticamente a los 30 '
+                    'minutos si dejas de actualizarla.',
+                    style: TextStyle(color: Colors.white38, fontSize: 11),
+                  ),
+                ),
+              ],
+            ),
     );
   }
 

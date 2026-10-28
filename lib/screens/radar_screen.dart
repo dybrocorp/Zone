@@ -1,15 +1,18 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'dart:math';
+import '../config/discovery_config.dart';
 import '../config/radar_config.dart';
+import '../services/discovery_coordinator.dart';
 import '../services/discovery_policy.dart';
+import '../services/internet_discovery_provider.dart';
 import '../services/nearby_service.dart';
 import '../services/supabase_service.dart';
 import '../services/zone_id_service.dart';
 import '../services/permissions_service.dart';
 import '../services/notification_service.dart';
 import '../services/premium_service.dart';
-import 'donations_screen.dart';
+import 'premium_screen.dart';
 import 'chats_list_screen.dart';
 import 'profile_edit_screen.dart';
 import 'public_profile_sheet.dart';
@@ -27,7 +30,13 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
   final NearbyService _nearbyService = NearbyService();
   final SupabaseService _supabaseService = SupabaseService();
   final ZoneIdService _zoneIdService = ZoneIdService();
-  
+
+  /// Modo del radar (freemium): GPS+Red = GRATIS; Bluetooth = Premium.
+  /// NUNCA hay fallback automático entre modos (decisión de diseño §2.3):
+  /// solo el usuario cambia de modo explícitamente con este selector.
+  DiscoveryMode _mode = DiscoveryMode.gps;
+  final DiscoveryCoordinator _geoCoordinator = DiscoveryCoordinator();
+
   bool _isScanning = false;
   bool _isPremium = false;
   List<NearbyUser> _nearbyUsers = [];
@@ -57,6 +66,9 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
     // navegar fuera no debe dejar sesiones de descubrimiento duplicadas ni
     // radio huérfano (el singleton sobrevive; la intención persiste en prefs).
     unawaited(_nearbyService.stopRadar());
+    // GPS: el bucle local muere con la pantalla; la presencia server caduca
+    // sola por TTL (30 min, z214) — nunca hay "última posición eterna".
+    _geoCoordinator.dispose();
     super.dispose();
   }
 
@@ -116,7 +128,18 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
   }
 
   void _toggleRadar() async {
+    if (_mode == DiscoveryMode.gps) {
+      await _toggleGeoVisibility();
+      return;
+    }
     if (!_isScanning) {
+      // Premium: el radar Bluetooth es función Premium (verificada backend).
+      // Chequeo UX previo; el gate real (fail-closed) vive en startRadar().
+      final premium = await PremiumService.instance.loadPremiumStatus();
+      if (!premium) {
+        if (mounted) _showPremiumLockSheet();
+        return;
+      }
       // Feedback visual inmediato al tocar el botón central.
       setState(() => _isScanning = true);
       _animationController.repeat();
@@ -169,6 +192,48 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
       });
       _animationController.reset();
       await _nearbyService.stopRadar();
+    }
+  }
+
+  /// Enciende/apaga la visibilidad GPS (descubrimiento gratuito).
+  Future<void> _toggleGeoVisibility() async {
+    final turningOn = !_geoCoordinator.isIntendedVisible;
+    await _geoCoordinator.setVisibility(visible: turningOn);
+    if (turningOn) {
+      // Primer fix + búsqueda inmediatos (el bucle periódico continúa luego).
+      await _geoCoordinator.manualRefresh();
+    }
+    if (!mounted) return;
+    setState(() => _isScanning = turningOn);
+    if (turningOn) {
+      _animationController.repeat();
+    } else {
+      _animationController.reset();
+    }
+  }
+
+  /// Cambio EXPLÍCITO de modo por el usuario. Al cambiar, se apaga la
+  /// actividad del otro modo (nunca fallback automático en fallos).
+  Future<void> _switchMode(DiscoveryMode newMode) async {
+    if (newMode == _mode) return;
+    setState(() => _mode = newMode);
+    if (newMode == DiscoveryMode.bluetooth) {
+      // Pausa presencia GPS (intención del usuario cambió de canal).
+      await _geoCoordinator.hideNow();
+      if (!mounted) return;
+      setState(() {
+        _isScanning = false;
+        _nearbyUsers.clear();
+      });
+      _animationController.reset();
+    } else {
+      await _nearbyService.stopRadar();
+      if (!mounted) return;
+      setState(() {
+        _isScanning = false;
+        _nearbyUsers.clear();
+      });
+      _animationController.reset();
     }
   }
 
@@ -269,7 +334,9 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
         child: Stack(
           alignment: Alignment.center,
           children: [
-            if (_isScanning)
+            // Canvas del radar Bluetooth: SOLO en modo BT (el modo GPS usa
+            // su propio pipeline y panel; nunca se mezclan).
+            if (_mode == DiscoveryMode.bluetooth && _isScanning)
               AnimatedBuilder(
                 animation: _animationController,
                 builder: (context, child) {
@@ -308,10 +375,12 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            _isScanning ? 'Buscando cercanos...' : 'Toca para iniciar',
+                            _mode == DiscoveryMode.gps
+                                ? 'Descubrimiento GPS'
+                                : (_isScanning ? 'Buscando cercanos...' : 'Toca para iniciar'),
                             style: const TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.w600),
                           ),
-                          if (_isScanning)
+                          if (_mode == DiscoveryMode.bluetooth && _isScanning)
                             Padding(
                               padding: const EdgeInsets.only(top: 4),
                               child: Text(
@@ -349,7 +418,28 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
                 ],
               ),
             ),
-            ..._nearbyUsers.asMap().entries.map((entry) {
+            // Selector de modo (GPS = gratis · Bluetooth = Premium).
+            Positioned(
+              top: 140,
+              left: 20,
+              right: 20,
+              child: Center(child: _buildModeSelector()),
+            ),
+            // Panel del descubrimiento GPS (banner + radios + lista peers).
+            if (_mode == DiscoveryMode.gps)
+              Positioned(
+                top: 195,
+                left: 16,
+                right: 16,
+                bottom: 210,
+                child: ValueListenableBuilder<GeoUiState>(
+                  valueListenable: _geoCoordinator.ui,
+                  builder: (context, geo, _) => _buildGeoPanel(geo),
+                ),
+              ),
+            // Dots del radar Bluetooth: SOLO en modo BT.
+            if (_mode == DiscoveryMode.bluetooth)
+              ..._nearbyUsers.asMap().entries.map((entry) {
               final index = entry.key;
               final user = entry.value;
               
@@ -493,15 +583,15 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
               onTap: _toggleRadar,
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 300),
-                width: _isScanning ? 120 : 100,
-                height: _isScanning ? 120 : 100,
+                width: _centerActive ? 120 : 100,
+                height: _centerActive ? 120 : 100,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: const RadialGradient(
                     colors: [Color(0xFF00D2FF), Color(0xFF3A7BD5)],
                   ),
                   boxShadow: [
-                    if (_isScanning)
+                    if (_centerActive)
                       BoxShadow(
                         color: const Color(0xFF00D2FF).withValues(alpha: 0.5),
                         blurRadius: 40,
@@ -510,9 +600,11 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
                   ],
                 ),
                 child: Icon(
-                  _isScanning ? Icons.wifi_tethering : Icons.power_settings_new,
+                  _mode == DiscoveryMode.gps
+                      ? (_centerActive ? Icons.explore : Icons.location_searching)
+                      : (_isScanning ? Icons.wifi_tethering : Icons.power_settings_new),
                   color: Colors.white,
-                  size: _isScanning ? 50 : 40,
+                  size: _centerActive ? 50 : 40,
                 ),
               ),
             ),
@@ -523,12 +615,14 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const MeshHealthDashboard(),
-                  const SizedBox(height: 16),
+                  if (_mode == DiscoveryMode.bluetooth) ...[
+                    const MeshHealthDashboard(),
+                    const SizedBox(height: 16),
+                  ],
                   TextButton.icon(
-                    onPressed: _openDonations,
-                    icon: const Icon(Icons.favorite, color: Colors.pinkAccent),
-                    label: const Text('Donaciones', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold)),
+                    onPressed: _openPremium,
+                    icon: const Icon(Icons.workspace_premium, color: Color(0xFFFFD700)),
+                    label: const Text('Zone Premium', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold)),
                     style: TextButton.styleFrom(
                       backgroundColor: Colors.white10,
                       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -541,6 +635,420 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
           ],
         ),
       ),
+    );
+  }
+
+  /// Estado activo del botón central según el modo.
+  bool get _centerActive =>
+      _mode == DiscoveryMode.gps
+          ? _geoCoordinator.isIntendedVisible
+          : _isScanning;
+
+  /// Selector segmentado GPS | Bluetooth (identidad visual del repo).
+  Widget _buildModeSelector() {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E293B).withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _modeChip(
+            icon: Icons.explore,
+            label: 'GPS',
+            selected: _mode == DiscoveryMode.gps,
+            onTap: () => _switchMode(DiscoveryMode.gps),
+          ),
+          const SizedBox(width: 4),
+          _modeChip(
+            icon: Icons.bluetooth_searching,
+            label: 'Bluetooth',
+            selected: _mode == DiscoveryMode.bluetooth,
+            onTap: () => _switchMode(DiscoveryMode.bluetooth),
+            badge: _isPremium ? null : Icons.lock_outline,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _modeChip({
+    required IconData icon,
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+    IconData? badge,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF00D2FF) : Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon,
+                size: 16,
+                color: selected ? Colors.black : Colors.white70),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: selected ? Colors.black : Colors.white70,
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            if (badge != null) ...[
+              const SizedBox(width: 4),
+              Icon(badge, size: 12, color: const Color(0xFFFFD700)),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Panel GPS: banner de estado + chips de radio + lista de peers con
+  /// distancia APROXIMADA (server-side; sin coordenadas ajenas jamás).
+  Widget _buildGeoPanel(GeoUiState geo) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _geoBanner(geo),
+        const SizedBox(height: 10),
+        // Chips de radio (conjunto fijo; el server re-clampa igual).
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (final r in DiscoveryConfig.radiusOptions)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: ChoiceChip(
+                    label: Text('${r.round()} m'),
+                    selected:
+                        geo.radiusMeters.round() == r.round(),
+                    onSelected: (_) => _geoCoordinator.setRadius(r),
+                    selectedColor: const Color(0xFF00D2FF),
+                    backgroundColor: const Color(0xFF1E293B),
+                    labelStyle: TextStyle(
+                      color: geo.radiusMeters.round() == r.round()
+                          ? Colors.black
+                          : Colors.white70,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                    side: const BorderSide(color: Colors.white12),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        Expanded(
+          child: geo.peers.isEmpty
+              ? Center(
+                  child: Text(
+                    _geoEmptyText(geo),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white38, fontSize: 13),
+                  ),
+                )
+              : ListView.separated(
+                  itemCount: geo.peers.length,
+                  separatorBuilder: (_, _) =>
+                      const SizedBox(height: 8),
+                  itemBuilder: (context, index) {
+                    final user = geo.peers[index];
+                    return _geoUserTile(user);
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  String _geoEmptyText(GeoUiState geo) {
+    switch (geo.status) {
+      case GeoStatus.idle:
+        return 'Toca el botón para activar el descubrimiento GPS.';
+      case GeoStatus.acquiringFix:
+        return 'Buscando señal de ubicación…';
+      case GeoStatus.live:
+        return 'Nadie cerca dentro de ${geo.radiusMeters.round()} m por ahora.';
+      case GeoStatus.hidden:
+        return 'Estás oculto. Activa el descubrimiento para aparecer.';
+      case GeoStatus.offline:
+        return 'Sin conexión a internet. El descubrimiento GPS se reanudará al reconectar.';
+      case GeoStatus.permissionBlocked:
+        return geo.message ?? 'Permiso de ubicación necesario.';
+      case GeoStatus.serverError:
+        return geo.message ?? 'Problema temporal. Reintentamos al rato.';
+      case GeoStatus.requiresAuth:
+        return 'Inicia sesión para usar el descubrimiento.';
+    }
+  }
+
+  Widget _geoBanner(GeoUiState geo) {
+    final (icon, color, text) = switch (geo.status) {
+      GeoStatus.idle => (
+          Icons.location_searching,
+          Colors.white38,
+          'Descubrimiento GPS apagado'
+        ),
+      GeoStatus.acquiringFix => (
+          Icons.gps_fixed,
+          const Color(0xFFF59E0B),
+          'Obteniendo tu ubicación…'
+        ),
+      GeoStatus.live => (
+          Icons.circle,
+          const Color(0xFF00D2FF),
+          'Visible · ${geo.peers.length} cerca'
+        ),
+      GeoStatus.hidden => (
+          Icons.visibility_off,
+          Colors.white38,
+          'Oculto'
+        ),
+      GeoStatus.offline => (
+          Icons.wifi_off,
+          Colors.redAccent,
+          'Sin conexión'
+        ),
+      GeoStatus.permissionBlocked => (
+          Icons.lock_outline,
+          Colors.redAccent,
+          'Permiso de ubicación bloqueado'
+        ),
+      GeoStatus.serverError => (
+          Icons.cloud_off,
+          Colors.redAccent,
+          'Problema con el server'
+        ),
+      GeoStatus.requiresAuth => (
+          Icons.person_off,
+          const Color(0xFFF59E0B),
+          'Sesión requerida'
+        ),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E293B),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 18),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              geo.message ?? text,
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+          ),
+          if (geo.visibilityIntended)
+            GestureDetector(
+              onTap: () => _geoCoordinator.hideNow(),
+              child: const Padding(
+                padding: EdgeInsets.only(left: 8),
+                child: Icon(Icons.visibility_off_outlined,
+                    color: Colors.white38, size: 18),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Tile de un peer GPS: datos no sensibles + distancia aproximada.
+  Widget _geoUserTile(NearbyGeoUser user) {
+    return InkWell(
+      onTap: () => _openGeoUserSheet(user),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E293B),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 20,
+              backgroundColor: const Color(0xFF00D2FF),
+              backgroundImage: user.avatarUrl != null
+                  ? NetworkImage(user.avatarUrl!)
+                  : null,
+              child: user.avatarUrl == null
+                  ? Text(
+                      (user.displayName?.isNotEmpty == true)
+                          ? user.displayName![0].toUpperCase()
+                          : '?',
+                      style: const TextStyle(
+                          color: Colors.black,
+                          fontWeight: FontWeight.bold),
+                    )
+                  : null,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    user.displayName?.isNotEmpty == true
+                        ? user.displayName!
+                        : 'Zonero',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14),
+                  ),
+                  Text(
+                    user.zoneId,
+                    style: const TextStyle(
+                        color: Color(0xFF00D2FF), fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+            // Distancia aproximada (grid 10 m, calculada server-side).
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF00D2FF).withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                user.distanceLabel.isNotEmpty
+                    ? user.distanceLabel
+                    : '—',
+                style: const TextStyle(
+                    color: Color(0xFF00D2FF),
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Sheet del peer GPS (misma identidad que el sheet BT).
+  void _openGeoUserSheet(NearbyGeoUser user) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E293B),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 20),
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              CircleAvatar(
+                radius: 36,
+                backgroundColor: const Color(0xFF00D2FF),
+                backgroundImage: user.avatarUrl != null
+                    ? NetworkImage(user.avatarUrl!)
+                    : null,
+                child: user.avatarUrl == null
+                    ? Text(
+                        (user.displayName?.isNotEmpty == true)
+                            ? user.displayName![0].toUpperCase()
+                            : '?',
+                        style: const TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black),
+                      )
+                    : null,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                user.displayName?.isNotEmpty == true
+                    ? user.displayName!
+                    : 'Zonero',
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                user.zoneId,
+                style: const TextStyle(
+                    color: Color(0xFF00D2FF),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(height: 8),
+              if (user.distanceMeters != null)
+                Text(
+                  'A aproximadamente ${user.distanceLabel}',
+                  style: const TextStyle(color: Colors.white54, fontSize: 13),
+                ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    PublicProfileSheet.show(
+                      context,
+                      userId: user.zoneId,
+                      realUid: user.id,
+                      userName: user.displayName ?? 'Zonero',
+                      instagramHandle: null,
+                      facebookHandle: null,
+                      tiktokHandle: null,
+                      avatarUrl: user.avatarUrl,
+                    );
+                  },
+                  icon: const Icon(Icons.person, color: Colors.black),
+                  label: const Text('Ver Perfil Completo y Conectar',
+                      style: TextStyle(
+                          color: Colors.black,
+                          fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00D2FF),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -572,7 +1080,7 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
             ElevatedButton(
               onPressed: () {
                 Navigator.pop(context);
-                _openDonations();
+                _openPremium();
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF00D2FF),
@@ -587,11 +1095,11 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
     );
   }
 
-  void _openDonations() async {
+  void _openPremium() async {
     await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const DonationsScreen()),
+      MaterialPageRoute(builder: (_) => const PremiumScreen()),
     );
-    // Recargar estado premium al volver
+    // Recargar estado premium (backend verificado) al volver.
     final premium = await PremiumService.instance.loadPremiumStatus();
     if (mounted) setState(() => _isPremium = premium);
   }

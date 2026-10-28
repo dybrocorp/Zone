@@ -46,6 +46,11 @@ enum DiscoveryError {
   invalidZoneIdentity,
   handshakeFailed,
   endpointDisconnected,
+
+  /// Freemium: el radar/descubrimiento Bluetooth es Premium (verificado en
+  /// backend vía `EntitlementService`; docs/redesign/ZONE_PREMIUM_BILLING.md).
+  /// El GPS+Red NO se ve afectado — jamás es fallback automático.
+  premiumRequired,
 }
 
 /// Typed discovery failure (category + safe detail only).

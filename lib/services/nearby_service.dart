@@ -9,6 +9,7 @@ import '../config/radar_config.dart';
 import 'ble_proximity_service.dart';
 import 'discovery_policy.dart';
 import 'encounter_key.dart';
+import 'entitlement_service.dart';
 import 'premium_service.dart';
 import 'zone_id_service.dart';
 import 'isar_service.dart';
@@ -371,6 +372,22 @@ class NearbyService with WidgetsBindingObserver {
   }
 
   Future<bool> startRadar() async {
+    // GATE PREMIUM (fail-closed): el radar Bluetooth es función Premium
+    // verificada en backend (docs/redesign/ZONE_FREEMIUM_ARCHITECTURE.md §2.4).
+    // `loadForce` revalida SIEMPRE contra `get_my_entitlements` (z215) —
+    // un flag local nunca habilita esto. Transición documentada: mientras
+    // z215 no esté en remoto, el fallback legacy `users.is_premium` mantiene
+    // la continuidad de usuarios con Premium legado.
+    final entitlement = await EntitlementService.instance.loadForce();
+    if (!entitlement.allowsBluetooth) {
+      _logger.debug(
+        '[NearbyService] Radar BT bloqueado: estado entitlement '
+        '${entitlement.state.name}.',
+      );
+      _lifecycle.transportFailed(DiscoveryError.premiumRequired);
+      return false;
+    }
+
     // Idempotencia ante invocaciones concurrentes (doble-tap, resume+tap).
     if (_starting) {
       _logger.debug('[NearbyService] Arranque ya en curso, ignorando.');

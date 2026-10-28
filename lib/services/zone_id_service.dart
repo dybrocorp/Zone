@@ -8,6 +8,7 @@ import 'chat_e2ee_service.dart';
 import 'isar_service.dart';
 import 'logger_service.dart';
 import 'p2p_security_service.dart';
+import 'same_account_claim_policy.dart';
 
 /// Servicio que gestiona el ID único ZONE- del usuario.
 /// Lo genera, persiste localmente y lo registra en Supabase.
@@ -44,6 +45,15 @@ class ZoneIdService {
   Future<bool> hasLocalID() async {
     final storedId = await _safeRead(_keyZoneId);
     return storedId != null && storedId.isNotEmpty;
+  }
+
+  /// PHASE 2.2.5 — UID de sesión persistido (offline-safe): permite actuar
+  /// como actor del outbox tras reinicio sin red (el `_uid` en memoria puede
+  /// ser nulo offline). Solo lectura; fail-closed con null si ausente.
+  Future<String?> getStoredUid() async {
+    final stored = await _safeRead(_keySupabaseSession);
+    if (stored == null || stored.isEmpty) return _uid;
+    return stored;
   }
 
   /// Helper para leer de forma segura (evita BadPaddingException en algunos dispositivos)
@@ -108,7 +118,16 @@ class ZoneIdService {
 
   /// Permite a un usuario con un ID existente (ej: en otro dispositivo)
   /// "iniciar sesión" y recuperar su perfil.
+  ///
+  /// PHASE 2.2.2 — QUARANTINED: sin puente cuenta/dispositivo con prueba de
+  /// posesión, reclamar el ZONE-ID de otro dispositivo crea un split-brain
+  /// (mismo handle legacy, distinto account_id/device_id/X25519 de la
+  /// fundación). La guarda [SameAccountClaimPolicy.ensureAllowed] se ejecuta
+  /// PRIMERO: fail-closed, sin efectos secundarios (sin sign-in, sin writes,
+  /// sin RPC, sin generación de claves). Regla temporal: NEW DEVICE = NEW
+  /// ACCOUNT. Solo el futuro puente (2.2.3+) puede levantar la cuarentena.
   Future<bool> loginWithExistingID(String zoneId) async {
+    SameAccountClaimPolicy.ensureAllowed(zoneId);
     try {
       return await _loginWithExistingIDInternal(zoneId);
     } catch (e) {
@@ -146,9 +165,11 @@ class ZoneIdService {
       }
 
       // 5. Reclamar la propiedad del ZONE-ID (RPC endurecido por Z-001 Fase A).
-      //    Z-002: claim_zone_id RETORNA el perfil completo tras migrar la fila a
-      //    este UID, así el login NO relee 'users' (ahora self-scoped) y no
-      //    reintroduce la fuga de perfiles. El RPC ya NO acepta p_public_key.
+      //    Z-212: el claim está en CUARENTENA fail-closed; esta llamada lanzará
+      //    'Reclamo de ZONE-ID deshabilitado temporalmente...' hasta que exista
+      //    una prueba de posesión aprobada (Fase F). La guarda
+      //    SameAccountClaimPolicy.ensureAllowed ya bloquea el flujo por defecto.
+      //    El RPC ya NO acepta p_public_key.
       final claimed = await _supabase.rpc(
         'claim_zone_id',
         params: {'p_zone_id': zoneId},
@@ -228,6 +249,10 @@ class ZoneIdService {
       // Persistir claves localmente
       await _storage.write(key: _keyPublicKey, value: publicKeyBase64);
       await _storage.write(key: _keyPrivateKey, value: privateKeyBase64);
+      // PHASE 2.2.2 single-writer: ZoneIdService es el ÚNICO generador de
+      // `private_key`/`public_key`; P2PSecurityService recarga desde el
+      // almacenamiento para no divergir (misma ranura, una sola verdad).
+      await P2PSecurityService().reloadFromStorage();
       _logger.debug('[ZoneIdService] Registro exitoso para $_zoneId');
     } catch (e) {
       _logger.debug('[ZoneIdService] ERROR CRÍTICO EN REGISTRO: $e');
@@ -292,6 +317,8 @@ class ZoneIdService {
           );
         }
       }
+      // PHASE 2.2.2 single-writer: propagar a P2PSecurityService (misma ranura).
+      await P2PSecurityService().reloadFromStorage();
 
       // Marcar que necesitamos actualizar la pública en Supabase
     } else {
@@ -303,6 +330,8 @@ class ZoneIdService {
     // malla P2P) era la ventana de "cualquier reinicio re-autentica sin prueba
     // de posesión". El claim queda SOLO en el login explícito
     // (`loginWithExistingID` → RPC `claim_zone_id`), con formato + rate-limit.
+    // Z-212: ese claim está hoy en cuarentena fail-closed; el login de usuarios
+    // existentes permanece bloqueado hasta la decisión de Fase F.
   }
 
   Future<void> _restoreSession() async {
@@ -341,6 +370,8 @@ class ZoneIdService {
 
         await _storage.write(key: _keyPublicKey, value: publicKeyBase64);
         await _storage.write(key: _keyPrivateKey, value: privKey);
+        // PHASE 2.2.2 single-writer: propagar a P2PSecurityService.
+        await P2PSecurityService().reloadFromStorage();
       }
 
       if (res == null) {

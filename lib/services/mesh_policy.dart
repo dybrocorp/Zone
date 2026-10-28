@@ -125,6 +125,12 @@ class MeshDedup {
 class MeshPolicy {
   MeshPolicy._();
 
+  /// Tope de saltos aceptado en paquetes/rutas entrantes.
+  static const int maxHops = 5;
+
+  /// Tope de rutas aceptadas por actualización (anti-DoS de memoria).
+  static const int maxRoutesPerUpdate = 256;
+
   /// Fail-closed del emisor: solo se envía si hay llave Y el cifrado funcionó.
   static MeshSendDecision decideSend({
     required bool hasSessionKey,
@@ -137,6 +143,83 @@ class MeshPolicy {
   /// Fail-closed del relay/receptor: solo se propaga contenido cifrado.
   static MeshRelayDecision decideRelay({required bool isEncrypted}) =>
       isEncrypted ? MeshRelayDecision.relay : MeshRelayDecision.dropPlaintext;
+
+  /// Valida un `mesh_msg` entrante ANTES de tocar estado, dedup o rutas.
+  ///
+  /// Devuelve `null` si el paquete no cumple el contrato (tipos, ZONE-IDs
+  /// canónicos, UUID v4, ciphertext/nonce/mac acotados, hops válidos). Un
+  /// paquete inválido NUNCA debe lanzar ni entrar al relay.
+  static MeshPacket? validateIncomingPacket(dynamic raw) {
+    if (raw is! Map) return null;
+    final Map<String, dynamic> map;
+    try {
+      map = Map<String, dynamic>.from(raw);
+    } catch (_) {
+      return null;
+    }
+    if (map['type'] != 'mesh_msg') return null;
+    if (map['isEncrypted'] != true) return null;
+
+    final source = map['source'];
+    final target = map['target'];
+    if (source is! String || target is! String) return null;
+    if (!MeshPacket.zoneIdPattern.hasMatch(source)) return null;
+    if (!MeshPacket.zoneIdPattern.hasMatch(target)) return null;
+
+    final msgId = map['msgId'];
+    if (msgId is! String || !MeshPacket.uuidV4Pattern.hasMatch(msgId)) {
+      return null;
+    }
+
+    final text = map['text'];
+    final nonce = map['nonce'];
+    final mac = map['mac'];
+    if (text is! String ||
+        text.isEmpty ||
+        text.length > MeshPacket.maxCiphertextLength) {
+      return null;
+    }
+    if (nonce is! String ||
+        nonce.isEmpty ||
+        nonce.length > MeshPacket.maxFieldLength) {
+      return null;
+    }
+    if (mac is! String || mac.isEmpty || mac.length > MeshPacket.maxFieldLength) {
+      return null;
+    }
+
+    final hops = map['hops'];
+    if (hops is! int || hops < 0 || hops > maxHops) return null;
+
+    return MeshPacket(
+      source: source,
+      target: target,
+      msgId: msgId,
+      ciphertext: text,
+      nonce: nonce,
+      mac: mac,
+      hops: hops,
+    );
+  }
+
+  /// Parsea una actualización `routing_table` fail-closed: descarta entradas
+  /// malformadas, no canónicas, con distancia fuera de rango o en exceso.
+  static List<MeshRouteHint> validateRoutingTable(dynamic raw) {
+    if (raw is! List) return const [];
+    final out = <MeshRouteHint>[];
+    for (final entry in raw) {
+      if (out.length >= maxRoutesPerUpdate) break;
+      if (entry is! Map) continue;
+      final zoneId = entry['zoneId'];
+      final distance = entry['distance'];
+      if (zoneId is! String || !MeshPacket.zoneIdPattern.hasMatch(zoneId)) {
+        continue;
+      }
+      if (distance is! int || distance < 0 || distance >= maxHops) continue;
+      out.add(MeshRouteHint(zoneId: zoneId, distance: distance));
+    }
+    return out;
+  }
 
   /// Construye el paquete `mesh_msg` SOLO con contenido cifrado
   /// (esta API no acepta texto en claro por construcción).
@@ -161,4 +244,42 @@ class MeshPolicy {
         'hops': 0,
         'isEncrypted': true,
       };
+}
+
+/// Paquete `mesh_msg` validado (solo campos del contrato).
+class MeshPacket {
+  const MeshPacket({
+    required this.source,
+    required this.target,
+    required this.msgId,
+    required this.ciphertext,
+    required this.nonce,
+    required this.mac,
+    required this.hops,
+  });
+
+  final String source;
+  final String target;
+  final String msgId;
+  final String ciphertext;
+  final String nonce;
+  final String mac;
+  final int hops;
+
+  static final RegExp zoneIdPattern = RegExp(r'^ZONE-[A-Z0-9]{8}$');
+  static final RegExp uuidV4Pattern = RegExp(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+  );
+
+  /// Límites anti-DoS (mismo orden de magnitud que el payload de Nearby).
+  static const int maxCiphertextLength = 64 * 1024;
+  static const int maxFieldLength = 1024;
+}
+
+/// Entrada validada de `routing_table`.
+class MeshRouteHint {
+  const MeshRouteHint({required this.zoneId, required this.distance});
+
+  final String zoneId;
+  final int distance;
 }

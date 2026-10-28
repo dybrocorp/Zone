@@ -7,6 +7,8 @@ import 'package:nearby_connections/nearby_connections.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/radar_config.dart';
 import 'ble_proximity_service.dart';
+import 'discovery_policy.dart';
+import 'encounter_key.dart';
 import 'premium_service.dart';
 import 'zone_id_service.dart';
 import 'isar_service.dart';
@@ -92,6 +94,15 @@ class NearbyService with WidgetsBindingObserver {
       false; // Bandera para saber si estamos en segundo plano
   bool get isRadarActive => _isRadarIntendedActive;
 
+  // PHASE 2.2.6 — contrato de descubrimiento: lifecycle explícito + sesiones
+  // efímeras de endpoint (el endpoint ID es transporte, nunca identidad).
+  final DiscoveryLifecycle _lifecycle = DiscoveryLifecycle();
+  final EndpointSessions _sessions = EndpointSessions();
+  bool _starting = false;
+
+  /// Estado del lifecycle para diagnóstico/UI (sin secretos).
+  DiscoveryState get discoveryState => _lifecycle.state;
+
   Timer? _scanCycleTimer;
   Timer? _tokenRefreshTimer;
   Timer? _globalDiscoveryTimer;
@@ -128,6 +139,7 @@ class NearbyService with WidgetsBindingObserver {
   // Mesh Routing Table: Map<ZoneId, MeshRoute>
   final Map<String, MeshRoute> _routingTable = {};
   static const int _maxMeshHops = 5;
+  static const int _maxRoutingTableEntries = 1024;
 
   // Z-005 (FASE 1.6): Dedup con LRU + TTL (sin clear() global). Reemplaza el
   // Set<String> con clear() que permitía replay tras reinicio del set.
@@ -335,6 +347,25 @@ class NearbyService with WidgetsBindingObserver {
   }
 
   Future<bool> startRadar() async {
+    // Idempotencia ante invocaciones concurrentes (doble-tap, resume+tap).
+    if (_starting) {
+      _logger.debug('[NearbyService] Arranque ya en curso, ignorando.');
+      return _isDiscovering;
+    }
+    if (!_lifecycle.canStart) {
+      _logger.debug('[NearbyService] Arranque ignorado por lifecycle.');
+      return _isDiscovering;
+    }
+    _starting = true;
+    _lifecycle.beginStart();
+    try {
+      return await _startRadarInternal();
+    } finally {
+      _starting = false;
+    }
+  }
+
+  Future<bool> _startRadarInternal() async {
     _isRadarIntendedActive = true;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('radar_active', true);
@@ -347,6 +378,7 @@ class NearbyService with WidgetsBindingObserver {
       _logger.debug(
         '[NearbyService] No se puede iniciar radar: token BT inválido',
       );
+      _lifecycle.transportFailed(DiscoveryError.invalidZoneIdentity);
       return false;
     }
 
@@ -358,8 +390,12 @@ class NearbyService with WidgetsBindingObserver {
     final jitter = (DateTime.now().millisecondsSinceEpoch % 800);
     await Future.delayed(Duration(milliseconds: jitter));
 
+    var advertisingOk = true;
     if (!_stealthMode) {
-      await _startAdvertising();
+      advertisingOk = await _startAdvertising();
+      if (!advertisingOk) {
+        _logger.debug('[NearbyService] Advertising no disponible (degradado).');
+      }
     } else {
       await _stopAdvertising();
       _logger.debug(
@@ -369,7 +405,11 @@ class NearbyService with WidgetsBindingObserver {
 
     // Discovery secuencial con retraso
     await Future.delayed(const Duration(milliseconds: 300));
-    await _startDiscovery();
+    final discoveryOk = await _startDiscovery();
+    if (!discoveryOk) {
+      _lifecycle.transportFailed(DiscoveryError.discoveryFailed);
+      return false;
+    }
     await _bleProximity.startScanning();
 
     // BILATERAL OFFLINE: mostrar rutas mesh activas con perfiles cacheados.
@@ -415,10 +455,22 @@ class NearbyService with WidgetsBindingObserver {
       }
     });
 
+    _lifecycle.transportUp(
+      advertising: advertisingOk || _stealthMode,
+      discovering: true,
+    );
     return true;
   }
 
   Future<void> stopRadar() async {
+    // Idempotente: detenerse dos veces no hace nada la segunda.
+    if (_lifecycle.state == DiscoveryState.stopped &&
+        !_isRadarIntendedActive &&
+        !_isAdvertising &&
+        !_isDiscovering) {
+      return;
+    }
+    _lifecycle.beginStop();
     _isRadarIntendedActive = false;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('radar_active', false);
@@ -428,6 +480,13 @@ class NearbyService with WidgetsBindingObserver {
     _globalDiscoveryTimer?.cancel();
     await _stopAdvertising();
     await _stopDiscovery();
+    // Teardown total de endpoints: stopAdvertising/stopDiscovery NO
+    // desconectan (contrato del plugin 4.3.0); el apagado explícito sí.
+    try {
+      await _nearby.stopAllEndpoints();
+    } catch (e) {
+      _logger.debug('[NearbyService] Error en stopAllEndpoints: $e');
+    }
     _bleProximity.stopScanning();
     for (final timer in _lostEndpointsGraceTimers.values) {
       timer.cancel();
@@ -435,7 +494,14 @@ class NearbyService with WidgetsBindingObserver {
     _lostEndpointsGraceTimers.clear();
     _discoveredUsers.clear();
     _resolvingEndpoints.clear();
+    // Limpieza del estado efímero de transporte (CASE B/D): sin esto, un
+    // reinicio creería seguir conectado a endpoints muertos.
+    _connectedEndpoints.clear();
+    _pendingConnections.clear();
+    _routingTable.clear();
+    _sessions.clear();
     _emitDiscoveredUsers();
+    _lifecycle.stopped();
   }
 
   void _resumeScanning() {
@@ -443,13 +509,15 @@ class NearbyService with WidgetsBindingObserver {
     startRadar();
   }
 
-  Future<void> _startAdvertising() async {
-    if (_stealthMode || !_hasValidToken) return;
+  /// Inicia advertising. Retorna el resultado REAL del plugin 4.3.0
+  /// (antes se ignoraba: un `false` del plugin era un fallo silencioso).
+  Future<bool> _startAdvertising() async {
+    if (_stealthMode || !_hasValidToken) return false;
     if (_isAdvertising) {
       await _stopAdvertising();
     }
     try {
-      await _nearby.startAdvertising(
+      final ok = await _nearby.startAdvertising(
         _currentToken,
         _strategy,
         onConnectionInitiated: _onConnectionInitiated,
@@ -457,30 +525,45 @@ class NearbyService with WidgetsBindingObserver {
         onDisconnected: _onDisconnected,
         serviceId: _serviceId,
       );
-      _isAdvertising = true;
+      _isAdvertising = ok;
+      if (!ok) {
+        _logger.debug(
+          '[NearbyService] startAdvertising devolvió false (radio no disponible).',
+        );
+      }
+      return ok;
     } catch (e) {
       _logger.debug('[NearbyService] Error al iniciar advertising: $e');
       _isAdvertising = false;
+      return false;
     }
   }
 
-  Future<void> _startDiscovery() async {
-    if (!_hasValidToken) return;
+  /// Inicia discovery. Retorna el resultado REAL del plugin 4.3.0.
+  Future<bool> _startDiscovery() async {
+    if (!_hasValidToken) return false;
     if (_isDiscovering) {
       await _stopDiscovery();
     }
     try {
-      await _nearby.startDiscovery(
+      final ok = await _nearby.startDiscovery(
         _currentToken,
         _strategy,
         onEndpointFound: _onEndpointFound,
         onEndpointLost: _onEndpointLost,
         serviceId: _serviceId,
       );
-      _isDiscovering = true;
+      _isDiscovering = ok;
+      if (!ok) {
+        _logger.debug(
+          '[NearbyService] startDiscovery devolvió false (radio no disponible).',
+        );
+      }
+      return ok;
     } catch (e) {
       _logger.debug('[NearbyService] Error al iniciar discovery: $e');
       _isDiscovering = false;
+      return false;
     }
   }
 
@@ -509,11 +592,19 @@ class NearbyService with WidgetsBindingObserver {
   // ──────────────────────────────────────────────────────────────
 
   void _onEndpointFound(String id, String receivedToken, String serviceId) {
+    // El lifecycle detenido/en parada no muta estado (callbacks tardíos).
+    if (!_lifecycle.acceptsCallbacks || !_isRadarIntendedActive) return;
     if (receivedToken.isEmpty || receivedToken == _invalidToken) return;
 
     // Si estaba en el periodo de gracia para ser eliminado, cancelar el timer
     _lostEndpointsGraceTimers[id]?.cancel();
     _lostEndpointsGraceTimers.remove(id);
+
+    // Deduplicación de sesión (CASE A): el mismo endpoint re-anunciado con el
+    // MISMO token no se reprocesa; con token NUEVO (rotación 5m) sí.
+    if (!_sessions.noteFound(id, receivedToken)) {
+      return;
+    }
 
     if (!_bleProximity.isTokenWithinRadius(
       receivedToken,
@@ -660,11 +751,14 @@ class NearbyService with WidgetsBindingObserver {
           }
         }
 
-        // Sin perfil alguno: mostrar como usuario detectado pendiente de intercambio P2P
+        // Sin perfil alguno: mostrar como usuario detectado pendiente de intercambio P2P.
+        // PHASE 2.2.6 (frontera de identidad): el token de transporte NUNCA
+        // se publica como identidad — zoneId queda vacío hasta la resolución
+        // autoritativa (el token vive solo en `user.token`).
         if (profile == null && _discoveredUsers.containsKey(endpointId)) {
           final user = _discoveredUsers[endpointId]!;
           user.userName = 'Usuario Cercano';
-          user.zoneId = token;
+          user.zoneId = '';
           _emitDiscoveredUsers();
           return;
         }
@@ -713,8 +807,26 @@ class NearbyService with WidgetsBindingObserver {
       final user = _discoveredUsers[endpointId]!;
       user.userName =
           profile['display_name'] ?? profile['zone_id'] ?? 'Usuario';
-      user.zoneId = profile['zone_id'] ?? '';
       user.profile = profile;
+
+      // PHASE 2.2.6 (frontera de identidad): el binding endpoint→identidad
+      // solo acepta handles ZONE canónicos. Si falla, la tarjeta se degrada
+      // a no-resuelta (nunca se publica un identificador no verificado).
+      final candidateZone = (profile['zone_id'] ?? '').toString();
+      try {
+        _sessions.bindIdentity(endpointId, candidateZone);
+        user.zoneId = _sessions.zoneFor(endpointId)!;
+      } on InvalidDiscoveryIdentityError {
+        _logger.debug(
+          '[NearbyService] Identidad no canónica, degradando tarjeta.',
+        );
+        user.userName = 'Usuario Cercano';
+        user.zoneId = '';
+        _discoveredUsers[endpointId] = user;
+        _resolvingEndpoints.remove(endpointId);
+        _emitDiscoveredUsers();
+        return;
+      }
 
       _discoveredUsers[endpointId] = user;
       _resolvingEndpoints.remove(endpointId);
@@ -727,14 +839,31 @@ class NearbyService with WidgetsBindingObserver {
       _emitDiscoveredUsers();
 
       if (user.zoneId.isNotEmpty) {
-        if (_connectivity.hasRealInternet) {
-          await _supabaseService.registerEncounter(_userId, user.zoneId);
-        }
-        await _isar.saveEncounter(
-          userId: _userId,
-          otherZoneId: user.zoneId,
-          isSynced: _connectivity.hasRealInternet,
+        // PHASE 2.2.3 — clave canónica del encuentro (par ordenado + bucket
+        // UTC). `null` ⇒ identidad no verificable: se omite el encuentro
+        // fail-closed (el perfil/UI no se ven afectados).
+        final encounterKey = await EncounterKey.tryCanonicalKey(
+          myZone: _myZoneId,
+          peerZone: user.zoneId,
+          seenAt: DateTime.now(),
         );
+        if (encounterKey == null) {
+          _logger.debug('[NearbyService] Encuentro omitido: identidad inválida.');
+        } else {
+          if (_connectivity.hasRealInternet) {
+            await _supabaseService.registerEncounter(
+              _userId,
+              user.zoneId,
+              encounterKey: encounterKey,
+            );
+          }
+          await _isar.saveEncounter(
+            userId: _userId,
+            otherZoneId: user.zoneId,
+            isSynced: _connectivity.hasRealInternet,
+            encounterKey: encounterKey,
+          );
+        }
         if (profileId != null) await _isar.saveProfile(profile);
       }
     } catch (e) {
@@ -747,6 +876,7 @@ class NearbyService with WidgetsBindingObserver {
 
   void _onEndpointLost(String? id) {
     if (id == null) return;
+    if (!_lifecycle.acceptsCallbacks) return;
 
     // Iniciar periodo de gracia de 10 segundos antes de eliminar definitivamente
     _lostEndpointsGraceTimers[id]?.cancel();
@@ -754,6 +884,9 @@ class NearbyService with WidgetsBindingObserver {
       _discoveredUsers.remove(id);
       _resolvingEndpoints.remove(id);
       _lostEndpointsGraceTimers.remove(id);
+      // CASE D: con la tarjeta expira también la sesión efímera de
+      // transporte (un redescubrimiento futuro reprocesa limpio).
+      _sessions.noteLost(id);
       _emitDiscoveredUsers();
       _logger.debug(
         '[NearbyService] Endpoint $id eliminado definitivamente tras periodo de gracia.',
@@ -777,6 +910,8 @@ class NearbyService with WidgetsBindingObserver {
   void _onConnectionResult(String id, Status status) {
     if (status == Status.CONNECTED) {
       _connectedEndpoints.add(id);
+      _sessions.noteConnected(id);
+      _lifecycle.endpointConnected();
       if (_discoveredUsers.containsKey(id)) {
         _discoveredUsers[id]!.isConnected = true;
         _emitDiscoveredUsers();
@@ -791,13 +926,21 @@ class NearbyService with WidgetsBindingObserver {
         unawaited(_discoverMeshUsers());
       }
     } else {
+      // CASE C: fallo de conexión — limpiar intento pendiente (el endpoint
+      // sigue conocido para futuros reintentos; ver noteConnectionFailed).
       _pendingConnections.remove(id);
+      _sessions.noteConnectionFailed(id);
+      _logger.debug(
+        '[NearbyService] Conexión fallida con ${DiscoveryException.sanitizeEndpoint(id)}.',
+      );
     }
   }
 
   void _onDisconnected(String id) {
     _connectedEndpoints.remove(id);
     _pendingConnections.remove(id);
+    _sessions.noteDisconnected(id);
+    _lifecycle.endpointDisconnected(_sessions.connectedCount);
     if (_discoveredUsers.containsKey(id)) {
       _discoveredUsers[id]!.isConnected = false;
       _emitDiscoveredUsers();
@@ -806,15 +949,27 @@ class NearbyService with WidgetsBindingObserver {
 
   Future<void> requestConnection(String endpointId) async {
     if (!_hasValidToken) return;
+    // CASE A/B: un solo intento lógico por endpoint (conectado o en curso).
+    if (!_sessions.noteConnectionAttempt(endpointId)) {
+      return;
+    }
     try {
-      await _nearby.requestConnection(
+      final ok = await _nearby.requestConnection(
         _currentToken,
         endpointId,
         onConnectionInitiated: _onConnectionInitiated,
         onConnectionResult: _onConnectionResult,
         onDisconnected: _onDisconnected,
       );
+      if (!ok) {
+        _sessions.noteConnectionFailed(endpointId);
+        _logger.debug(
+          '[NearbyService] requestConnection devolvió false '
+          '(${DiscoveryException.sanitizeEndpoint(endpointId)}).',
+        );
+      }
     } catch (e) {
+      _sessions.noteConnectionFailed(endpointId);
       _logger.debug('[NearbyService] Error al solicitar conexión: $e');
     }
   }
@@ -843,6 +998,8 @@ class NearbyService with WidgetsBindingObserver {
   void disconnectFrom(String endpointId) {
     _nearby.disconnectFromEndpoint(endpointId);
     _connectedEndpoints.remove(endpointId);
+    _sessions.noteDisconnected(endpointId);
+    _lifecycle.endpointDisconnected(_sessions.connectedCount);
     if (_discoveredUsers.containsKey(endpointId)) {
       _discoveredUsers[endpointId]!.isConnected = false;
       _emitDiscoveredUsers();
@@ -860,24 +1017,59 @@ class NearbyService with WidgetsBindingObserver {
 
   void _onPayloadReceived(String endpointId, Payload payload) {
     if (payload.type == PayloadType.BYTES && payload.bytes != null) {
-      final text = utf8.decode(payload.bytes!);
-
+      final String text;
       try {
-        final Map<String, dynamic> data = jsonDecode(text);
-        final type = data['type'];
-
-        if (type == 'profile_exchange') {
-          _handleProfileExchange(endpointId, data['data']);
-        } else if (type == 'routing_table') {
-          _handleRoutingTableUpdate(endpointId, data['data']);
-        } else if (type == 'mesh_msg') {
-          _handleMeshMessage(endpointId, data);
-        }
+        text = utf8.decode(payload.bytes!);
       } catch (e) {
-        // Tratar como mensaje directo legado o ignorar si no es JSON válido
-        _incomingMessagesController.add(
-          NearbyMessage(fromEndpointId: endpointId, text: text),
-        );
+        _logger.debug('[NearbyService] Payload no-UTF8 descartado: $e');
+        return;
+      }
+
+      final dynamic decoded;
+      try {
+        decoded = jsonDecode(text);
+      } catch (e) {
+        // Z-212: fail-closed. Un payload no-JSON NUNCA se inyecta como mensaje
+        // (el camino legado en claro permitía spoofing de remitente/contenido).
+        _logger.debug('[NearbyService] Payload no-JSON descartado (fail-closed).');
+        return;
+      }
+      if (decoded is! Map) {
+        _logger.debug('[NearbyService] Payload JSON no-objeto descartado.');
+        return;
+      }
+      final data = Map<String, dynamic>.from(decoded);
+      final type = data['type'];
+
+      if (type == 'profile_exchange') {
+        // PHASE 2.2.6 (§6): validar ANTES de tocar estado — identidad
+        // canónica + cero claves secretas. Inválido ⇒ descartar.
+        try {
+          final clean = DiscoveryPayload.validateProfileExchange(data['data']);
+          _handleProfileExchange(endpointId, clean);
+        } on InvalidDiscoveryIdentityError {
+          _logger.debug(
+            '[NearbyService] profile_exchange inválido, descartado.',
+          );
+        }
+      } else if (type == 'routing_table') {
+        final routes = MeshPolicy.validateRoutingTable(data['data']);
+        if (routes.isEmpty) {
+          _logger.debug('[NearbyService] routing_table inválida, descartada.');
+          return;
+        }
+        _handleRoutingTableUpdate(endpointId, routes);
+      } else if (type == 'mesh_msg') {
+        final packet = MeshPolicy.validateIncomingPacket(data);
+        if (packet == null) {
+          _logger.warning(
+            '[NearbyService] mesh_msg inválido descartado de $endpointId',
+          );
+          return;
+        }
+        _handleMeshMessage(endpointId, packet);
+      } else {
+        _logger.debug('[NearbyService] Tipo de payload desconocido descartado.');
       }
     }
   }
@@ -886,17 +1078,24 @@ class NearbyService with WidgetsBindingObserver {
     final profile = await _zoneIdService.getMyProfile();
     if (profile == null) return;
 
+    // Z-212: no difundir datos que el dueño marcó como privados. El perfil
+    // propio se comparte por radio; la visibilidad debe aplicarse en origen.
+    final avatarVisible = profile['avatar_is_public'] == true;
+    final igVisible = profile['ig_visible'] == true;
+    final fbVisible = profile['fb_visible'] == true;
+    final tiktokVisible = profile['tiktok_visible'] == true;
+
     final exchangeData = {
       'type': 'profile_exchange',
       'data': {
         'id': profile['id'],
         'zone_id': profile['zone_id'],
         'display_name': profile['display_name'],
-        'avatar_url': profile['avatar_url'],
+        'avatar_url': avatarVisible ? profile['avatar_url'] : null,
         'bio': profile['bio'],
-        'instagram_handle': profile['instagram_handle'],
-        'facebook_handle': profile['facebook_handle'],
-        'tiktok_handle': profile['tiktok_handle'],
+        'instagram_handle': igVisible ? profile['instagram_handle'] : null,
+        'facebook_handle': fbVisible ? profile['facebook_handle'] : null,
+        'tiktok_handle': tiktokVisible ? profile['tiktok_handle'] : null,
         'publicKey': _security.publicBase64,
         'public_key': _security.publicBase64,
         'updatedAt': DateTime.now().toIso8601String(),
@@ -914,6 +1113,19 @@ class NearbyService with WidgetsBindingObserver {
       '[NearbyService] Perfil P2P recibido de $endpointId: ${profileData['zone_id']}',
     );
 
+    // PHASE 2.2.6 (frontera de identidad): enlazar endpoint→identidad ANTES
+    // de derivar llaves, persistir o rutear. Falla cerrado si el handle no
+    // es canónico (nunca entra a sk_*, Isar, routing ni UI como identidad).
+    final boundZone = (profileData['zone_id'] ?? '').toString();
+    try {
+      _sessions.bindIdentity(endpointId, boundZone);
+    } on InvalidDiscoveryIdentityError {
+      _logger.debug(
+        '[NearbyService] Intercambio P2P con identidad inválida, omitido.',
+      );
+      return;
+    }
+
     // Derivación de llave de sesión si viene clave pública
     final remotePublicKey =
         (profileData['publicKey'] as String?) ??
@@ -921,24 +1133,63 @@ class NearbyService with WidgetsBindingObserver {
     final remoteZoneId = profileData['zone_id'] as String?;
     if (remotePublicKey != null && remoteZoneId != null) {
       _logger.debug('[NearbyService] Derivando llave de sesión P2P...');
-      final sessionKey = await _security.deriveSessionKey(remotePublicKey);
-      if (sessionKey != null) {
-        await _security.saveSessionKey(remoteZoneId, sessionKey);
-        _logger.debug('[NearbyService] Llave de sesión guardada de forma segura.');
-        // Z-003 (FASE 1.4): al establecerse la llave, descargar la cola fail-closed.
-        await _flushPendingMeshMessages(remoteZoneId);
+      try {
+        // Z-212: NUNCA reemplazar una llave ya establecida por una clave que
+        // llega sin prueba de posesión (mitiga key-substitution/MITM tras el
+        // primer contacto). El primer contacto sigue siendo TOFU y está
+        // documentado como riesgo Z-004 hasta integrar identidad firmada.
+        final existingKey = await _security.getSessionKey(remoteZoneId);
+        if (existingKey == null) {
+          final sessionKey = await _security.deriveSessionKey(remotePublicKey);
+          if (sessionKey != null) {
+            await _security.saveSessionKey(remoteZoneId, sessionKey);
+            _logger.debug(
+              '[NearbyService] Llave de sesión guardada de forma segura.',
+            );
+          }
+        } else {
+          _logger.debug(
+            '[NearbyService] Llave de sesión existente conservada para $remoteZoneId.',
+          );
+        }
+        // Z-003 (FASE 1.4): al existir llave, descargar la cola fail-closed.
+        final sessionKey = await _security.getSessionKey(remoteZoneId);
+        if (sessionKey != null) {
+          await _flushPendingMeshMessages(remoteZoneId);
+        }
+      } catch (e) {
+        _logger.debug('[NearbyService] Error derivando llave P2P: $e');
       }
     }
 
-    // Guardar en Isar
-    await _isar.saveProfile(profileData);
+    // Guardar en Isar (payload remoto validado; saveProfile valida id/fechas).
+    try {
+      await _isar.saveProfile(profileData);
+    } catch (e) {
+      _logger.debug('[NearbyService] Perfil P2P no persistido: $e');
+    }
 
-    // Registrar encuentro localmente
-    await _isar.saveEncounter(
-      userId: _userId,
-      otherZoneId: profileData['zone_id'],
-      isSynced: _connectivity.hasRealInternet,
-    );
+    // Registrar encuentro localmente (PHASE 2.2.3: clave canónica; sin
+    // identidad verificable se omite fail-closed — además corrige el crash
+    // potencial previo si `zone_id` venía nulo).
+    final peerZoneId = profileData['zone_id'] as String?;
+    final p2pEncounterKey = (peerZoneId == null || peerZoneId.isEmpty)
+        ? null
+        : await EncounterKey.tryCanonicalKey(
+            myZone: _myZoneId,
+            peerZone: peerZoneId,
+            seenAt: DateTime.now(),
+          );
+    if (p2pEncounterKey == null) {
+      _logger.debug('[NearbyService] Encuentro P2P omitido: identidad inválida.');
+    } else {
+      await _isar.saveEncounter(
+        userId: _userId,
+        otherZoneId: peerZoneId!,
+        isSynced: _connectivity.hasRealInternet,
+        encounterKey: p2pEncounterKey,
+      );
+    }
 
     // Actualizar UI si el usuario está en el radar
     if (_discoveredUsers.containsKey(endpointId)) {
@@ -987,15 +1238,19 @@ class NearbyService with WidgetsBindingObserver {
     );
   }
 
-  void _handleRoutingTableUpdate(String fromEndpointId, List<dynamic> routes) {
+  void _handleRoutingTableUpdate(
+    String fromEndpointId,
+    List<MeshRouteHint> routes,
+  ) {
     _logger.debug(
       '[NearbyService] Actualización de tabla Mesh desde $fromEndpointId',
     );
     for (final r in routes) {
-      final zoneId = r['zoneId'] as String;
-      final distance = r['distance'] as int;
+      final zoneId = r.zoneId;
+      final distance = r.distance;
 
       if (zoneId == _myZoneId) continue;
+      if (distance + 1 > _maxMeshHops) continue;
 
       // Si es una ruta más corta o nueva, actualizar
       final existing = _routingTable[zoneId];
@@ -1006,6 +1261,20 @@ class NearbyService with WidgetsBindingObserver {
   }
 
   void _updateRoutingTable(String zoneId, String nextHop, int distance) {
+    // Anti-DoS: cota del estado de rutas; evicta la actualización más antigua.
+    if (!_routingTable.containsKey(zoneId) &&
+        _routingTable.length >= _maxRoutingTableEntries) {
+      String? oldestKey;
+      DateTime? oldestAt;
+      _routingTable.forEach((key, route) {
+        if (oldestAt == null || route.lastUpdate.isBefore(oldestAt!)) {
+          oldestKey = key;
+          oldestAt = route.lastUpdate;
+        }
+      });
+      if (oldestKey != null) _routingTable.remove(oldestKey);
+    }
+
     final route = MeshRoute()
       ..targetZoneId = zoneId
       ..nextHopEndpointId = nextHop
@@ -1112,63 +1381,61 @@ class NearbyService with WidgetsBindingObserver {
     );
   }
 
-  void _handleMeshMessage(
-    String fromEndpointId,
-    Map<String, dynamic> packet,
-  ) async {
-    // Z-003 (FASE 1.4): fail-closed — la malla solo propaga mesh_msg cifrados.
-    final isEncrypted = packet['isEncrypted'] as bool? ?? false;
-    if (MeshPolicy.decideRelay(isEncrypted: isEncrypted) ==
-        MeshRelayDecision.dropPlaintext) {
-      _logger.warning(
-        '[NearbyService] Mensaje Mesh EN CLARO descartado (fail-closed) de $fromEndpointId',
+  void _handleMeshMessage(String fromEndpointId, MeshPacket packet) async {
+    // Z-212: el paquete ya pasó validación estricta (tipos, ZONE-IDs, UUID,
+    // ciphertext acotado, hops). Aquí solo se aplica el contrato de relay.
+
+    // Z-005 (FASE 1.6): dedup LRU+TTL — register() devuelve false si ya estaba
+    // dentro de la ventana (duplicado); nunca borra todo el set.
+    if (!_seenMessageIds.register(packet.msgId)) {
+      _logger.debug(
+        '[NearbyService] Mensaje Mesh duplicado ignorado: ${packet.msgId}',
       );
       return;
     }
 
-    final target = packet['target'] as String;
-    final source = packet['source'] as String;
-    final hops = (packet['hops'] as int) + 1;
-    final msgId = packet['msgId'] as String? ?? '';
-
-    // Z-005 (FASE 1.6): dedup LRU+TTL — register() devuelve false si ya estaba
-    // dentro de la ventana (duplicado); nunca borra todo el set.
-    if (msgId.isNotEmpty) {
-      if (!_seenMessageIds.register(msgId)) {
-        _logger.debug('[NearbyService] Mensaje Mesh duplicado ignorado: $msgId');
-        return;
-      }
-    }
-
-    if (target == _myZoneId) {
+    if (packet.target == _myZoneId) {
       // Validar si hay un match/permiso antes de procesar
-      final profile = await _isar.getProfile(source);
+      final profile = await _isar.getProfile(packet.source);
       if (profile != null) {
-        _processIncomingMeshMessage(source, packet, fromEndpointId);
+        _processIncomingMeshMessage(packet.source, packet, fromEndpointId);
       } else {
         _logger.debug(
-          '[NearbyService] Mensaje Mesh ignorado: No hay perfil/match previo con $source',
+          '[NearbyService] Mensaje Mesh ignorado: No hay perfil/match previo con ${packet.source}',
         );
       }
       return;
     }
 
+    final hops = packet.hops + 1;
     if (hops >= _maxMeshHops) return;
 
-    // Relay: Reenviar mensaje
-    packet['hops'] = hops;
-    final route = _routingTable[target];
+    // Relay: reenviar el paquete reconstruido (nunca se muta el original).
+    final relayPacket = {
+      'type': 'mesh_msg',
+      'source': packet.source,
+      'target': packet.target,
+      'msgId': packet.msgId,
+      'text': packet.ciphertext,
+      'nonce': packet.nonce,
+      'mac': packet.mac,
+      'hops': hops,
+      'isEncrypted': true,
+    };
+    final route = _routingTable[packet.target];
 
     if (route != null && _isRouteActive(route)) {
       // Reenviar al siguiente salto conocido
       if (route.nextHopEndpointId != fromEndpointId) {
-        unawaited(sendMessage(route.nextHopEndpointId, jsonEncode(packet)));
+        unawaited(
+          sendMessage(route.nextHopEndpointId, jsonEncode(relayPacket)),
+        );
       }
     } else {
       // Flood relay: A todos excepto de donde vino
       for (final endpoint in _connectedEndpoints) {
         if (endpoint != fromEndpointId) {
-          unawaited(sendMessage(endpoint, jsonEncode(packet)));
+          unawaited(sendMessage(endpoint, jsonEncode(relayPacket)));
         }
       }
     }
@@ -1176,43 +1443,31 @@ class NearbyService with WidgetsBindingObserver {
 
   Future<void> _processIncomingMeshMessage(
     String sourceZoneId,
-    Map<String, dynamic> packet,
+    MeshPacket packet,
     String fromEndpointId,
   ) async {
-    String text = packet['text'] as String;
-    final isEncrypted = packet['isEncrypted'] as bool? ?? false;
-
-    // Z-003 (FASE 1.4): fail-closed — nunca se procesa texto en claro.
-    if (!isEncrypted) {
-      _logger.warning(
-        '[NearbyService] Mensaje Mesh en claro rechazado de $sourceZoneId',
-      );
-      return;
-    }
-
-    if (isEncrypted) {
-      final sessionKey = await _security.getSessionKey(sourceZoneId);
-      if (sessionKey != null) {
-        try {
-          final sessionKeyBytes = base64Decode(sessionKey);
-          final sharedSecret = SecretKey(sessionKeyBytes);
-          text = await _chatE2EE.decryptMessage(
-            text,
-            packet['nonce'] as String,
-            packet['mac'] as String,
-            sharedSecret,
-          );
-          _logger.debug(
-            '[NearbyService] Mensaje Mesh descifrado de $sourceZoneId',
-          );
-        } catch (e) {
-          text =
-              '[Error de descifrado: la llave de sesión podría ser inválida]';
-          _logger.debug('[NearbyService] Error descifrando mensaje Mesh: $e');
-        }
-      } else {
-        text = '[Mensaje cifrado recibido pero no se tiene la llave de sesión]';
+    var text = packet.ciphertext;
+    final sessionKey = await _security.getSessionKey(sourceZoneId);
+    if (sessionKey != null) {
+      try {
+        final sessionKeyBytes = base64Decode(sessionKey);
+        final sharedSecret = SecretKey(sessionKeyBytes);
+        text = await _chatE2EE.decryptMessage(
+          text,
+          packet.nonce,
+          packet.mac,
+          sharedSecret,
+        );
+        _logger.debug(
+          '[NearbyService] Mensaje Mesh descifrado de $sourceZoneId',
+        );
+      } catch (e) {
+        text =
+            '[Error de descifrado: la llave de sesión podría ser inválida]';
+        _logger.debug('[NearbyService] Error descifrando mensaje Mesh: $e');
       }
+    } else {
+      text = '[Mensaje cifrado recibido pero no se tiene la llave de sesión]';
     }
 
     _logger.debug(
@@ -1347,27 +1602,6 @@ class NearbyService with WidgetsBindingObserver {
       );
     } catch (e) {
       _logger.debug('[NearbyService] Error en descubrimiento global: $e');
-    }
-  }
-
-  void simulateMeshTraffic(int messageCount) {
-    _logger.debug(
-      '[NearbyService] Iniciando simulacion de estres: $messageCount mensajes...',
-    );
-    for (var i = 0; i < messageCount; i++) {
-      final mockPacket = {
-        'type': 'mesh_msg',
-        'source': 'MOCK-USER-$i',
-        'target': _myZoneId,
-        'msgId': 'mock-$i-${DateTime.now().millisecondsSinceEpoch}',
-        'text': 'Mensaje de prueba numero $i - Malla de seguridad activa.',
-        'hops': 1,
-        'isEncrypted': false,
-      };
-
-      Timer(Duration(milliseconds: i * 50), () {
-        _handleMeshMessage('MOCK-ENDPOINT-$i', mockPacket);
-      });
     }
   }
 

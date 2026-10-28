@@ -21,6 +21,10 @@
 --   6. Cliente: 4 lecturas de terceros migradas a v_profile (zona_id/radar/pull/privacy).
 --
 -- NO toca: resolve_bt_token (Z-104, lote aparte) ni criptografía (Fase B Z-001).
+--
+-- Z-212 (2026-10-23) — SUPERSEDED: el claim queda en cuarentena fail-closed.
+-- Este archivo se conserva por historia, pero si se re-aplica instala la
+-- cuarentena (NO el UPDATE users SET id) para no reintroducir account takeover.
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
@@ -108,12 +112,12 @@ REVOKE ALL ON public.v_profile FROM anon, PUBLIC, authenticated;
 GRANT SELECT ON public.v_profile TO authenticated;
 
 -- ----------------------------------------------------------------------------
--- 4. claim_zone_id → RETURNS jsonb (perfil completo tras el reclamo)
---    Mismos controles Z-001 (auth + formato + rate-limit) pero devuelve el
---    perfil migrado para que el login no tenga que releer 'users' (que ahora
---    es self-scoped). NO toca public_key.
---    DROP previo: tras la Fase 1.2 claim devuelve void; Postgres exige DROP
---    para cambiar el tipo de retorno (42P13). Atómico dentro de transacción.
+-- 4. claim_zone_id → RETURNS jsonb (HISTÓRICO: sustituido por Z-212)
+--    La firma se conserva para no romper grants/clientes, pero el cuerpo está
+--    en cuarentena fail-closed: NO mueve users.id ni devuelve perfil.
+--    (Texto original conservado como historia: devolvía el perfil completo tras
+--    el reclamo para que el login no releyera 'users', self-scoped. NO tocaba
+--    public_key.)
 -- ----------------------------------------------------------------------------
 DROP FUNCTION IF EXISTS public.claim_zone_id(text);
 CREATE OR REPLACE FUNCTION public.claim_zone_id(p_zone_id text)
@@ -126,7 +130,6 @@ DECLARE
   v_uid        uuid := auth.uid();
   v_failures   bigint;
   v_target     uuid;
-  v_profile    jsonb;
 BEGIN
   IF v_uid IS NULL THEN
     RAISE EXCEPTION 'Se requiere sesión autenticada';
@@ -152,35 +155,12 @@ BEGIN
     RAISE EXCEPTION 'ZONE-ID no encontrado';
   END IF;
 
-  -- Reclamo idempotente + devolución del perfil completo migrado a este UID.
-  UPDATE public.users u SET id = v_uid
-  WHERE u.zone_id = p_zone_id
-  RETURNING jsonb_build_object(
-    'id',               u.id,
-    'zone_id',          u.zone_id,
-    'display_name',     u.display_name,
-    'public_key',       u.public_key,
-    'avatar_hash',      u.avatar_hash,
-    'stealth_mode',     u.stealth_mode,
-    'instagram_handle', u.instagram_handle,
-    'ig_visible',       u.ig_visible,
-    'facebook_handle',  u.facebook_handle,
-    'fb_visible',       u.fb_visible,
-    'tiktok_handle',    u.tiktok_handle,
-    'tiktok_visible',   u.tiktok_visible,
-    'reports_count',    u.reports_count,
-    'is_shadowbanned',  u.is_shadowbanned,
-    'avatar_url',       u.avatar_url,
-    'avatar_is_public', u.avatar_is_public,
-    'gallery_photos',   u.gallery_photos,
-    'created_at',       u.created_at,
-    'updated_at',       u.updated_at
-  ) INTO v_profile;
-
-  INSERT INTO public.zone_claim_attempts (zone_id, uid, success)
-  VALUES (p_zone_id, v_uid, TRUE);
-
-  RETURN v_profile;
+  -- Z-212 (2026-10-23): cuarentena fail-closed. El UPDATE users SET id = v_uid
+  -- permitía account takeover sin prueba de posesión. No se re-habilita hasta
+  -- implementar un challenge firmado verificado server-side.
+  RAISE EXCEPTION
+    'Reclamo de ZONE-ID deshabilitado temporalmente por seguridad (Z-212).';
+  RETURN NULL; -- inalcanzable; satisface el tipo de retorno jsonb
 END;
 $$;
 
@@ -271,9 +251,10 @@ GRANT EXECUTE ON FUNCTION public.verify_zone_id(text) TO authenticated;
 --      on (b.blocker_id = v.id OR b.blocked_id = v.id)
 --      where (b.blocked_id = auth.uid() OR b.blocker_id = auth.uid());  → 0
 --
--- 7. claim devuelve perfil jsonb completo:
---    select public.claim_zone_id('ZONE-XXXXXXXX');  → jsonb con display_name/avatar/handles
---    (el mismo claim es idempotente; repetirlo no falla)
+-- 7. Z-212 (2026-10-23): claim queda en cuarentena fail-closed. CUALQUIER
+--    llamada autenticada falla con
+--    'Reclamo de ZONE-ID deshabilitado temporalmente por seguridad (Z-212).'
+--    El comportamiento histórico (mover id + devolver jsonb) ya NO aplica.
 --
 -- 8. verify oculta avatar no público:
 --    select public.verify_zone_id('ZONE-XXXXXXXX');

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../identity/identity_errors.dart';
 import '../services/connectivity_service.dart';
 import '../services/isar_service.dart';
 import '../services/p2p_security_service.dart';
 import '../services/sync_service.dart';
+import '../services/zone_identity_bootstrap_service.dart';
 import '../utils/env_config.dart';
 import 'auth_screen.dart';
 
@@ -27,6 +29,31 @@ class _InitialLoadingScreenState extends State<InitialLoadingScreen> {
   Future<void> _startInitialization() async {
     final start = DateTime.now();
     debugPrint('[Startup] Iniciando a las ${start.toIso8601String()}');
+
+    // 0. Identity Foundation: bootstrap local, fail-closed, INDEPENDIENTE de
+    //    la nube. Punto ÚNICO de inicialización de identidad del producto
+    //    (slice autorizado): abre `zone_identity`, crea/carga account + device_1,
+    //    valida integridad, y deja el contexto disponible. NUNCA ejecuta
+    //    migración ni toca X25519 legacy.
+    setState(() {
+      _loadingText = 'Inicializando identidad segura...';
+      _progress = 0.05;
+    });
+    try {
+      await ZoneIdentityBootstrapService().bootstrap();
+    } on IdentityFoundationError catch (e) {
+      // Fail-closed: si la identidad no se puede inicializar, el arranque se
+      // DETIENE (nunca se continúa fingiendo identidad disponible). El error
+      // es tipado y se registra sin material secreto (diagnosable).
+      debugPrint('[IdentityBootstrap] FAILED (fail-closed): $e');
+      if (mounted) {
+        setState(() {
+          _loadingText = 'Error de identidad. Reintenta por favor.';
+          _progress = 0.0;
+        });
+      }
+      return;
+    }
 
     try {
       // 0. Configuración de Supabase:

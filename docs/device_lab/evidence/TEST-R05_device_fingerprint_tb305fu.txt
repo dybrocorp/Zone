@@ -1,0 +1,19 @@
+TEST-R05 - DEVICE FINGERPRINT
+=============================
+DEVICE: HA26RCFN (LENOVO TB305FU - Android 15 - API 35)
+
+VEREDICTO: NOT_TESTABLE
+
+MOTIVO:
+Sin device identity en runtime (ver TEST-R04/R02), no existe fingerprint que
+leer desde el producto. FingerprintService (v1 KAT: DEV-A/DEV-B/ACC conocidos
+solo en tests host) no es alcanzable desde ninguna ruta productiva.
+
+DEVICE_ID:             (no existe en runtime)
+FINGERPRINT VERSION:   (no calculado en runtime)
+FINGERPRINT:           (no calculado en runtime)
+STABILITY:             N/A (sin fingerprint que comparar entre reinicios)
+
+No se expone material secreto en ningun archivo de evidencia.
+
+NO SE MODIFICO NINGUN CODIGO.

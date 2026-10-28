@@ -56,7 +56,14 @@ class ChatE2EEService {
     }
   }
 
-  /// Encripta un mensaje usando el secreto compartido generado, garantizando Forward Secrecy.
+  /// Encripta un mensaje usando el secreto compartido X25519 estático-estático.
+  ///
+  /// Z-101 / Fase G: este esquema NO tiene forward secrecy (sin HKDF de AKE,
+  /// sin AAD, sin claves efímeras). La FS sólo llegará con las versiones
+  /// v3/v4 de `docs/audit/PHASE_G_E2EE_KEY_ESTABLISHMENT.md`; hasta entonces
+  /// prohibido afirmarla en documentación o marketing. El comentario anterior
+  /// ("garantizando Forward Secrecy") era falso y se corrigió (Fase G §6.6
+  /// paso 1, sin cambio de comportamiento).
   Future<Map<String, dynamic>> encryptMessage(String text, SecretKey sharedSecret) async {
     final clearTextBytes = utf8.encode(text);
     final secretBox = await _algorithm.encrypt(

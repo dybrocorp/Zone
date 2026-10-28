@@ -19,6 +19,8 @@ class IsarService {
       LocalMessageSchema,
       MeshRouteSchema,
       LocalPendingMessageSchema,
+      // PHASE 2.2.5: outbox durable de mutaciones de match.
+      LocalMatchOperationSchema,
     ], directory: dir.path);
   }
 
@@ -27,11 +29,31 @@ class IsarService {
   // ──────────────────────────────────────────────────────────
 
   Future<void> saveProfile(Map<String, dynamic> data) async {
-    final userId = data['id'] ?? data['userId'];
-    final updatedAtStr = data['updatedAt'] as String?;
-    final newUpdatedAt = updatedAtStr != null
-        ? DateTime.parse(updatedAtStr)
-        : DateTime.now();
+    // Z-212: el perfil remoto es input no confiable. Sin un users.id estable
+    // no se persiste (antes `userId` null reventaba Isar o envenenaba el LWW).
+    final rawUserId = data['id'] ?? data['userId'];
+    if (rawUserId is! String || rawUserId.trim().isEmpty) return;
+    final userId = rawUserId.trim();
+
+    final now = DateTime.now().toUtc();
+    final rawUpdatedAt = data['updatedAt'] ?? data['updated_at'];
+    var newUpdatedAt = now;
+    if (rawUpdatedAt is String) {
+      try {
+        newUpdatedAt = DateTime.parse(rawUpdatedAt).toUtc();
+      } catch (_) {
+        newUpdatedAt = now;
+      }
+    }
+    // Un timestamp futuro lejano ganaría TODOS los LWW para siempre. Se
+    // tolera un margen pequeño de reloj y se normaliza el resto a `now`.
+    final maxAccepted = now.add(const Duration(minutes: 5));
+    if (newUpdatedAt.isAfter(maxAccepted)) newUpdatedAt = now;
+
+    final rawZoneId = data['zone_id'] ?? data['zoneId'];
+    final zoneId = rawZoneId is String && rawZoneId.trim().isNotEmpty
+        ? rawZoneId.trim().toUpperCase()
+        : null;
 
     await isar.writeTxn(() async {
       final existing = await isar.localProfiles
@@ -40,13 +62,17 @@ class IsarService {
           .findFirst();
 
       // CRDT Logic: Last Write Wins (LWW)
-      if (existing != null && existing.updatedAt.isAfter(newUpdatedAt)) {
+      if (existing != null &&
+          existing.updatedAt.toUtc().isAfter(newUpdatedAt)) {
         return;
       }
 
+      final resolvedZoneId = zoneId ?? existing?.zoneId;
+      if (resolvedZoneId == null || resolvedZoneId.isEmpty) return;
+
       final profile = (existing ?? LocalProfile())
         ..userId = userId
-        ..zoneId = data['zone_id'] ?? data['zoneId']
+        ..zoneId = resolvedZoneId
         ..displayName = data['display_name'] ?? data['displayName']
         ..avatarUrl = data['avatar_url'] ?? data['avatarUrl']
         ..bio = data['bio']
@@ -55,7 +81,7 @@ class IsarService {
         ..tiktokHandle = data['tiktok_handle']
         ..publicKey =
             data['public_key'] ?? data['publicKey'] ?? existing?.publicKey
-        ..lastSeen = DateTime.now()
+        ..lastSeen = now
         ..updatedAt = newUpdatedAt;
 
       await isar.localProfiles.putByUserId(profile);
@@ -74,18 +100,54 @@ class IsarService {
   //  ENCOUNTERS
   // ──────────────────────────────────────────────────────────
 
+  /// PHASE 2.2.3 — idempotent encounter recording.
+  ///
+  /// - Con `encounterKey` (filas nuevas): si ya existe una fila con la misma
+  ///   clave canónica, no se inserta nada (first-wins). La comprobación y la
+  ///   inserción ocurren en UNA `writeTxn` (atómica y serializada por Isar),
+  ///   de modo que callbacks concurrentes de descubrimiento no duplican.
+  /// - Sin clave (filas históricas / rutas sin identidad verificada): dedup
+  ///   por bucket horario UTC sobre (userId, otherZoneId, seenAt). Las filas
+  ///   existentes NUNCA se borran ni se reescriben aquí.
   Future<void> saveEncounter({
     required String userId,
     required String otherZoneId,
     bool isSynced = false,
+    String? encounterKey,
   }) async {
-    final encounter = LocalEncounter()
-      ..userId = userId
-      ..otherZoneId = otherZoneId
-      ..seenAt = DateTime.now()
-      ..isSynced = isSynced;
-
+    final now = DateTime.now();
     await isar.writeTxn(() async {
+      if (encounterKey != null && encounterKey.isNotEmpty) {
+        final dup = await isar.localEncounters
+            .filter()
+            .encounterKeyEqualTo(encounterKey)
+            .findFirst();
+        if (dup != null) return;
+      } else {
+        final bucketStart = DateTime.utc(
+          now.toUtc().year,
+          now.toUtc().month,
+          now.toUtc().day,
+          now.toUtc().hour,
+        );
+        final dup = await isar.localEncounters
+            .filter()
+            .userIdEqualTo(userId)
+            .otherZoneIdEqualTo(otherZoneId)
+            .seenAtGreaterThan(bucketStart)
+            .findFirst();
+        if (dup != null) return;
+      }
+
+      final encounter = LocalEncounter()
+        ..userId = userId
+        ..otherZoneId = otherZoneId
+        ..seenAt = now
+        ..encounterKey = (encounterKey == null || encounterKey.isEmpty)
+            ? null
+            : encounterKey
+        ..isSynced = isSynced;
+
       await isar.localEncounters.put(encounter);
     });
   }
@@ -221,6 +283,15 @@ class IsarService {
         .filter()
         .matchIdEqualTo(matchId)
         .findAll();
+  }
+
+  /// Z-212: recupera la fila del outbox por su tempId para reintentos
+  /// idempotentes (reutiliza el messageId estable, nunca genera uno nuevo).
+  Future<LocalPendingMessage?> getPendingMessage(String tempId) async {
+    return await isar.localPendingMessages
+        .filter()
+        .tempIdEqualTo(tempId)
+        .findFirst();
   }
 
   Future<void> deletePendingMessage(String tempId) async {

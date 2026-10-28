@@ -1,12 +1,23 @@
+-- ============================================================================
+-- HISTÓRICO — fix_radar_bilateral.sql (pre Z-104 / Z-212)
 -- Ejecutar en Supabase SQL Editor si el radar no resuelve usuarios.
--- Corrige la asimetría: la política exigía used=FALSE aunque el cliente ya no marca tokens usados.
+-- Corrige la asimetría: la política exigía used=FALSE aunque el cliente ya no
+-- marca tokens usados.
+--
+-- Z-212 (2026-10-23) — SUPERSEDED: este archivo se conserva por historia, pero
+-- si se re-aplica instala el estado seguro y NO reintroduce los vectores:
+--   1. NO crea la policy SELECT amplia "Resolver token BT" (la elimina).
+--      El acceso directo a bt_tokens queda self-scoped; la resolución pasa
+--      exclusivamente por la RPC.
+--   2. resolve_bt_token exige auth.uid() y aplica visibilidad server-side
+--      (avatar/handles privados nunca se devuelven).
+--   3. NO resetea `used` (flag obsoleto; mutación de datos innecesaria).
+-- ============================================================================
 
 DROP POLICY IF EXISTS "Resolver token BT" ON public.bt_tokens;
-CREATE POLICY "Resolver token BT" ON public.bt_tokens
-    FOR SELECT TO authenticated
-    USING (auth.role() = 'authenticated' AND expires_at > now());
 
--- RPC centralizado: resolución bilateral sin depender de joins RLS del cliente
+-- RPC centralizado: resolución bilateral sin depender de joins RLS del cliente.
+-- Z-212: gate de sesión + filtrado de visibilidad (equivalente al canónico).
 CREATE OR REPLACE FUNCTION public.resolve_bt_token(p_token text)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -16,7 +27,10 @@ AS $$
 DECLARE
   v_profile jsonb;
 BEGIN
-  IF p_token IS NULL OR length(trim(p_token)) = 0 THEN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'Se requiere sesión autenticada';
+  END IF;
+  IF p_token IS NULL OR length(trim(p_token)) = 0 OR trim(p_token) = 'ZONE-INIT' THEN
     RETURN NULL;
   END IF;
 
@@ -24,14 +38,14 @@ BEGIN
     'id', u.id,
     'zone_id', u.zone_id,
     'display_name', u.display_name,
-    'avatar_url', u.avatar_url,
+    'avatar_url', CASE WHEN u.avatar_is_public THEN u.avatar_url ELSE NULL END,
     'stealth_mode', u.stealth_mode,
     'public_key', u.public_key,
-    'instagram_handle', u.instagram_handle,
+    'instagram_handle', CASE WHEN u.ig_visible THEN u.instagram_handle ELSE NULL END,
     'ig_visible', u.ig_visible,
-    'facebook_handle', u.facebook_handle,
+    'facebook_handle', CASE WHEN u.fb_visible THEN u.facebook_handle ELSE NULL END,
     'fb_visible', u.fb_visible,
-    'tiktok_handle', u.tiktok_handle,
+    'tiktok_handle', CASE WHEN u.tiktok_visible THEN u.tiktok_handle ELSE NULL END,
     'tiktok_visible', u.tiktok_visible
   ) INTO v_profile
   FROM public.bt_tokens t
@@ -51,7 +65,5 @@ GRANT EXECUTE ON FUNCTION public.resolve_bt_token(text) TO authenticated;
 -- Este parche histórico queda solo para re-ejecución segura sin reintroducir el vector.
 REVOKE EXECUTE ON FUNCTION public.resolve_bt_token(text) FROM anon;
 
--- Limpiar tokens marcados como usados (legado) para no bloquear resolución
-UPDATE public.bt_tokens SET used = FALSE WHERE used = TRUE;
-
-GRANT EXECUTE ON FUNCTION public.delete_own_account() TO authenticated;
+-- Nota Z-212: el GRANT de delete_own_account que tenía este parche histórico se
+-- elimina de aquí; pertenece al esquema canónico y no a la resolución de tokens.

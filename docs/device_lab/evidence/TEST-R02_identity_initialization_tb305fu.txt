@@ -1,0 +1,34 @@
+TEST-R02 - IDENTITY INITIALIZATION
+=================================
+DEVICE: HA26RCFN (LENOVO TB305FU - Android 15 - API 35 - arm64-v8a)
+APK:    app-debug.apk 1.0.4+5 (com.dybrocorp.zone) - arbol actual en device
+
+VEREDICTO: NOT_INTEGRATED
+(La fundacion de identidad NO esta conectada al boot productivo.
+ Se reporta NOT_INTEGRATED en lugar de fabricar un PASS - regla CTO 2.4.)
+
+EVIDENCIA EN REPOSITORIO:
+- grep "package:zone/identity/" en lib/  -> 0 importadores productivos.
+- lib/main.dart: WidgetsFlutterBinding.ensureInitialized + runZonedGuarded
+  + ZoneApp -> InitialLoadingScreen. No instancia IdentityRegistry,
+  MigrationController ni ningun modulo de la fundacion.
+- lib/screens/initial_loading_screen.dart: solo servicios legacy
+  (connectivity_service, isar_service, p2p_security_service, sync_service,
+  auth_screen).
+
+EVIDENCIA EN DISPOSITIVO REAL (arranque limpio, 2026-09-25):
+1. am force-stop com.dybrocorp.zone  +  logcat -c  +  am start MainActivity
+2. logcat -d --pid=<PID> filtrado por
+   (Identity|Migration|Fingerprint|zone_identity|account_id|device_id|
+    Isar|X25519|Ed25519)  ->  0 coincidencias.
+3. run-as com.dybrocorp.zone  ls -la (solo nombres de archivos, sin contenido):
+     files/       -> profileInstalled, profileinstaller_*.dat
+     databases/   -> vacio
+     app_flutter/ -> default.isar + default.isar.lock  [DB LEGACY: isar_service]
+                    NO existe zone_identity.isar        [fundacion nunca instanciada]
+4. La fundacion (openIdentityIsar -> zone_identity) no se materializa en runtime.
+
+CONCLUSION: La Identity Foundation compila en el APK pero NO se ejecuta en el
+producto real. No hay excepciones de inicializacion porque no hay inicializacion.
+
+NO SE MODIFICO NINGUN CODIGO.

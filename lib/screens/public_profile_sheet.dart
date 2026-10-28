@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../services/connectivity_service.dart';
+import '../services/match_outbox_processor.dart';
+import '../services/match_pair.dart';
 import '../services/supabase_service.dart';
+import '../services/sync_service.dart';
 import '../services/zone_id_service.dart';
 import '../utils/friendly_errors.dart';
 
@@ -63,10 +67,12 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
   final _supabaseService = SupabaseService();
   final _zoneIdService = ZoneIdService();
 
-  // 0: Initial, 1: Requesting, 2: Sent/Pending, 3: Accepted
+  // 0: Initial, 1: Requesting, 2: Sent/Pending (server), 3: Accepted,
+  // 4: Queued local (durable outbox, SIN matchId del servidor todavía).
   int _connectionState = 0;
   String? _currentMatchId;
   StreamSubscription<List<Map<String, dynamic>>>? _matchSubscription;
+  StreamSubscription<SyncStatus>? _syncSubscription;
 
   bool _avatarIsPublic = true;
   List<dynamic> _galleryPhotos = [];
@@ -76,11 +82,19 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
     super.initState();
     _checkInitialMatchStatus();
     _fetchPrivacySettings();
+    // PHASE 2.2.5: al completarse un ciclo de sync, re-leer el estado
+    // canónico (la operación en cola puede haberse confirmado en servidor).
+    _syncSubscription = SyncService().statusStream.listen((status) {
+      if (status.state == SyncState.idle && mounted && _connectionState == 4) {
+        _refreshAfterSync();
+      }
+    });
   }
 
   @override
   void dispose() {
     _matchSubscription?.cancel();
+    _syncSubscription?.cancel();
     super.dispose();
   }
 
@@ -151,6 +165,8 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
   }
 
   void _listenToMatchChanges(String myId, String theirId) {
+    // Cancelar suscripción previa (evita acumular listeners en re-checks).
+    _matchSubscription?.cancel();
     _matchSubscription = Supabase.instance.client
         .from('matches')
         .stream(primaryKey: ['id'])
@@ -237,7 +253,9 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
     }
 
     if (_connectionState == 0) {
-      final myId = _zoneIdService.uid;
+      final myId =
+          _zoneIdService.uid ?? await _zoneIdService.getStoredUid();
+      if (!mounted) return;
       final theirId = widget.realUid;
 
       if (myId == null || theirId == null) {
@@ -253,11 +271,20 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
 
       try {
         final matchId = await _supabaseService.requestMatch(myId, theirId);
-        if (mounted) {
-          if (matchId != null) {
-            _currentMatchId = matchId;
-          }
+        if (!mounted) return;
+        // PHASE 2.2.4 — seguridad de estado UI (bug NULL matchId): el estado
+        // "pending" (2) SOLO existe con un identificador válido. Un resultado
+        // nulo/vacío vuelve a idle (0) con error explícito — nunca se finge
+        // "Solicitud enviada" sin matchId (con el realtime canónico, un
+        // conflicto ya retorna el id existente en lugar de null).
+        if (MatchPair.isValidMatchId(matchId)) {
+          _currentMatchId = matchId;
           setState(() => _connectionState = 2);
+        } else {
+          // PHASE 2.2.5 — intent duradero en lugar de error estéril: se
+          // encola la solicitud (deduplicada por operationId) y se muestra
+          // estado local pendiente (4), NUNCA "enviada" sin confirmación.
+          await _enqueueRequest(myId, theirId);
         }
       } catch (e) {
         if (mounted) {
@@ -269,6 +296,77 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
                   e,
                   fallback: 'No se pudo enviar la solicitud.',
                 ),
+              ),
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  /// PHASE 2.2.5 — encola la solicitud como intent duradero (deduplicado por
+  /// operationId determinista) y muestra estado local pendiente (4). Fail-closed:
+  /// sin actor válido o identidad inválida, vuelve a idle con error.
+  Future<void> _enqueueRequest(String myId, String theirId) async {
+    try {
+      final op = buildRequestOp(
+        requester: myId,
+        receiver: theirId,
+        now: DateTime.now(),
+      );
+      await IsarMatchOperationStore().enqueue(op);
+      // Intento inmediato (no-op sin red; urgente en reconexión).
+      unawaited(SyncService().syncNow());
+      if (!mounted) return;
+      final offline = !ConnectivityService().hasRealInternet;
+      setState(() => _connectionState = 4);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            offline
+                ? 'Sin conexión: la solicitud se enviará automáticamente al reconectar.'
+                : 'No se pudo contactar el servidor. Quedó en cola y se reintentará.',
+          ),
+        ),
+      );
+    } on InvalidMatchIdentityError {
+      if (!mounted) return;
+      setState(() => _connectionState = 0);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo enviar la solicitud.')),
+      );
+    }
+  }
+
+  /// PHASE 2.2.5 — tras un ciclo de sync, reconcilia el estado en cola (4)
+  /// con el servidor: confirmado ⇒ 2/3 con matchId real; operación fallida
+  /// terminal y sin match ⇒ error + idle (reintentable tocando Conectar).
+  Future<void> _refreshAfterSync() async {
+    final myId = _zoneIdService.uid;
+    final theirId = widget.realUid;
+    if (myId == null || theirId == null) return;
+    await _checkInitialMatchStatus();
+    if (!mounted) return;
+    if (_connectionState == 4 || _currentMatchId == null) {
+      String low, high;
+      try {
+        low = MatchPair.canonicalLow(myId, theirId);
+        high = MatchPair.canonicalHigh(myId, theirId);
+      } on InvalidMatchIdentityError {
+        return;
+      }
+      final store = IsarMatchOperationStore();
+      final stillPending = await store.hasPendingForPair(low, high);
+      final failed = await store.failedForPair(low, high);
+      if (!stillPending && _currentMatchId == null) {
+        if (mounted) {
+          setState(() => _connectionState = 0);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                failed != null
+                    ? 'No se pudo sincronizar la solicitud (${failed.lastErrorCode ?? 'error'}). Inténtalo de nuevo.'
+                    : 'No se pudo enviar la solicitud. Inténtalo de nuevo.',
               ),
             ),
           );
@@ -454,9 +552,13 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
             style: ElevatedButton.styleFrom(
               backgroundColor: _connectionState == 3
                   ? Colors.greenAccent
-                  : (_connectionState == 0
-                        ? const Color(0xFF00D2FF)
-                        : Colors.grey.shade600),
+                  // PHASE 2.2.5 (4): en cola local — ámbar, distinto del
+                  // pending confirmado (2, gris) y del idle (0, cian).
+                  : (_connectionState == 4
+                        ? Colors.orangeAccent
+                        : (_connectionState == 0
+                              ? const Color(0xFF00D2FF)
+                              : Colors.grey.shade600)),
               minimumSize: const Size(double.infinity, 55),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
@@ -483,6 +585,8 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
                   ? 'Enviando...'
                   : _connectionState == 2
                   ? 'Solicitud enviada, a la espera'
+                  : _connectionState == 4
+                  ? 'En cola · se enviará al conectar'
                   : 'Entrar al Chat',
               style: TextStyle(
                 color: _connectionState == 1 ? Colors.white : Colors.black,
@@ -490,9 +594,12 @@ class _PublicProfileSheetState extends State<PublicProfileSheet> {
                 fontSize: 16,
               ),
             ),
-            onPressed: (_connectionState == 1 || _connectionState == 2)
-                ? null
-                : _handleConnectPressed,
+            onPressed:
+                (_connectionState == 1 ||
+                        _connectionState == 2 ||
+                        _connectionState == 4)
+                    ? null
+                    : _handleConnectPressed,
           ),
           const SizedBox(height: 20),
         ],

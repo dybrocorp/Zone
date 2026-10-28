@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'dart:math';
 import '../config/radar_config.dart';
+import '../services/discovery_policy.dart';
 import '../services/nearby_service.dart';
 import '../services/supabase_service.dart';
 import '../services/zone_id_service.dart';
@@ -52,6 +53,10 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
     WidgetsBinding.instance.removeObserver(this);
     _animationController.dispose();
     _usersSub?.cancel();
+    // PHASE 2.2.6 (§3/§9): la pantalla dueña del radio lo apaga al salir —
+    // navegar fuera no debe dejar sesiones de descubrimiento duplicadas ni
+    // radio huérfano (el singleton sobrevive; la intención persiste en prefs).
+    unawaited(_nearbyService.stopRadar());
     super.dispose();
   }
 
@@ -116,8 +121,10 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
       setState(() => _isScanning = true);
       _animationController.repeat();
 
-      final granted = await PermissionsService.requestAllPermissions();
-      if (!granted) {
+      // PHASE 2.2.6 (§8): rechazo estructurado (denegado vs permanente).
+      final statuses = await PermissionsService.requestCoreStatuses();
+      final denial = DiscoveryPermissions.classify(statuses);
+      if (denial != null) {
         if (mounted) {
           setState(() {
             _isScanning = false;
@@ -125,8 +132,12 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
           });
           _animationController.reset();
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Por favor, activa el Bluetooth y la Ubicación para usar el radar.'),
+            SnackBar(
+              content: Text(
+                denial == DiscoveryError.permissionsPermanentlyDenied
+                    ? 'Permisos bloqueados permanentemente. Ábrelos en Ajustes para usar el radar.'
+                    : 'Por favor, activa el Bluetooth y la Ubicación para usar el radar.',
+              ),
               backgroundColor: Colors.redAccent,
             ),
           );

@@ -9,8 +9,9 @@
 -- el MIMO token se comparte por Nearby a TODOS los vecinos, y cada uno lo
 -- resuelve contra el mismo usuario dentro del TTL. La mitigación elegida:
 --   1) REVOKE EXECUTE a `anon` → solo `authenticated` (y postgres/service_role).
---   2) El acceso directo a `bt_tokens` sigue gobernado por RLS (solo
---      `authenticated`, ver policy "Resolver token BT").
+--   2) El acceso directo a `bt_tokens` queda self-scoped (policy
+--      "Ver propio token"). Z-212 (2026-10-23) ELIMINÓ la policy amplia
+--      "Resolver token BT"; la resolución pasa solo por esta RPC.
 --   3) TTL corto (10 min, client) + rotación periódica (cada 5 min) ya limitan
 --      la ventana de reuso a usuarios autenticados legítimos.
 -- (Criptografía NO tocada: la resolución sigue sin exponer secretos de cifrado;

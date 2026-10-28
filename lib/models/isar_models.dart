@@ -37,9 +37,16 @@ class LocalEncounter {
 
   late String userId; // Mi ID
   late String otherZoneId;
-  
+
   @Index()
   late DateTime seenAt;
+
+  /// PHASE 2.2.3 — canonical encounter key (`ZEN-1:<sha256 hex>`), derivado
+  /// del par ordenado de ZONE-IDs + bucket horario UTC. Nulo SOLO en filas
+  /// históricas previas a esta fase (legibles y sincronizables como antes);
+  /// las filas nuevas siempre lo llevan. Ver `lib/services/encounter_key.dart`.
+  @Index()
+  String? encounterKey;
 
   double? latitude;
   double? longitude;
@@ -116,4 +123,64 @@ class LocalPendingMessage {
 
   int retryCount = 0;
   DateTime createdAt = DateTime.now();
+}
+
+/// PHASE 2.2.5 — Outbox durable de mutaciones de match (offline-first).
+///
+/// Misma filosofía que `LocalPendingMessage` (Z-007) aplicada a matches:
+/// identidad de operación ESTABLE y determinista (`operationId`), reemplazo
+/// idempotente por clave (`putByOperationId`), borrado al completar, filas
+/// `failed` conservadas para diagnóstico/reintento manual. Ver
+/// `lib/services/match_outbox.dart` (identidad, backoff, clasificación) y
+/// `lib/services/match_outbox_processor.dart` (replay convergente).
+///
+/// La fila NO contiene secretos: solo UUIDs públicos, tipo/estado/contadores
+/// y un código corto de error. El `serverMatchId` real solo se conoce tras
+/// confirmación del backend — jamás se inventa localmente.
+@collection
+class LocalMatchOperation {
+  Id id = Isar.autoIncrement;
+
+  /// Identidad estable de la operación:
+  /// request `mr:<low>:<high>:<requester>:<receiver>`,
+  /// accept `ma:<serverMatchId>:<actor>`, reject `mj:<serverMatchId>:<actor>`.
+  @Index(unique: true, replace: true)
+  late String operationId;
+
+  /// `request` | `accept` | `reject`.
+  late String operationType;
+
+  /// Par canónico Phase 2.2.4 (min/max de los UUIDs de `users.id`).
+  @Index()
+  late String canonicalLow;
+
+  @Index()
+  late String canonicalHigh;
+
+  /// Actor (quien pidió / receiver que acepta-rechaza). UUID de `users.id`.
+  @Index()
+  late String actorUserId;
+
+  /// Solo `request`: el otro participante.
+  String? targetUserId;
+
+  /// Solo `accept`/`reject`: id del match en el servidor. Nulo hasta que el
+  /// servidor lo confirma (requests offline) o conocido (accept/reject de
+  /// filas ya sincronizadas).
+  String? serverMatchId;
+
+  /// `pending` | `inflight` | `failed`.
+  @Index()
+  late String state;
+
+  int retryCount = 0;
+
+  /// Próximo intento permitido (backoff). Nulo = procesable de inmediato.
+  DateTime? nextAttemptAt;
+
+  late DateTime createdAt;
+
+  /// Código corto de último fallo (`network`, `server`, `auth`, `malformed`,
+  /// `missing`, `state`, `conflict`). Nunca texto crudo de excepciones.
+  String? lastErrorCode;
 }

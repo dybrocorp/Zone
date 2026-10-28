@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'logger_service.dart';
+import 'match_pair.dart';
 import 'notification_service.dart';
 import '../utils/retry_helper.dart';
 import 'package:uuid/uuid.dart';
@@ -43,41 +44,24 @@ class SupabaseService {
   }
 
   /// Resuelve un token BT hacia el perfil del usuario (radar bilateral).
-  /// Usa RPC `resolve_bt_token` si está desplegado; si no, consulta directa.
+  ///
+  /// Z-212: SOLO vía RPC `resolve_bt_token` (SECURITY DEFINER, sesión exigida
+  /// y visibilidad aplicada server-side). Se eliminó el fallback de SELECT
+  /// directo sobre `bt_tokens`: dependía de una política amplia que exponía el
+  /// mapping token → user_id de todos los usuarios activos. Si la RPC no está
+  /// desplegada, la resolución falla cerrada (null), nunca insegura.
   Future<Map<String, dynamic>?> resolveToken(String token) async {
     if (token.isEmpty || token == 'ZONE-INIT') return null;
 
     try {
-      final rpcResult = await _supabase.rpc('resolve_bt_token', params: {'p_token': token});
-      if (rpcResult != null) {
-        return Map<String, dynamic>.from(rpcResult as Map);
-      }
+      final rpcResult =
+          await _supabase.rpc('resolve_bt_token', params: {'p_token': token});
+      if (rpcResult is! Map) return null;
+      return Map<String, dynamic>.from(rpcResult);
     } catch (e) {
-      _logger.debug('[SupabaseService] RPC resolve_bt_token no disponible, usando fallback: $e');
-    }
-
-    try {
-      final result = await _supabase
-          .from('bt_tokens')
-          .select('user_id, users!inner(*)')
-          .eq('token', token)
-          .gt('expires_at', DateTime.now().toUtc().toIso8601String())
-          .maybeSingle();
-
-      if (result == null) return null;
-
-      final user = Map<String, dynamic>.from(result['users'] as Map);
-      if (user['stealth_mode'] == true) return null;
-      
-      // Filtrar redes sociales según visibilidad
-      final filteredUser = Map<String, dynamic>.from(user);
-      if (user['ig_visible'] != true) filteredUser['instagram_handle'] = null;
-      if (user['fb_visible'] != true) filteredUser['facebook_handle'] = null;
-      if (user['tiktok_visible'] != true) filteredUser['tiktok_handle'] = null;
-      
-      return filteredUser;
-    } catch (e) {
-      _logger.debug('[SupabaseService] Error resolviendo token: $e');
+      _logger.debug(
+        '[SupabaseService] resolve_bt_token no disponible (fail-closed): $e',
+      );
       return null;
     }
   }
@@ -101,15 +85,39 @@ class SupabaseService {
   // ──────────────────────────────────────────────────────────
 
   /// Registra que el usuario vio a `otherZoneId` cerca.
-  Future<void> registerEncounter(String userId, String otherZoneId) async {
+  ///
+  /// PHASE 2.2.3 — con `encounterKey` se usa UPSERT sobre el conflicto
+  /// (`user_id`, `encounter_key`): reintentos y sincronizaciones repetidas no
+  /// crean filas nuevas (requiere la migración `z210_encounter_key.sql`).
+  /// Sin clave (filas históricas) se mantiene el INSERT clásico; el índice
+  /// horario existente sigue absorbiendo duplicados. RLS sin cambios.
+  ///
+  /// Z-212: devuelve `true` solo si el servidor aceptó la fila. Antes se
+  /// tragaba cualquier error y `_syncEncounters` marcaba el encuentro como
+  /// sincronizado aunque RLS/red lo hubieran rechazado (pérdida silenciosa).
+  Future<bool> registerEncounter(
+    String userId,
+    String otherZoneId, {
+    String? encounterKey,
+  }) async {
     try {
-      await _supabase.from('encounters').insert({
+      final row = {
         'user_id': userId,
         'other_zone_id': otherZoneId,
         'seen_at': DateTime.now().toUtc().toIso8601String(),
-      });
+      };
+      if (encounterKey != null && encounterKey.isNotEmpty) {
+        row['encounter_key'] = encounterKey;
+        await _supabase
+            .from('encounters')
+            .upsert(row, onConflict: 'user_id,encounter_key');
+      } else {
+        await _supabase.from('encounters').insert(row);
+      }
+      return true;
     } catch (e) {
-      // Ignorar duplicados horarios (índice único funcional)
+      _logger.debug('[SupabaseService] Error registrando encuentro: $e');
+      return false;
     }
   }
 
@@ -130,14 +138,59 @@ class SupabaseService {
   // ──────────────────────────────────────────────────────────
 
   /// Solicita un match con otro usuario para poder chatear.
+  ///
+  /// PHASE 2.2.4 — deterministic + duplicate-safe + retry-safe:
+  /// - CASE 1 (ninguno) → inserta pending, devuelve id válido.
+  /// - CASE 2/4 (reintento misma dirección / pending existente) → reutiliza.
+  /// - CASE 3 (B→A tras A→B) → MISMO match, sin duplicado (unicidad canónica
+  ///   `uq_matches_canonical_pair` + lookup bidireccional).
+  /// - CASE 5 (accepted) → reutiliza, NUNCA degrada a pending.
+  /// - CASE 6 (rejected) → elimina la fila rechazada y crea una nueva
+  ///   (re-request explícito; precede `deleteMatch` con cascada).
+  /// - Conflicto concurrente (el reverso ganó la carrera) → recupera el
+  ///   canónico existente y devuelve SU id. NULL solo ante fallo real.
+  /// `requester_id`/`receiver_id` conservan la dirección (quién acepta).
   Future<String?> requestMatch(String requesterId, String receiverId) async {
+    if (requesterId.trim().isEmpty ||
+        receiverId.trim().isEmpty ||
+        requesterId.trim() == receiverId.trim()) {
+      _logger.debug('[SupabaseService] requestMatch inválido (vacío/auto).');
+      return null;
+    }
     try {
-      final result = await _supabase.from('matches').insert({
-        'requester_id': requesterId,
-        'receiver_id': receiverId,
-        'status': 'pending',
-      }).select('id').single();
-      return result['id'] as String;
+      final existing = await getMatchStatus(requesterId, receiverId);
+      final decision = MatchPair.decide(
+        existing: existing,
+        requesterId: requesterId,
+        receiverId: receiverId,
+      );
+      switch (decision.action) {
+        case MatchRequestAction.reuse:
+          return decision.matchId;
+        case MatchRequestAction.recreate:
+          try {
+            await deleteMatch(decision.matchId!);
+          } catch (e) {
+            _logger.debug('[SupabaseService] No se pudo limpiar rejected: $e');
+          }
+          break;
+        case MatchRequestAction.create:
+          break;
+      }
+      try {
+        final result = await _supabase.from('matches').insert({
+          'requester_id': requesterId,
+          'receiver_id': receiverId,
+          'status': 'pending',
+        }).select('id').single();
+        return result['id'] as String;
+      } catch (e) {
+        // Conflicto (carrera reversa) o transitorio: recuperar el canónico.
+        _logger.debug('[SupabaseService] Insert en conflicto, recuperando: $e');
+        final recovered = await getMatchStatus(requesterId, receiverId);
+        final id = recovered?['id'] as String?;
+        return MatchPair.isValidMatchId(id) ? id : null;
+      }
     } catch (e) {
       _logger.debug('[SupabaseService] Error solicitando match: $e');
       return null;
@@ -146,12 +199,18 @@ class SupabaseService {
 
   /// Verifica el estado actual del match entre dos usuarios.
   /// Devuelve el objeto match si existe, o null si no hay interacción.
+  ///
+  /// PHASE 2.2.4 — independiente de la dirección: el `.or()` cubre ambas, y el
+  /// orden determinista (earliest primero, `limit(1)`) tolera filas históricas
+  /// duplicadas en lugar de lanzar como hacía `maybeSingle()` en solitario.
   Future<Map<String, dynamic>?> getMatchStatus(String userA, String userB) async {
     try {
       final res = await _supabase
           .from('matches')
           .select()
           .or('and(requester_id.eq.$userA,receiver_id.eq.$userB),and(requester_id.eq.$userB,receiver_id.eq.$userA)')
+          .order('created_at', ascending: true)
+          .limit(1)
           .maybeSingle();
       return res;
     } catch (e) {
@@ -160,20 +219,72 @@ class SupabaseService {
     }
   }
 
-  /// Acepta un match pendiente.
-  Future<void> acceptMatch(String matchId) async {
-    await _supabase
-        .from('matches')
-        .update({'status': 'accepted'})
-        .eq('id', matchId);
+  /// Obtiene un match por id (legible solo por participantes vía RLS).
+  /// PHASE 2.2.5: el replay del outbox lo usa para clasificar fallos
+  /// (ausente ⇒ terminal; presente ⇒ re-chequear autorización/estado).
+  Future<Map<String, dynamic>?> getMatchById(String matchId) async {
+    try {
+      final res = await _supabase
+          .from('matches')
+          .select()
+          .eq('id', matchId)
+          .maybeSingle();
+      return res;
+    } catch (e) {
+      _logger.debug('[SupabaseService] Error obteniendo match: $e');
+      return null;
+    }
   }
 
-  /// Rechaza un match pendiente.
-  Future<void> rejectMatch(String matchId) async {
-    await _supabase
-        .from('matches')
-        .update({'status': 'rejected'})
-        .eq('id', matchId);
+  /// Acepta un match pendiente. Solo el receiver (espejo client-side de RLS;
+  /// RLS sigue siendo autoritativo). Idempotente: un accepted existente
+  /// devuelve true sin reescribir. Devuelve false si no hay fila, no hay
+  /// autorización o falla la operación — nunca lanza (los llamadores UI no
+  /// capturan excepciones aquí).
+  Future<bool> acceptMatch(String matchId) async {
+    try {
+      final me = _supabase.auth.currentUser?.id;
+      final row = await _supabase
+          .from('matches')
+          .select('id,requester_id,receiver_id,status')
+          .eq('id', matchId)
+          .maybeSingle();
+      if (row == null || me == null) return false;
+      if (!MatchPair.canAccept(row, me)) return false;
+      if (row['status'] == 'accepted') return true;
+      await _supabase
+          .from('matches')
+          .update({'status': 'accepted'})
+          .eq('id', matchId);
+      return true;
+    } catch (e) {
+      _logger.debug('[SupabaseService] Error aceptando match: $e');
+      return false;
+    }
+  }
+
+  /// Rechaza un match. Solo el receiver (espejo de RLS). Idempotente y sin
+  /// excepciones, igual que [acceptMatch].
+  Future<bool> rejectMatch(String matchId) async {
+    try {
+      final me = _supabase.auth.currentUser?.id;
+      final row = await _supabase
+          .from('matches')
+          .select('id,requester_id,receiver_id,status')
+          .eq('id', matchId)
+          .maybeSingle();
+      if (row == null || me == null) return false;
+      if (!MatchPair.canReject(row, me)) return false;
+      if (row['status'] == 'rejected') return true;
+      await _supabase
+          .from('matches')
+          .update({'status': 'rejected'})
+          .eq('id', matchId);
+      return true;
+    } catch (e) {
+      _logger.debug('[SupabaseService] Error rechazando match: $e');
+      return false;
+    }
   }
 
   /// Elimina un match y sus mensajes (cascada).
@@ -323,27 +434,32 @@ class SupabaseService {
   /// Envía múltiples mensajes en lote (para cola offline / outbox Z-007).
   /// IDEMPOTENTE: cada mensaje lleva su id PK estable (UUID v4 generado por el
   /// CLIENTE una sola vez). En los reintentos se reutiliza el MISMO id → el
-  /// upsert con ON CONFLICT (id) DO NOTHING lo convierte en no-op. Sin esto un
-  /// reintento duplicaría el mensaje (auditoría Z-DUP-*).
-  Future<int> sendMessagesBatch(List<Map<String, dynamic>> messages) async {
-    int sent = 0;
+  /// upsert con ON CONFLICT (id) DO NOTHING lo convierte en no-op.
+  ///
+  /// Devuelve el conjunto de `id`s confirmados por el servidor. El llamador
+  /// debe borrar del outbox SOLO esos ids (antes se asumía que los primeros N
+  /// habían entrado, perdiendo mensajes cuando un fallo era no contiguo).
+  Future<Set<String>> sendMessagesBatch(
+    List<Map<String, dynamic>> messages,
+  ) async {
+    final sent = <String>{};
     for (final msg in messages) {
+      final id = msg['id'];
+      if (id is! String || id.isEmpty) continue;
       final result = await RetryHelper.withRetry<bool>(
         () async {
-          // PostgREST `upsert` con onConflict('id') → INSERT ... ON CONFLICT (id)
-          // DO NOTHING cuando el payload ya incluye 'id' (cliente estable).
+          // PostgREST `upsert` + ignoreDuplicates → ON CONFLICT (id) DO NOTHING.
           await _supabase.from('messages').upsert(
             msg,
             onConflict: 'id',
-            // ignoreDuplicates solo aplica si el servidor genera el id; aquí el
-            // id lo genera el cliente, así que el conflicto cae en DO NOTHING.
+            ignoreDuplicates: true,
           );
           return true;
         },
         maxRetries: 3,
         label: 'batch_msg',
       );
-      if (result == true) sent++;
+      if (result == true) sent.add(id);
     }
     return sent;
   }
@@ -370,7 +486,11 @@ class SupabaseService {
         'mac': mac,
         'created_at': DateTime.now().toUtc().toIso8601String(),
       };
-      await _supabase.from('messages').upsert(payload, onConflict: 'id');
+      await _supabase.from('messages').upsert(
+        payload,
+        onConflict: 'id',
+        ignoreDuplicates: true,
+      );
       return true;
     } catch (e) {
       _logger.debug('[SupabaseService] Error enviando mensaje idempotente: $e');

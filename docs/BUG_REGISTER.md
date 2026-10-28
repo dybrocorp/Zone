@@ -17,8 +17,10 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Riesgo:** Crítico (compromiso total de cuenta, robo de identidad, spam/abuso).
 - **Solución (FASE 1.2 aplicada — Opción 3 Fase A, decisión CTO):** (a) `REVOKE` de `anon`/`PUBLIC` en `claim_zone_id` y `verify_zone_id`; solo `authenticated`. (b) `claim_zone_id` endurecido: formato estricto `^ZONE-[A-Z0-9]{8}$`, rate-limit (máx 5 fallos/15 min por zone_id, tabla `zone_claim_attempts`), **ya NO escribe `public_key`**, idempotente y auditado. (c) Cliente: las llamadas al RPC ya no envían `p_public_key`; se detiene la rotación silenciosa de clave en `ensureAuth` (276-302) y `checkAndFixRegistration` (388-391); `updateProfile` preserva la clave archivada (436-455); validación fail-fast `isValidZoneIdFormat`. (d) Fase B (siguiente iteración, pendiente de CTO): identidad de firma **Ed25519** (las claves actuales son X25519/ECDH y no firman) + códigos de recuperación + `update_public_key` firmado + transfer firmado.
 - **Dependencias:** Z-103 (verify_zone_id, mismo lote), Z-207 (ensureAuth).
-- **Prueba:** ✅ `flutter test` 5/5 (incluye `test/zone_id_format_test.dart`); ✅ `flutter analyze` sin findings nuevos; SQL con 7 pruebas de verificación documentadas en `supabase_migrations/secure_claim_zone_id.sql` (anon→403, formato, rate-limit, claim no altera public_key, idempotencia, sin oráculo).
-- **Estado:** ✅ **REMOTE_APPLIED + VERIFIED (2026-09-23).** Migración `secure_claim_zone_id.sql` aplicada en remoto en transacción atómica (Management API con PAT): ACL finales de `claim_zone_id(text)` y `verify_zone_id(text)` = solo `postgres`/`authenticated`/`service_role` (**anon fuera**); variante 2-arg `(text,text)` **DROPEADA**; `zone_claim_attempts` con RLS y sin acceso anon/auth. Pruebas en vivo: `SET ROLE anon` → 42501 permission denied en claim y verify; doble compuerta activa (`SET ROLE authenticated` sin JWT → "Se requiere sesión autenticada"). Rate-limit/registro de intentos por inspección de definición (requiere JWT real).
+- **Prueba (corregida 2026-10-23):** ✅ `flutter analyze` PASS; ✅ `test/sql_security_regression_test.dart` (3/3): ningún SQL ejecutable reescribe `users.id`, todas las definiciones de `claim_zone_id` instalan cuarentena, y los controles Z-212 siguen en esquema/deploy. ✅ SQL Z-212 conductual en PostgreSQL 18.4 aislado (`supabase_migrations/tests/z212_behavioral_test.sql`, incluida segunda ejecución). ⚠️ Las 7 pruebas históricas de claim de `secure_claim_zone_id.sql` ya no aplican: el claim está en cuarentena; su comportamiento actual es fallar cerrado.
+- **Estado (corregido 2026-10-23 — Fase A):** ⚠️ **P0 REABIERTO / NO VERIFICADO EN REMOTO.** La entrada anterior declaraba `REMOTE_APPLIED + VERIFIED (2026-09-23)`, pero esa verificación cubría ACL, formato y rate-limit, **no** la prueba de posesión: el cuerpo de `claim_zone_id` seguía ejecutando `UPDATE public.users SET id = auth.uid()` sin challenge firmado (presente en `secure_claim_zone_id.sql`, `z002_profile_visibility.sql`, `supabase_schema.sql` y `supabase_deploy.sql`). Un usuario autenticado podía seguir reclamando un ZONE-ID ajeno; la etiqueta `VERIFIED` era incorrecta para el control P0. **Estado local actual:** cuarentena fail-closed en esquema, deploy y Z-212; las migraciones históricas re-aplicadas instalan la cuarentena (no el UPDATE); guard estático `test/sql_security_regression_test.dart`. **Pendiente:** aplicar Z-212 en staging con autorización explícita y validar con JWT/RLS reales. Hasta entonces el control NO está verificado en remoto.
+- **Fase F (2026-10-23):** alternativas A (recuperación con prueba de posesión) y B (nueva identidad por dispositivo) documentadas en `docs/audit/PHASE_F_EXISTING_USER_LOGIN.md`, con modelos de amenaza y decisión de producto pendiente. La cuarentena se mantiene; no se reabre el claim.
+- **Historial (2026-09-23, evidencia parcial de ACL — no de posesión):** Migración `secure_claim_zone_id.sql` aplicada en remoto en transacción atómica (Management API con PAT): ACL finales de `claim_zone_id(text)` y `verify_zone_id(text)` = solo `postgres`/`authenticated`/`service_role` (**anon fuera**); variante 2-arg `(text,text)` **DROPEADA**; `zone_claim_attempts` con RLS y sin acceso anon/auth. Pruebas en vivo: `SET ROLE anon` → 42501 permission denied en claim y verify; doble compuerta activa (`SET ROLE authenticated` sin JWT → "Se requiere sesión autenticada"). Rate-limit/registro de intentos por inspección de definición (requiere JWT real).
 
 ### Z-002 · RLS SELECT de `users` filtra TODAS las columnas a cualquier autenticado
 - **Severidad:** P0
@@ -29,9 +31,10 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Riesgo:** Alto (incumplimiento GDPR/ley 1581, doxxing).
 - **Solución:** Exponer perfiles solo vía RPC/vista que devuelva NULL en handles con `*_visible=false`, oculte `gallery_photos`, `public_key` según política; aplicar filtro server-side de `blocked_users` en la query; mínimo privilegio en SELECT.
 - **Dependencias:** Z-104 (resolve_bt_token), Z-111 (bucket público).
-- **Prueba:** SQL test (en `z002_profile_visibility.sql`): anon→denied en vista; users self-scoped; `instagram_handle` NULL si `ig_visible=false`; avatar/galería NULL si `avatar_is_public=false`; bloqueo bidireccional invisible; claim devuelve jsonb.
-- **Solución (FASE 1.3 implementada — decisión CTO A + vista v_profile):** RLS `users` SELECT self-scoped (`auth.uid() = id`); nueva vista `public.v_profile` (semántica owner p/ filtrar server-side: shadowban, bloqueos bidireccionales, NULIFICA avatar/galería si `avatar_is_public=false` y handles si `*_visible=false`) como ÚNICO camino de lectura de terceros; `claim_zone_id` → RETURNS jsonb (perfil completo tras reclamo, evita releer `users` en login); cliente: 4 lecturas de terceros → `v_profile`, sin bypass mesh en `public_profile_sheet` (avatares galería estrictos).
-- **Estado:** ✅ **REMOTE_APPLIED + VERIFIED (2026-09-23).** Migración `z002_profile_visibility.sql` aplicada en remoto (tx atómica, tras corregir incidente de encoding — ver `CTO_REVIEW_REQUIRED §8`). Verificado en vivo: `SET ROLE authenticated` (sin sesión) ve **0 filas ajenas** de `users` (self-scope, la policy histórica `"Ver perfiles públicos"` quedó ELIMINADA); políticas finales de `users` = solo 3 self-scoped; `v_profile` accesible solo por `authenticated` con **SELECT exclusivamente** (revocado el `arwdDxtm` heredado de default privileges) y gating server-side confirmado por definición.
+- **Prueba (corregida 2026-10-23):** SQL test en `z002_profile_visibility.sql`: anon→denied en vista; users self-scoped; `instagram_handle` NULL si `ig_visible=false`; avatar/galería NULL si `avatar_is_public=false`; bloqueo bidireccional invisible. ⚠️ El caso histórico "claim devuelve jsonb" ya no aplica: el claim está en cuarentena fail-closed (Z-212).
+- **Solución (FASE 1.3 implementada — decisión CTO A + vista v_profile; claim superseded por Z-212):** RLS `users` SELECT self-scoped (`auth.uid() = id`); nueva vista `public.v_profile` (semántica owner p/ filtrar server-side: shadowban, bloqueos bidireccionales, NULIFICA avatar/galería si `avatar_is_public=false` y handles si `*_visible=false`) como ÚNICO camino de lectura de terceros; `claim_zone_id` → RETURNS jsonb (histórico; hoy cuarentena fail-closed, no devuelve perfil); cliente: 4 lecturas de terceros → `v_profile`, sin bypass mesh en `public_profile_sheet` (avatares galería estrictos).
+- **Estado (corregido 2026-10-23 — Fase A):** ⚠️ **REMOTE_APPLIED reportado (2026-09-23); NO RE-VERIFICADO en esta sesión.** La verificación histórica cubría visibilidad de perfiles (self-scope + `v_profile`) y se conserva abajo como evidencia parcial. **Discrepancia:** esa misma migración redefinía `claim_zone_id` con `UPDATE public.users SET id = auth.uid()` (account takeover), por lo que no podía considerarse un control P0 verificado. **Estado local actual:** el archivo histórico instala ahora la cuarentena Z-212; esquema/deploy canónicos mantienen `v_profile` self-scoped. **Pendiente:** validación en staging con JWT/RLS reales antes de declarar VERIFIED.
+- **Historial (2026-09-23, evidencia parcial de visibilidad):** Migración `z002_profile_visibility.sql` aplicada en remoto (tx atómica, tras corregir incidente de encoding — ver `CTO_REVIEW_REQUIRED §8`). Verificado en vivo: `SET ROLE authenticated` (sin sesión) ve **0 filas ajenas** de `users` (self-scope, la policy histórica `"Ver perfiles públicos"` quedó ELIMINADA); políticas finales de `users` = solo 3 self-scoped; `v_profile` accesible solo por `authenticated` con **SELECT exclusivamente** (revocado el `arwdDxtm` heredado de default privileges) y gating server-side confirmado por definición.
 
 ### Z-003 · Mesh envía mensajes EN CLARO si no hay llave de sesión
 - **Severidad:** P0
@@ -47,15 +50,19 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 
 ### Z-004 · Conexiones P2P aceptadas sin autenticación (spoofing de `source`)
 - **Severidad:** P0
-- **Archivo:** `lib/services/nearby_service.dart:760-763` (`_onConnectionInitiated` → `acceptConnection` inmediato), `810-814`, y `1062-1088`
-- **Problema:** Toda conexión entrante es aceptada sin verificar identidad del peer (firma/desafío). El campo `packet['source']` es un string libre que el emisor declara (`'source': _myZoneId` en 1013); cualquier dispositivo puede hacerse pasar por otra zona. El bloqueo de mensajes depende solo de que exista un perfil local para `source`.
-- **Impacto:** Suplantación de identidad, inyección de mensajes falsos en nombre de otros usuarios, abuso del "match previo" gating, spam en malla.
+- **Archivo:** `lib/services/nearby_service.dart:905-907` (`_onConnectionInitiated` → `acceptConnection` inmediato), `1088-1145` (`profile_exchange` + `deriveSessionKey` sin firma), `1325` (`source` libre), `1399-1404` (confianza en `packet.source`).
+- **Problema:** Toda conexión entrante es aceptada sin verificar identidad del peer (firma/desafío). El campo `packet['source']` es un string libre que el emisor declara; cualquier dispositivo puede hacerse pasar por otra zona. El bloqueo de mensajes depende solo de que exista un perfil local para `source`. Además, la clave X25519 de sesión se toma de un `profile_exchange.publicKey` no firmado y el primer contacto es TOFU sin verificación fuera de banda.
+- **Impacto:** Suplantación de identidad, inyección de mensajes falsos en nombre de otros usuarios, MITM en la derivación de sesión, abuso del "match previo" gating, spam en malla.
 - **Causa raíz:** Modelo de confianza implícita de Nearby Connections; no hay handshake criptográfico.
 - **Riesgo:** Alto.
-- **Solución:** Handshake firmado (Ed25519) con challenge/nonce entre pares antes de aceptar; vincular `endpointId` ↔ `zone_id` verificada; revocar automáticamente si la firma falla.
+- **Solución:** Handshake firmado (Ed25519) con challenge/nonce entre pares antes de aceptar; vincular `endpointId` ↔ `zone_id` verificada; anclar identidad y clave X25519 en el primer contacto con fingerprint OOB; revocar automáticamente si la firma falla.
 - **Dependencias:** Z-003, Z-005.
 - **Prueba:** El `endpoint` falsifica `source` → debe rechazarse.
-- **Estado:** ABIERTO — FASE 1 pendiente.
+- **Estado:** **ABIERTO — diseño Fase E completado; integración pendiente (Fase G).**
+  - Contrato de verificación puro: `lib/services/p2p_auth_policy.dart` (`ZONE-P2P-AKE-1`), sin ECDH/KDF y **no cableado** en `NearbyService`.
+  - Tests negativos: `test/p2p_auth_negative_test.dart` — **24/24 PASS** (sustitución de clave, identidad errónea, replay, transcript modificado, revocación, negociación incompleta, reutilización de sesión, rollback/rotación, TTL).
+  - Diseño y modelo de amenazas: `docs/audit/PHASE_E_P2P_AUTH_DESIGN.md`.
+  - La producción **sigue vulnerable** hasta que Fase G integre el handshake, HKDF/AAD y el ratchet.
 
 ### Z-005 · `msgId` = epoch milis + dedup con reinicio a 500 → colisiones y replay
 - **Severidad:** P0
@@ -119,7 +126,11 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** Implementar ratchet (ej. Signal ratchet con keys efímeras intermedias) o al menos rotación DH efímera por mensaje; corregir docs; añadir KDF con estado (contador) para nonces.
 - **Dependencias:** Z-003, Z-102.
 - **Prueba:** Vectors criptográficos: dos ratchets convergen; claves comprometidas no descifran mensajes pasados (FS).
-- **Estado:** ABIERTO — FASE 1 pendiente.
+- **Estado (corregido 2026-10-23 — Fase G):** **ABIERTO — diseño completado, implementación pendiente.**
+  - Auditoría y especificación en `docs/audit/PHASE_G_E2EE_KEY_ESTABLISHMENT.md`: confirma que el secreto X25519 crudo se usa como clave AEAD, sin HKDF, AAD ni ratchet, y que cloud y mesh cifran por caminos separados.
+  - Migración propuesta v1 (actual) → v2 (HKDF+AAD) → v3 (handshake autenticado) → v4 (ratchet), con compatibilidad de historial v1 y sin downgrade silencioso.
+  - No se implementó criptografía nueva ni se cambió `chat_e2ee_service.dart`; el comentario falso de `chat_e2ee_service.dart:59` sigue presente y debe retirarse.
+  - El gate de beta sigue **NO-GO**.
 
 ### Z-102 · Pérdida local de clave → se empuja clave nueva al servidor rompiendo mensajes pasados
 - **Severidad:** P1
@@ -143,7 +154,8 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución (FASE 1.2 aplicada — mismo lote que Z-001):** `verify_zone_id` endurecido: `REVOKE` de `anon`/`PUBLIC` (solo `authenticated`), formato estricto, rate-limit compartido (`zone_claim_attempts`) y **ya no expone `id` ni `zone_id`** (devuelve `{exists, display_name, avatar_url}`). La función queda disponible solo para el flujo login autenticado.
 - **Dependencias:** Z-001.
 - **Prueba:** ✅ `flutter analyze` sin findings nuevos; SQL: prueba 1 y 7 del bloque de verificación de `supabase_migrations/secure_claim_zone_id.sql`.
-- **Estado:** ✅ **REMOTE_APPLIED + VERIFIED (2026-09-23).** Oráculo cerrado en producción: `verify_zone_id` sin GRANT anon (anon → 42501 en vivo); la función ahora solo devuelve `{exists, display_name, avatar_url}` (sin `id`/`zone_id`) y comparte rate-limit con `claim`. Payload confirmado por `pg_get_functiondef`.
+- **Estado (corregido 2026-10-23 — Fase A):** ⚠️ **REMOTE_APPLIED reportado (2026-09-23); NO RE-VERIFICADO en esta sesión.** El endurecimiento de ACL/formato/payload está presente en el código local, pero la verificación remota no es reproducible sin una instancia identificada y pruebas JWT reales. Además, el mismo lote incluía el `claim_zone_id` vulnerable (ver Z-001), por lo que el lote no puede declararse íntegramente VERIFIED. **Pendiente:** validación en staging tras aplicar Z-212.
+- **Historial (2026-09-23, evidencia parcial):** Oráculo cerrado según la verificación de entonces: `verify_zone_id` sin GRANT anon (anon → 42501 en vivo); la función ahora solo devuelve `{exists, display_name, avatar_url}` (sin `id`/`zone_id`) y comparte rate-limit con `claim`. Payload confirmado por `pg_get_functiondef`.
 
 ### Z-104 · `resolve_bt_token` expuesto a anon; `used` nunca se marca
 - **Severidad:** P1
@@ -327,7 +339,8 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** Policy UPDATE/DELETE limitada a participantes del match aceptado.
 - **Dependencias:** Z-105.
 - **Prueba:** SQL: UPDATE desde participante → OK; tercero → denegado.
-- **Estado:** ✅ **CERRADO (FASE 1.6, 2026-09-23).** Misma migración `z106_z206_policies.sql`: policies `"Actualizar mensaje con match aceptado"` (UPDATE) y `"Eliminar mensaje con match aceptado"` (DELETE) en `messages`, limitadas a participantes de un match `accepted` (semántica server-side idéntica a las RPC Z-007). Aplicada y verificada en remoto: `pg_policies` muestra UPDATE/DELETE nuevas con roles `{authenticated}`; anon bloqueado; baselines consolidados.
+- **Estado (corregido 2026-10-23 — Fase A):** 🔄 **SUPERSEDED PARCIALMENTE por Z-212.** La policy UPDATE directa añadida en FASE 1.6 fue **eliminada**: los receipts (`delivered_at`/`read_at`) se actualizan solo vía RPC Z-007 (`mark_message_delivered`/`mark_messages_read`, `SECURITY DEFINER` con gate `auth.uid()` + match aceptado) y un trigger de columnas inmutables bloquea cualquier otro cambio. La policy DELETE de participantes se conserva. La verificación remota de 2026-09-23 no cubre Z-212 y no se declara vigente; pendiente staging.
+- **Historial (2026-09-23, evidencia parcial):** Misma migración `z106_z206_policies.sql`: policies `"Actualizar mensaje con match aceptado"` (UPDATE) y `"Eliminar mensaje con match aceptado"` (DELETE) en `messages`, limitadas a participantes de un match `accepted`. Aplicada y verificada en remoto: `pg_policies` mostraba UPDATE/DELETE nuevas con roles `{authenticated}`; anon bloqueado; baselines consolidados.
 
 ### Z-207 · `ensureAuth` reclama zone_id en cada arranque con payload roto
 - **Severidad:** P2
@@ -339,7 +352,7 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 - **Solución:** Reclamar solo tras login explícito (login_screen), con prueba criptográfica; quitar el auto-claim del arranque.
 - **Dependencias:** Z-001.
 - **Prueba:** Sin login, un dispositivo nuevo no puede adueñarse del ID; logs limpios.
-- **Estado:** ✅ **CERRADO (FASE 1.6, 2026-09-23).** Eliminado el bloque de auto-claim de `ensureAuth` (`lib/services/zone_id_service.dart`): el arranque ya NO invoca `claim_zone_id` con el ID local como única prueba. El claim queda solo en el login explícito (`loginWithExistingID` → RPC `claim_zone_id` con formato + rate-limit, endurecido en FASE 1.2). Nota: aún resta la Fase B (identidad Ed25519 + firma) para la prueba criptográfica de posesión — ver Z-001/REMEDIATION_PLAN.
+- **Estado (corregido 2026-10-23 — Fase A):** ✅ **CERRADO en cuanto al auto-claim (FASE 1.6, 2026-09-23).** Eliminado el bloque de auto-claim de `ensureAuth` (`lib/services/zone_id_service.dart`): el arranque ya NO invoca `claim_zone_id` con el ID local como única prueba. ⚠️ **Actualización Z-212:** el claim explícito del login también está en cuarentena fail-closed; ningún usuario puede reclamar un ZONE-ID hasta que se apruebe e implemente una prueba de posesión (Fase F). Esto bloquea el login de usuarios existentes por diseño, no por regresión.
 
 ### Z-208 · Radar: endpoints `CACHE:`/`GLOBAL:` esperados por la UI nunca se emiten
 - **Severidad:** P2
@@ -457,4 +470,4 @@ Toda "Solución" es propuesta de FASE 1, **pendiente de autorización**.
 | P3 | 8 | Z-301 … Z-308 |
 | **Total** | **37** | |
 
-*Registro completo — auditoría FASE 0, sin correcciones aplicadas.*
+*Registro histórico — auditoría FASE 0. Las correcciones y su estado real se registran en cada entrada; el gate vigente está en `docs/audit/BETA_READINESS_GATE.md`.*

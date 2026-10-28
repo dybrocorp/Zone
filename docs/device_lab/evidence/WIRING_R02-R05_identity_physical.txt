@@ -1,0 +1,55 @@
+====================================================================
+ZONE — IDENTITY RUNTIME WIRING SLICE — EVIDENCIA FÍSICA R02-R05
+Fecha: 2026-09-25  |  Dispositivo: HA26RCFN (LENOVO TB305FU, Android 15/API 35)
+APK: build\app\outputs\flutter-apk\app-debug.apk (recién generada, NO stale)
+Instalación: adb install -r (in-place, actualización 1.0.4+5)
+====================================================================
+
+PRIMER ARRANQUE (CREATE) — PID 9398 — logcat:
+[IdentityBootstrap] OK account_id=b0a7d2e8-0ab1-4bf4-a441-dd5c06a1b45b
+device_id=ac084448-b1fa-4ee0-a870-dd931e0d24f3 device_status=pending
+account_fingerprint=PV-UF64642AMJ-2G5RXH
+device_fingerprint=6JH2FDBTSUAGJCUGWB4G
+migration_state=legacy account_created=true device_created=true
+
+SEGUNDO ARRANQUE (LOAD) — PID 9871 — logcat:
+[IdentityBootstrap] OK account_id=b0a7d2e8-0ab1-4bf4-a441-dd5c06a1b45b
+device_id=ac084448-b1fa-4ee0-a870-dd931e0d24f3 device_status=pending
+account_fingerprint=PV-UF64642AMJ-2G5RXH
+device_fingerprint=6JH2FDBTSUAGJCUGWB4G
+migration_state=legacy account_created=false device_created=false
+
+====================================================================
+COMPARATIVA (idempotencia física)
+--------------------------------------------------------------------
+account_id            b0a7d2e8-0ab1-4bf4-a441-dd5c06a1b45b  IGUAL
+device_id             ac084448-b1fa-4ee0-a870-dd931e0d24f3  IGUAL
+device_status         pending                              IGUAL
+account_fingerprint   PV-UF64642AMJ-2G5RXH                  IGUAL
+device_fingerprint    6JH2FDBTSUAGJCUGWB4G                  IGUAL
+migration_state       legacy                                IGUAL
+account_created       1er true -> 2º false  (CREATE -> LOAD)
+device_created        1er true -> 2º false  (sin regeneración)
+====================================================================
+
+PERSISTENCIA FÍSICA (run-as find *.isar):
+/data/user/0/com.dybrocorp.zone/app_flutter/zone_identity.isar       [1 MB]
++ zone_identity.isar.lock
+(default.isar NO presente tras el update in-place — el instalador recrea
+app_flutter/ durante la actualización. No es borrado por código de Zone;
+la base legacy se recrea al correr el flujo legacy con backend configurado)
+
+ALMACÉN SEGURO (shared_prefs):
+FlutterSecureKeyStorage.xml + FlutterSecureStorage.xml presentes
+(seeds de identidad NEW FOUNDATION almacenadas seguras, sin valores en logs)
+
+VEREDICTOS
+R02 Identity Initialization ............ PASS
+R03 Account Persistence (reinicio) ..... PASS  (account_id estable)
+R04 Device Identity .................... PASS  (device_id + device pending + fingerprint)
+R05 Device Fingerprint ................. PASS  (fingerprint_before == fingerprint_after)
+R01 Regression (enfoque/app viva/sin crash) PASS  (PID 9871 estable +100s, crash buffer vacío)
+
+SIN SECRETOS EN LOGS: solo account_id, device_id, fingerprints, estados.
+MIGRACIÓN: no ejecutada (estado read-only 'legacy', ningún evento aplicado).
+====================================================================

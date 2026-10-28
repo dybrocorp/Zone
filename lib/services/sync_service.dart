@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'match_outbox_processor.dart';
 import 'supabase_service.dart';
 import 'isar_service.dart';
 import 'connectivity_service.dart';
@@ -11,6 +12,8 @@ class SyncStatus {
   final SyncState state;
   final int pendingMessages;
   final int pendingEncounters;
+  final int pendingMatchOps;
+  final int failedMatchOps;
   final String? error;
   final DateTime? lastSyncAt;
 
@@ -18,6 +21,8 @@ class SyncStatus {
     this.state = SyncState.idle,
     this.pendingMessages = 0,
     this.pendingEncounters = 0,
+    this.pendingMatchOps = 0,
+    this.failedMatchOps = 0,
     this.error,
     this.lastSyncAt,
   });
@@ -54,7 +59,8 @@ class SyncService {
     _connectivitySub = _connectivity.statusStream.listen((isOnline) {
       if (isOnline) {
         _logger.debug('[SyncService] ONLINE detectado — sync inmediato');
-        syncNow();
+        // PHASE 2.2.5: reconexión = señal fresca → el outbox ignora backoff.
+        syncNow(urgent: true);
       }
     });
 
@@ -71,7 +77,7 @@ class SyncService {
     });
   }
 
-  Future<void> syncNow() async {
+  Future<void> syncNow({bool urgent = false}) async {
     if (_isSyncing || !_connectivity.isOnline) return;
     _isSyncing = true;
     _emitStatus(state: SyncState.syncing);
@@ -80,6 +86,9 @@ class SyncService {
     try {
       await _flushPendingMessages();
       await _syncEncounters();
+      // PHASE 2.2.5: replay convergente del outbox de matches (no regresa
+      // encounters/mensajes; serie dentro del mismo ciclo, sin paralelismo).
+      await _syncMatchOutbox(ignoreBackoff: urgent);
       await _pullRemoteProfiles();
       await _syncMessages();
       _consecutiveFailures = 0;
@@ -102,10 +111,13 @@ class SyncService {
   }) async {
     final pending = await _isar.getPendingMessages();
     final unsyncedEnc = await _isar.getUnsyncedEncounters();
+    final store = IsarMatchOperationStore(_isar);
     _currentStatus = SyncStatus(
       state: state ?? _currentStatus.state,
       pendingMessages: pending.length,
       pendingEncounters: unsyncedEnc.length,
+      pendingMatchOps: await store.pendingCount(),
+      failedMatchOps: await store.failedCount(),
       error: error ?? (state == SyncState.error ? _currentStatus.error : null),
       lastSyncAt: lastSyncAt ?? _currentStatus.lastSyncAt,
     );
@@ -132,14 +144,16 @@ class SyncService {
       'created_at': p.createdAt.toUtc().toIso8601String(),
     }).toList();
 
-    final sent = await _supabase.sendMessagesBatch(batch);
-    _logger.debug('[SyncService] $sent/${pending.length} mensajes enviados');
+    final sentIds = await _supabase.sendMessagesBatch(batch);
+    _logger.debug(
+      '[SyncService] ${sentIds.length}/${pending.length} mensajes enviados',
+    );
 
-    for (var i = 0; i < pending.length; i++) {
-      if (i < sent) {
-        await _isar.deletePendingMessage(pending[i].tempId);
+    for (final p in pending) {
+      if (sentIds.contains(p.messageId)) {
+        await _isar.deletePendingMessage(p.tempId);
       } else {
-        await _isar.incrementRetryCount(pending[i].tempId);
+        await _isar.incrementRetryCount(p.tempId);
       }
     }
   }
@@ -153,10 +167,46 @@ class SyncService {
     _logger.debug('[SyncService] Sincronizando ${unsynced.length} encuentros...');
     for (final enc in unsynced) {
       final ok = await _supabaseWithRetry(
-        () => _supabase.registerEncounter(enc.userId, enc.otherZoneId),
+        // PHASE 2.2.3 — la clave canónica viaja con la fila: el UPSERT remoto
+        // sobre (user_id, encounter_key) converge sin duplicados aunque A
+        // estuviera offline y B online. Filas históricas (clave nula) usan el
+        // INSERT clásico, legibles como antes.
+        () async {
+          final accepted = await _supabase.registerEncounter(
+            enc.userId,
+            enc.otherZoneId,
+            encounterKey: enc.encounterKey,
+          );
+          if (!accepted) {
+            throw StateError('registerEncounter rechazado');
+          }
+        },
         label: 'encounter_${enc.id}',
       );
       if (ok) await _isar.markEncounterSynced(enc.id);
+    }
+  }
+
+  // ─── PUSH: Match outbox (PHASE 2.2.5) ──────────────────────
+
+  Future<void> _syncMatchOutbox({bool ignoreBackoff = false}) async {
+    try {
+      final summary = await MatchOutboxProcessor.processAll(
+        store: IsarMatchOperationStore(_isar),
+        backend: LiveMatchOutboxBackend(_supabase),
+        isOnline: () async => _connectivity.isOnline,
+        clock: DateTime.now,
+        ignoreBackoff: ignoreBackoff,
+      );
+      if (summary.processed > 0) {
+        _logger.debug(
+          '[SyncService] Match outbox: ${summary.processed} procesadas, '
+          '${summary.completed} completadas, ${summary.retried} reintentables, '
+          '${summary.failedTerminal} terminales.',
+        );
+      }
+    } catch (e) {
+      _logger.debug('[SyncService] Error en match outbox: $e');
     }
   }
 
@@ -170,13 +220,19 @@ class SyncService {
     for (final msg in unsynced) {
       if (msg.matchId.isEmpty) continue;
       final ok = await _supabaseWithRetry(
-        () => _supabase.sendMessage(
-          matchId: msg.matchId,
-          senderId: msg.senderId,
-          encryptedContent: msg.encryptedContent,
-          nonce: msg.nonce,
-          mac: msg.mac,
-        ),
+        () async {
+          final accepted = await _supabase.sendMessageIdempotent(
+            messageId: msg.messageId,
+            matchId: msg.matchId,
+            senderId: msg.senderId,
+            encryptedContent: msg.encryptedContent,
+            nonce: msg.nonce,
+            mac: msg.mac,
+          );
+          if (!accepted) {
+            throw StateError('sendMessageIdempotent rechazado');
+          }
+        },
         label: 'msg_${msg.id}',
       );
       if (ok) await _isar.markMessageSynced(msg.id);
@@ -192,12 +248,18 @@ class SyncService {
 
       _logger.debug('[SyncService] Pull ${recentProfiles.length} perfiles remotos...');
       int merged = 0;
+      final now = DateTime.now().toUtc();
+      final maxFuture = now.add(const Duration(minutes: 5));
       for (final profile in recentProfiles) {
         final local = await _isar.getProfileByUserId(profile['id']);
-        final remoteUpdated = profile['updated_at'] != null
-            ? DateTime.parse(profile['updated_at'])
-            : DateTime.parse(profile['created_at'] ?? DateTime.now().toIso8601String());
-        final localUpdated = local?.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final rawUpdated = profile['updated_at'] ?? profile['created_at'];
+        var remoteUpdated = rawUpdated is String
+            ? (DateTime.tryParse(rawUpdated)?.toUtc() ?? now)
+            : now;
+        // Un timestamp remoto futuro lejano no debe ganar el LWW para siempre.
+        if (remoteUpdated.isAfter(maxFuture)) remoteUpdated = now;
+        final localUpdated = local?.updatedAt.toUtc() ??
+            DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
 
         if (remoteUpdated.isAfter(localUpdated)) {
           await _isar.saveProfile(profile);

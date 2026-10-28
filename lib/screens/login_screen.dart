@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../services/same_account_claim_policy.dart';
 import '../services/zone_id_service.dart';
 import '../utils/friendly_errors.dart';
 import 'radar_screen.dart';
@@ -47,6 +48,22 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
+        // PHASE 2.2.2: estado explícito migración-no-disponible (fail-closed,
+        // sin split-brain). Regla temporal: NEW DEVICE = NEW ACCOUNT.
+        if (e is SameAccountClaimBlockedError) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Ese ID pertenece a otro dispositivo. La migración de cuenta '
+                'aún no está disponible: en este dispositivo crea una cuenta '
+                'nueva con "Comenzar".',
+              ),
+              backgroundColor: Colors.orangeAccent,
+              duration: Duration(seconds: 6),
+            ),
+          );
+          return;
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(FriendlyErrors.message(e)),

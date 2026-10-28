@@ -1,0 +1,24 @@
+TEST-R03 - ACCOUNT IDENTITY PERSISTENCE
+=======================================
+DEVICE: HA26RCFN (LENOVO TB305FU - Android 15 - API 35)
+
+VEREDICTO: NOT_TESTABLE
+
+MOTIVO:
+La fundacion de identidad no se instancia en el producto real (ver TEST-R02:
+0 importadores en lib/, 0 trazas en logcat, ausencia de zone_identity.isar en
+el espacio privado de la app). Por tanto NO existe un account_id de la
+Identity Foundation creado por el runtime.
+
+Sin identificador de fundacion creado, no hay nada que comparar
+BEFORE / AFTER de reinicio -> el test no puede ejecutarse honestamente.
+
+ACCOUNT_ID_BEFORE: (no existe en runtime)
+ACCOUNT_ID_AFTER:  (no existe en runtime)
+PERSISTENT:        NO APLICA
+
+NOTA: Persisten en el dispositivo datos LEGACY (default.isar, prefs
+FlutterSecureStorage) -> la persistencia base de la app funciona; lo que NO
+existe es identidad de cuenta de la fundacion.
+
+NO SE MODIFICO NINGUN CODIGO.

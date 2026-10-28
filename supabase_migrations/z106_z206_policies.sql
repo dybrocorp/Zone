@@ -11,6 +11,11 @@
 --  - messages: UPDATE y DELETE solo para participantes de un match ACEPTADO,
 --    con la MISMA semántica server-side que las RPC Z-007 (sin anon/PUBLIC).
 --  - No se toca criptografía, ni columnas nuevas, ni funciones existentes.
+--
+-- Z-212 (2026-10-23) — SUPERSEDED PARCIAL: si se re-aplica, este archivo ya NO
+-- recrea la policy UPDATE directa de messages. Los receipts se actualizan solo
+-- por las RPC Z-007 y el trigger de columnas inmutables bloquea el resto. La
+-- policy DELETE de participantes se conserva.
 -- ============================================================
 
 -- ----------------------------------------------------------------------------
@@ -22,19 +27,12 @@ CREATE POLICY "Eliminar propio match" ON public.matches
     USING (auth.uid() = requester_id OR auth.uid() = receiver_id);
 
 -- ----------------------------------------------------------------------------
--- B) Z-206 — messages: UPDATE/DELETE entre participantes de match aceptado
+-- B) Z-206 — messages: DELETE entre participantes de match aceptado
+--    Z-212: el UPDATE directo queda ELIMINADO. Los receipts
+--    (delivered_at/read_at) se actualizan solo vía RPC Z-007 y el trigger
+--    enforce_message_immutable_columns bloquea cualquier otra columna.
 -- ----------------------------------------------------------------------------
 DROP POLICY IF EXISTS "Actualizar mensaje con match aceptado" ON public.messages;
-CREATE POLICY "Actualizar mensaje con match aceptado" ON public.messages
-    FOR UPDATE TO authenticated
-    USING (
-        EXISTS (
-            SELECT 1 FROM public.matches m
-            WHERE m.id = messages.match_id
-              AND m.status = 'accepted'
-              AND (m.requester_id = auth.uid() OR m.receiver_id = auth.uid())
-        )
-    );
 
 DROP POLICY IF EXISTS "Eliminar mensaje con match aceptado" ON public.messages;
 CREATE POLICY "Eliminar mensaje con match aceptado" ON public.messages
@@ -69,15 +67,14 @@ BEGIN
         RAISE EXCEPTION 'Z-106 VERIFICACION FALLIDA: sin policy DELETE en matches';
     END IF;
 
-    -- messages: existen policy UPDATE y DELETE de participantes.
+    -- messages: NO debe existir policy UPDATE directa (Z-212); DELETE sí.
     SELECT EXISTS (
         SELECT 1 FROM pg_policies
         WHERE schemaname = 'public' AND tablename = 'messages'
           AND cmd = 'UPDATE' AND policyname = 'Actualizar mensaje con match aceptado'
-          AND roles :: text[] @> ARRAY['authenticated']
     ) INTO v_msg_upd;
-    IF NOT v_msg_upd THEN
-        RAISE EXCEPTION 'Z-206 VERIFICACION FALLIDA: sin policy UPDATE en messages';
+    IF v_msg_upd THEN
+        RAISE EXCEPTION 'Z-212 VERIFICACION FALLIDA: UPDATE directo en messages reintroducido';
     END IF;
 
     SELECT EXISTS (

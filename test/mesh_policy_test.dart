@@ -149,4 +149,135 @@ void main() {
       });
     });
   });
+
+  group('MeshPolicy.validateIncomingPacket (Z-212 fail-closed)', () {
+    Map<String, dynamic> validPacket() => MeshPolicy.ciphertextPacket(
+          source: 'ZONE-ABCD1234',
+          target: 'ZONE-EFGH5678',
+          encryptedContent: 'ciphertext',
+          nonce: 'bm9uY2U=',
+          mac: 'bWFj',
+        );
+
+    test('paquete cifrado canónico → se acepta', () {
+      final parsed = MeshPolicy.validateIncomingPacket(validPacket());
+      expect(parsed, isNotNull);
+      expect(parsed!.source, 'ZONE-ABCD1234');
+      expect(parsed.target, 'ZONE-EFGH5678');
+      expect(parsed.hops, 0);
+    });
+
+    test('isEncrypted=false o ausente → null (nunca texto en claro)', () {
+      final packet = validPacket()..['isEncrypted'] = false;
+      expect(MeshPolicy.validateIncomingPacket(packet), isNull);
+      packet.remove('isEncrypted');
+      expect(MeshPolicy.validateIncomingPacket(packet), isNull);
+    });
+
+    test('ZONE-ID no canónico en source/target → null', () {
+      expect(
+        MeshPolicy.validateIncomingPacket(
+          validPacket()..['source'] = 'endpoint-123',
+        ),
+        isNull,
+      );
+      expect(
+        MeshPolicy.validateIncomingPacket(
+          validPacket()..['target'] = 'ZONE-CORTA',
+        ),
+        isNull,
+      );
+    });
+
+    test('msgId ausente o no UUID v4 → null (dedup no confiable)', () {
+      expect(
+        MeshPolicy.validateIncomingPacket(validPacket()..remove('msgId')),
+        isNull,
+      );
+      expect(
+        MeshPolicy.validateIncomingPacket(
+          validPacket()..['msgId'] = 'mock-1-123',
+        ),
+        isNull,
+      );
+    });
+
+    test('hops fuera de rango o de tipo incorrecto → null', () {
+      expect(
+        MeshPolicy.validateIncomingPacket(validPacket()..['hops'] = 99),
+        isNull,
+      );
+      expect(
+        MeshPolicy.validateIncomingPacket(validPacket()..['hops'] = '1'),
+        isNull,
+      );
+    });
+
+    test('ciphertext/nonce/mac vacíos o gigantes → null', () {
+      expect(
+        MeshPolicy.validateIncomingPacket(validPacket()..['text'] = ''),
+        isNull,
+      );
+      expect(
+        MeshPolicy.validateIncomingPacket(validPacket()..['nonce'] = ''),
+        isNull,
+      );
+      expect(
+        MeshPolicy.validateIncomingPacket(validPacket()..['mac'] = ''),
+        isNull,
+      );
+      expect(
+        MeshPolicy.validateIncomingPacket(
+          validPacket()
+            ..['text'] = List.filled(
+              MeshPacket.maxCiphertextLength + 1,
+              'x',
+            ).join(),
+        ),
+        isNull,
+      );
+    });
+
+    test('payload no-Map → null sin lanzar', () {
+      expect(MeshPolicy.validateIncomingPacket(null), isNull);
+      expect(MeshPolicy.validateIncomingPacket('mesh_msg'), isNull);
+      expect(MeshPolicy.validateIncomingPacket(<dynamic>[]), isNull);
+    });
+  });
+
+  group('MeshPolicy.validateRoutingTable (Z-212 anti-poisoning)', () {
+    test('descarta entradas malformadas y no canónicas', () {
+      final routes = MeshPolicy.validateRoutingTable([
+        {'zoneId': 'ZONE-ABCD1234', 'distance': 1},
+        {'zoneId': 'endpoint', 'distance': 1},
+        {'zoneId': 'ZONE-EFGH5678', 'distance': '2'},
+        {'zoneId': 'ZONE-IJKL9012', 'distance': -1},
+        {'zoneId': 'ZONE-MNOP3456', 'distance': 99},
+        'basura',
+      ]);
+
+      expect(routes, hasLength(1));
+      expect(routes.single.zoneId, 'ZONE-ABCD1234');
+      expect(routes.single.distance, 1);
+    });
+
+    test('cota el número de rutas por actualización', () {
+      final raw = List.generate(
+        MeshPolicy.maxRoutesPerUpdate + 50,
+        (i) => {
+          'zoneId': 'ZONE-${i.toString().padLeft(8, '0')}',
+          'distance': 1,
+        },
+      );
+      expect(
+        MeshPolicy.validateRoutingTable(raw),
+        hasLength(MeshPolicy.maxRoutesPerUpdate),
+      );
+    });
+
+    test('payload no-List → lista vacía', () {
+      expect(MeshPolicy.validateRoutingTable(null), isEmpty);
+      expect(MeshPolicy.validateRoutingTable({'zoneId': 'x'}), isEmpty);
+    });
+  });
 }

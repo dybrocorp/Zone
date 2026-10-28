@@ -1,0 +1,15 @@
+# ZONE — Android release signing (EXAMPLE)
+#
+# Copy this file to android/key.properties and fill in real values.
+# android/key.properties is git-ignored; NEVER commit it or the keystore.
+#
+# Relative storeFile paths resolve against android/ (not android/app/).
+# Use forward slashes on Windows, e.g. ../keys/zone-upload.jks
+#
+# CI can provide the same values through environment variables instead:
+#   ZONE_KEYSTORE_PATH, ZONE_KEYSTORE_PASSWORD, ZONE_KEY_ALIAS, ZONE_KEY_PASSWORD
+
+storeFile=../keys/zone-upload.jks
+storePassword=CHANGE_ME
+keyAlias=zone-upload
+keyPassword=CHANGE_ME

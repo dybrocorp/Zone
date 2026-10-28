@@ -24,6 +24,12 @@ class P2PSecurityService {
   String? get publicBase64 => _publicBase64;
 
   /// Inicializa o recupera el par de claves del dispositivo.
+  ///
+  /// PHASE 2.2.2 — rol delimitado: este método SOLO genera si la ranura está
+  /// vacía (ventana previa al registro). El generador definitivo es
+  /// `ZoneIdService` (registro/ensureAuth/checkAndFix); tras cada escritura
+  /// legacy, Zone invoca [reloadFromStorage] para converger a la misma verdad.
+  /// Este servicio NUNCA toca la fundación (`zid1.*`, `zone_identity.isar`).
   Future<void> initialize() async {
     String? storedPrivate = await _storage.read(key: _privateKeyKey);
     
@@ -46,6 +52,27 @@ class P2PSecurityService {
     final pubKey = await kp.extractPublicKey();
     _publicBase64 = base64Encode(pubKey.bytes);
     _logger.debug('[P2PSecurityService] Mi Clave Pública: $_publicBase64');
+  }
+
+  /// Recarga el material `private_key`/`public_key` desde el almacenamiento
+  /// seguro hacia la instancia E2EE en memoria + `_publicBase64`.
+  ///
+  /// PHASE 2.2.2 — convergencia single-writer: `ZoneIdService` la invoca tras
+  /// cada generación/rotación de claves legacy para que ambas superficies
+  /// (mesh P2P y registro/chat) usen la MISMA clave. Idempotente, no genera,
+  /// no lanza: ante ausencia/corrupción conserva el estado en memoria y
+  /// registra el diagnóstico.
+  Future<void> reloadFromStorage() async {
+    try {
+      final storedPrivate = await _storage.read(key: _privateKeyKey);
+      if (storedPrivate == null || storedPrivate.isEmpty) return;
+      await _chatE2EE.initFromPrivateBase64(storedPrivate);
+      final kp = await _chatE2EE.getOrCreateKeyPair();
+      final pubKey = await kp.extractPublicKey();
+      _publicBase64 = base64Encode(pubKey.bytes);
+    } catch (e) {
+      _logger.debug('[P2PSecurityService] reloadFromStorage falló: $e');
+    }
   }
 
   /// Deriva una llave de sesión (Shared Secret) a partir de una llave pública remota.

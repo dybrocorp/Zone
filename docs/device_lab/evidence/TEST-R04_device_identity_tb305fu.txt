@@ -1,0 +1,22 @@
+TEST-R04 - DEVICE IDENTITY
+==========================
+DEVICE: HA26RCFN (LENOVO TB305FU - Android 15 - API 35 - arm64-v8a)
+
+VEREDICTO: NOT_TESTABLE
+
+MOTIVO:
+La fundacion de identidad no se instancia en el producto real (ver TEST-R02).
+No existe en runtime: device_id, device signing identity ni device fingerprint
+del modelo Architecture C (account_id + Ed25519 firma / X25519 de dispositivo).
+
+CONFORMIDAD DE LA PRUEBA:
+- NO se derivo X25519 desde Ed25519.            (nada se derivo)
+- NO se importo la clave legacy.                (2.2.2 NO ejecutada)
+- NO se toco users.public_key.                  (intacto)
+- NO se ejecuto la migracion 2.2.2.             (no autorizada)
+
+El codigo de la fundacion que implementaria esta identidad (IdentityRegistry,
+DeviceDbo, secure key store y fingerprints) solo es alcanzable desde
+lib/identity/* y test/identity/*  (0 importadores productivos).
+
+NO SE MODIFICO NINGUN CODIGO.

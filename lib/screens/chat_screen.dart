@@ -622,13 +622,20 @@ class ChatScreenState extends State<ChatScreen> {
       }
 
       if (_connectivity.isOnline) {
-        final encrypted = await _e2eeService.encryptMessage(text, _sharedSecret!);
-        final dbSaved = await _supabaseService.sendMessage(
+        // Z-212: reutilizar el messageId/ciphertext ESTABLES del outbox. Antes
+        // se generaba un UUID nuevo en cada reintento (sendMessage) → duplicado
+        // remoto si el primer envío había llegado pero se perdió la respuesta.
+        final pending = await _isar.getPendingMessage(tempId);
+        if (pending == null) {
+          throw Exception('Mensaje no encontrado en outbox');
+        }
+        final dbSaved = await _supabaseService.sendMessageIdempotent(
+          messageId: pending.messageId,
           matchId: widget.matchId,
           senderId: uid,
-          encryptedContent: encrypted['encrypted_content'],
-          nonce: encrypted['nonce'],
-          mac: encrypted['mac'],
+          encryptedContent: pending.encryptedContent,
+          nonce: pending.nonce,
+          mac: pending.mac,
         );
         if (!dbSaved) throw Exception('No se pudo guardar en el servidor');
       } else if (!sentViaMesh) {
@@ -646,6 +653,7 @@ class ChatScreenState extends State<ChatScreen> {
           }
         });
       }
+      await _isar.deletePendingMessage(tempId);
     } catch (e) {
       if (mounted) {
         setState(() {

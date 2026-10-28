@@ -1,9 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'chat_screen.dart';
 import 'public_profile_sheet.dart';
+import '../models/isar_models.dart';
+import '../services/match_outbox_processor.dart';
+import '../services/match_pair.dart';
 import '../services/supabase_service.dart';
+import '../services/sync_service.dart';
 import '../services/zone_id_service.dart';
 import '../utils/friendly_errors.dart';
 import '../widgets/user_avatar.dart';
@@ -23,11 +29,25 @@ class ChatsListScreenState extends State<ChatsListScreen> {
   List<Map<String, dynamic>> _pendingRequests = [];
   Set<String> _mutedMatchIds = {};
   bool _isLoading = true;
+  // PHASE 2.2.5: operaciones del outbox en fallo terminal (banner+reintento).
+  List<LocalMatchOperation> _failedOps = [];
+  StreamSubscription<SyncStatus>? _syncSubscription;
 
   @override
   void initState() {
     super.initState();
     _loadData();
+    // PHASE 2.2.5: refrescar al completarse un ciclo de sync (aceptaciones o
+    // rechazos en cola confirmados en servidor aparecen sin pull manual).
+    _syncSubscription = SyncService().statusStream.listen((status) {
+      if (status.state == SyncState.idle && mounted) _loadData();
+    });
+  }
+
+  @override
+  void dispose() {
+    _syncSubscription?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -49,15 +69,20 @@ class ChatsListScreenState extends State<ChatsListScreen> {
       final prefs = await SharedPreferences.getInstance();
       final mutedList = prefs.getStringList('muted_chats') ?? [];
 
+      // PHASE 2.2.5: fallos terminales del outbox (distinguibles del pending
+      // confirmado; reintentables sin perder la intención).
+      final failedOps = await IsarMatchOperationStore().failedAll();
+
       if (mounted) {
         setState(() {
           _matches = matches.where((m) {
             final otherId = m['requester_id'] == currentUid ? m['receiver_id'] : m['requester_id'];
             return !blockedIds.contains(otherId);
           }).toList();
-          
+
           _pendingRequests = pending;
           _mutedMatchIds = mutedList.toSet();
+          _failedOps = failedOps;
         });
       }
     } catch (e) {
@@ -97,6 +122,51 @@ class ChatsListScreenState extends State<ChatsListScreen> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
+                  // PHASE 2.2.5: fallos terminales del outbox — distinguibles
+                  // del pending confirmado, con reintento que conserva la
+                  // identidad de la operación.
+                  if (_failedOps.isNotEmpty)
+                    Card(
+                      color: const Color(0xFF3B1E1E),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: ListTile(
+                        leading: const Icon(
+                          Icons.sync_problem,
+                          color: Colors.orangeAccent,
+                        ),
+                        title: Text(
+                          '${_failedOps.length} ${_failedOps.length == 1 ? 'operación no se pudo' : 'operaciones no se pudieron'} sincronizar',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        subtitle: Text(
+                          _failedOps
+                              .map((o) => o.lastErrorCode ?? 'error')
+                              .toSet()
+                              .join(', '),
+                          style: const TextStyle(
+                            color: Colors.white54,
+                            fontSize: 12,
+                          ),
+                        ),
+                        trailing: TextButton(
+                          onPressed: () async {
+                            await IsarMatchOperationStore().resetAllFailed();
+                            unawaited(SyncService().syncNow());
+                            _loadData();
+                          },
+                          child: const Text(
+                            'Reintentar',
+                            style: TextStyle(color: Colors.orangeAccent),
+                          ),
+                        ),
+                      ),
+                    ),
+                  if (_failedOps.isNotEmpty) const SizedBox(height: 12),
                   if (_pendingRequests.isNotEmpty) ...[
                     const Text('Solicitudes Pendientes', style: TextStyle(color: Color(0xFF00D2FF), fontWeight: FontWeight.bold, fontSize: 16)),
                     const SizedBox(height: 12),
@@ -121,6 +191,74 @@ class ChatsListScreenState extends State<ChatsListScreen> {
     );
   }
 
+  /// PHASE 2.2.5 — ante fallo del accept/reject directo, encola la intención
+  /// como operación durable (fail-closed: solo si la fila local prueba que
+  /// soy el receiver; el backend re-verifica en el replay vía RLS).
+  Future<void> _enqueueAcceptReject(
+    Map<String, dynamic> req, {
+    required bool accept,
+  }) async {
+    final me =
+        _zoneIdService.uid ?? await _zoneIdService.getStoredUid();
+    final matchId = req['id'] as String?;
+    final requester = req['requester_id'] as String?;
+    final receiver = req['receiver_id'] as String?;
+    if (!mounted) return;
+    if (me == null ||
+        matchId == null ||
+        matchId.isEmpty ||
+        requester == null ||
+        receiver == null ||
+        receiver != me) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            accept
+                ? 'No se pudo aceptar la solicitud.'
+                : 'No se pudo rechazar la solicitud.',
+          ),
+        ),
+      );
+      return;
+    }
+    try {
+      final low = MatchPair.canonicalLow(requester, receiver);
+      final high = MatchPair.canonicalHigh(requester, receiver);
+      final op = accept
+          ? buildAcceptOp(
+              serverMatchId: matchId,
+              actor: me,
+              low: low,
+              high: high,
+              now: DateTime.now(),
+            )
+          : buildRejectOp(
+              serverMatchId: matchId,
+              actor: me,
+              low: low,
+              high: high,
+              now: DateTime.now(),
+            );
+      await IsarMatchOperationStore().enqueue(op);
+      unawaited(SyncService().syncNow());
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            accept
+                ? 'Sin conexión: se aceptará al reconectar.'
+                : 'Sin conexión: se rechazará al reconectar.',
+          ),
+        ),
+      );
+    } on InvalidMatchIdentityError {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo procesar la solicitud.')),
+      );
+    }
+  }
+
   Widget _buildPendingItem(Map<String, dynamic> req) {
     final sender = req['requester_user'] != null ? Map<String, dynamic>.from(req['requester_user'] as Map) : null;
     final name = sender?['display_name'] ?? sender?['zone_id'] ?? 'Usuario Zone';
@@ -139,14 +277,26 @@ class ChatsListScreenState extends State<ChatsListScreen> {
             IconButton(
               icon: const Icon(Icons.check_circle, color: Colors.greenAccent),
               onPressed: () async {
-                await _supabaseService.acceptMatch(req['id']);
+                // PHASE 2.2.4: acceptMatch es idempotente y devuelve false sin
+                // autorización/fila — se informa en lugar de fallar en silencio.
+                // PHASE 2.2.5: ante fallo, la intención queda duradera en el
+                // outbox (verificado receiver local) en vez de perderse.
+                final ok = await _supabaseService.acceptMatch(req['id']);
+                if (!mounted) return;
+                if (!ok) {
+                  await _enqueueAcceptReject(req, accept: true);
+                }
                 _loadData();
               },
             ),
             IconButton(
               icon: const Icon(Icons.cancel, color: Colors.redAccent),
               onPressed: () async {
-                await _supabaseService.rejectMatch(req['id']);
+                final ok = await _supabaseService.rejectMatch(req['id']);
+                if (!mounted) return;
+                if (!ok) {
+                  await _enqueueAcceptReject(req, accept: false);
+                }
                 _loadData();
               },
             ),

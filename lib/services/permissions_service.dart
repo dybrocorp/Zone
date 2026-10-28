@@ -3,10 +3,9 @@ import 'logger_service.dart';
 
 class PermissionsService {
   static final _logger = LoggerService();
-  /// Solicita los permisos necesarios para Nearby Connections y BLE.
-  static Future<bool> requestAllPermissions() async {
-    try {
-      final corePermissions = [
+
+  /// Set mínimo para Nearby Connections 4.3.0 (ver `DiscoveryPermissions`).
+  static List<Permission> get corePermissions => [
         Permission.location,
         Permission.bluetoothScan,
         Permission.bluetoothAdvertise,
@@ -14,27 +13,36 @@ class PermissionsService {
         Permission.nearbyWifiDevices,
       ];
 
+  /// Solicita el set mínimo y devuelve el mapa crudo (para clasificación
+  /// estructurada del rechazo: denegado vs permanente).
+  static Future<Map<Permission, PermissionStatus>>
+      requestCoreStatuses() async {
+    try {
       // Timeout de 8 segundos para evitar bloqueos infinitos al arranque
-      Map<Permission, PermissionStatus> statuses = await corePermissions.request().timeout(
+      return await corePermissions.request().timeout(
         const Duration(seconds: 8),
         onTimeout: () => {},
       );
-
-      if (statuses.isEmpty) return false;
-
-      bool allGranted = true;
-      statuses.forEach((permission, status) {
-        if (!status.isGranted) {
-          _logger.debug('Permiso fuertemente denegado en SO: $permission');
-          allGranted = false;
-        }
-      });
-
-      return allGranted;
     } catch (e) {
       _logger.debug('[PermissionsService] Error solicitando permisos: $e');
-      return false;
+      return {};
     }
+  }
+
+  /// Solicita los permisos necesarios para Nearby Connections y BLE.
+  static Future<bool> requestAllPermissions() async {
+    final statuses = await requestCoreStatuses();
+    if (statuses.isEmpty) return false;
+
+    bool allGranted = true;
+    statuses.forEach((permission, status) {
+      if (!status.isGranted) {
+        _logger.debug('Permiso fuertemente denegado en SO: $permission');
+        allGranted = false;
+      }
+    });
+
+    return allGranted;
   }
 
   /// Solicita los permisos para la cámara y galería de fotos.

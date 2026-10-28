@@ -70,7 +70,9 @@ CREATE TABLE IF NOT EXISTS public.encounters (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     user_id UUID REFERENCES public.users(id) ON DELETE CASCADE ON UPDATE CASCADE NOT NULL,
     other_zone_id TEXT NOT NULL,
-    seen_at TIMESTAMPTZ DEFAULT now() NOT NULL
+    seen_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+    -- Z-210 (PHASE 2.2.3): clave canónica; ver z210_encounter_key.sql.
+    encounter_key TEXT
 );
 
 CREATE TABLE IF NOT EXISTS public.matches (
@@ -79,7 +81,11 @@ CREATE TABLE IF NOT EXISTS public.matches (
     receiver_id UUID REFERENCES public.users(id) ON DELETE CASCADE ON UPDATE CASCADE NOT NULL,
     status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected')),
     created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
-    UNIQUE(requester_id, receiver_id)
+    -- Z-211 (PHASE 2.2.4): par canónico; ver z211_match_canonical.sql.
+    canonical_low UUID GENERATED ALWAYS AS (LEAST(requester_id, receiver_id)) STORED,
+    canonical_high UUID GENERATED ALWAYS AS (GREATEST(requester_id, receiver_id)) STORED,
+    UNIQUE(requester_id, receiver_id),
+    CONSTRAINT uq_matches_canonical_pair UNIQUE (canonical_low, canonical_high)
 );
 
 CREATE TABLE IF NOT EXISTS public.messages (
@@ -118,6 +124,7 @@ CREATE TABLE IF NOT EXISTS public.blocked_users (
 CREATE OR REPLACE FUNCTION public.handle_new_report()
 RETURNS TRIGGER AS $$
 BEGIN
+    PERFORM set_config('zone.allow_protected_user_write', '1', true);
     UPDATE public.users
     SET reports_count = reports_count + 1,
         is_shadowbanned = CASE WHEN reports_count + 1 >= 3 THEN TRUE ELSE is_shadowbanned END
@@ -173,67 +180,22 @@ CREATE INDEX IF NOT EXISTS idx_zone_claim_attempts_zone_time
 REVOKE ALL ON public.zone_claim_attempts FROM anon, authenticated, PUBLIC;
 ALTER TABLE public.zone_claim_attempts ENABLE ROW LEVEL SECURITY;
 
--- claim_zone_id endurecido → RETORNA jsonb (perfil completo tras el reclamo).
--- (Z-001: auth + formato + rate-limit, NO escribe public_key · Z-002: devuelve
---  el perfil migrado para el login sin releer 'users', ahora self-scoped)
+-- claim_zone_id — CUARENTENA DE SEGURIDAD Z-212 (2026-10-23).
+-- Cualquier autenticado podía reescribir users.id de un ZONE-ID ajeno sin
+-- prueba de posesión (account takeover). La RPC conserva firma/grants pero
+-- falla cerrado hasta disponer de un challenge firmado por el dispositivo.
 CREATE OR REPLACE FUNCTION public.claim_zone_id(p_zone_id text)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
-DECLARE
-  v_uid        uuid := auth.uid();
-  v_failures   bigint;
-  v_target     uuid;
-  v_profile    jsonb;
 BEGIN
-  IF v_uid IS NULL THEN
+  IF auth.uid() IS NULL THEN
     RAISE EXCEPTION 'Se requiere sesión autenticada';
   END IF;
-  IF p_zone_id !~ '^ZONE-[A-Z0-9]{8}$' THEN
-    RAISE EXCEPTION 'Formato de ZONE-ID inválido';
-  END IF;
-  SELECT count(*) INTO v_failures
-  FROM public.zone_claim_attempts
-  WHERE zone_id = p_zone_id
-    AND success = FALSE
-    AND attempted_at > now() - interval '15 minutes';
-  IF v_failures >= 5 THEN
-    RAISE EXCEPTION 'Demasiados intentos para este ZONE-ID. Reintenta en 15 minutos.';
-  END IF;
-  SELECT id INTO v_target FROM public.users WHERE zone_id = p_zone_id;
-  IF v_target IS NULL THEN
-    INSERT INTO public.zone_claim_attempts (zone_id, uid, success)
-    VALUES (p_zone_id, v_uid, FALSE);
-    RAISE EXCEPTION 'ZONE-ID no encontrado';
-  END IF;
-  UPDATE public.users u SET id = v_uid
-  WHERE u.zone_id = p_zone_id
-  RETURNING jsonb_build_object(
-    'id',               u.id,
-    'zone_id',          u.zone_id,
-    'display_name',     u.display_name,
-    'public_key',       u.public_key,
-    'avatar_hash',      u.avatar_hash,
-    'stealth_mode',     u.stealth_mode,
-    'instagram_handle', u.instagram_handle,
-    'ig_visible',       u.ig_visible,
-    'facebook_handle',  u.facebook_handle,
-    'fb_visible',       u.fb_visible,
-    'tiktok_handle',    u.tiktok_handle,
-    'tiktok_visible',   u.tiktok_visible,
-    'reports_count',    u.reports_count,
-    'is_shadowbanned',  u.is_shadowbanned,
-    'avatar_url',       u.avatar_url,
-    'avatar_is_public', u.avatar_is_public,
-    'gallery_photos',   u.gallery_photos,
-    'created_at',       u.created_at,
-    'updated_at',       u.updated_at
-  ) INTO v_profile;
-  INSERT INTO public.zone_claim_attempts (zone_id, uid, success)
-  VALUES (p_zone_id, v_uid, TRUE);
-  RETURN v_profile;
+  RAISE EXCEPTION
+    'Reclamo de ZONE-ID deshabilitado temporalmente por seguridad (Z-212).';
 END;
 $$;
 
@@ -286,6 +248,8 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.verify_zone_id(text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.verify_zone_id(text) TO authenticated;
 
+-- Resolución de token BT para radar (bypass RLS, soporta resolución bilateral).
+-- Z-212: exige sesión y aplica visibilidad server-side.
 CREATE OR REPLACE FUNCTION public.resolve_bt_token(p_token text)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -295,6 +259,9 @@ AS $$
 DECLARE
   v_profile jsonb;
 BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'Se requiere sesión autenticada';
+  END IF;
   IF p_token IS NULL OR length(trim(p_token)) = 0 OR trim(p_token) = 'ZONE-INIT' THEN
     RETURN NULL;
   END IF;
@@ -303,14 +270,14 @@ BEGIN
     'id', u.id,
     'zone_id', u.zone_id,
     'display_name', u.display_name,
-    'avatar_url', u.avatar_url,
+    'avatar_url', CASE WHEN u.avatar_is_public THEN u.avatar_url ELSE NULL END,
     'stealth_mode', u.stealth_mode,
     'public_key', u.public_key,
-    'instagram_handle', u.instagram_handle,
+    'instagram_handle', CASE WHEN u.ig_visible THEN u.instagram_handle ELSE NULL END,
     'ig_visible', u.ig_visible,
-    'facebook_handle', u.facebook_handle,
+    'facebook_handle', CASE WHEN u.fb_visible THEN u.facebook_handle ELSE NULL END,
     'fb_visible', u.fb_visible,
-    'tiktok_handle', u.tiktok_handle,
+    'tiktok_handle', CASE WHEN u.tiktok_visible THEN u.tiktok_handle ELSE NULL END,
     'tiktok_visible', u.tiktok_visible
   ) INTO v_profile
   FROM public.bt_tokens t
@@ -352,6 +319,36 @@ CREATE POLICY "Actualizar propio perfil" ON public.users
 DROP POLICY IF EXISTS "Registrar propio usuario" ON public.users;
 CREATE POLICY "Registrar propio usuario" ON public.users
     FOR INSERT TO authenticated WITH CHECK (auth.uid() = id);
+
+-- Z-212: columnas de moderación/identidad inmutables para autenticados.
+CREATE OR REPLACE FUNCTION public.enforce_user_protected_columns()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  -- service_role (sin auth.uid()) conserva acceso administrativo; las
+  -- funciones de moderación confiables marcan la transacción.
+  IF auth.uid() IS NOT NULL
+     AND coalesce(
+       current_setting('zone.allow_protected_user_write', true), ''
+     ) <> '1' THEN
+    IF NEW.id             IS DISTINCT FROM OLD.id
+       OR NEW.zone_id     IS DISTINCT FROM OLD.zone_id
+       OR NEW.reports_count IS DISTINCT FROM OLD.reports_count
+       OR NEW.is_shadowbanned IS DISTINCT FROM OLD.is_shadowbanned
+       OR NEW.created_at  IS DISTINCT FROM OLD.created_at THEN
+      RAISE EXCEPTION 'users: columnas protegidas inmutables (Z-212)';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_users_protected_columns ON public.users;
+CREATE TRIGGER trg_users_protected_columns
+    BEFORE UPDATE ON public.users
+    FOR EACH ROW EXECUTE FUNCTION public.enforce_user_protected_columns();
 
 -- ─── VISTA v_profile (Z-002) — único camino de lectura de terceros ────────
 -- Semántica "security definer" (privilegios del dueño) para poder filtrar
@@ -531,10 +528,9 @@ DROP POLICY IF EXISTS "Crear propio token" ON public.bt_tokens;
 CREATE POLICY "Crear propio token" ON public.bt_tokens
     FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
 
+-- Z-212: resolución solo vía RPC SECURITY DEFINER (se elimina el SELECT amplio
+-- que exponía token → user_id de todos los usuarios activos).
 DROP POLICY IF EXISTS "Resolver token BT" ON public.bt_tokens;
-CREATE POLICY "Resolver token BT" ON public.bt_tokens
-    FOR SELECT TO authenticated
-    USING (auth.role() = 'authenticated' AND expires_at > now());
 
 DROP POLICY IF EXISTS "Ver propios encuentros" ON public.encounters;
 CREATE POLICY "Ver propios encuentros" ON public.encounters
@@ -552,9 +548,37 @@ DROP POLICY IF EXISTS "Solicitar match" ON public.matches;
 CREATE POLICY "Solicitar match" ON public.matches
     FOR INSERT TO authenticated WITH CHECK (auth.uid() = requester_id);
 
+-- Solo el receiver puede actualizar el status. Z-212: WITH CHECK explícito.
 DROP POLICY IF EXISTS "Aceptar o rechazar match" ON public.matches;
 CREATE POLICY "Aceptar o rechazar match" ON public.matches
-    FOR UPDATE TO authenticated USING (auth.uid() = receiver_id);
+    FOR UPDATE TO authenticated
+    USING (auth.uid() = receiver_id)
+    WITH CHECK (auth.uid() = receiver_id);
+
+-- Z-212: el par y el id son inmutables; un match aceptado no puede degradarse.
+CREATE OR REPLACE FUNCTION public.enforce_match_immutable_participants()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  IF NEW.id           IS DISTINCT FROM OLD.id
+     OR NEW.requester_id IS DISTINCT FROM OLD.requester_id
+     OR NEW.receiver_id  IS DISTINCT FROM OLD.receiver_id
+     OR NEW.created_at   IS DISTINCT FROM OLD.created_at THEN
+    RAISE EXCEPTION 'matches: participantes e identidad son inmutables (Z-212)';
+  END IF;
+  IF OLD.status = 'accepted' AND NEW.status IS DISTINCT FROM 'accepted' THEN
+    RAISE EXCEPTION 'matches: un match aceptado no puede degradarse (Z-212)';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_matches_immutable_participants ON public.matches;
+CREATE TRIGGER trg_matches_immutable_participants
+    BEFORE UPDATE ON public.matches
+    FOR EACH ROW EXECUTE FUNCTION public.enforce_match_immutable_participants();
 
 -- Z-106 (FASE 1.6): borrar un match solo por sus participantes (derecho al borrado)
 DROP POLICY IF EXISTS "Eliminar propio match" ON public.matches;
@@ -584,18 +608,32 @@ CREATE POLICY "Enviar mensaje con match aceptado" ON public.messages
         )
     );
 
--- Z-206 (FASE 1.6): UPDATE/DELETE de mensajes solo entre participantes de un
--- match ACEPTADO (misma semántica server-side que las RPC Z-007; sin anon/PUBLIC)
+-- Z-212: los mensajes son inmutables para clientes; los ticks usan RPC Z-007.
 DROP POLICY IF EXISTS "Actualizar mensaje con match aceptado" ON public.messages;
-CREATE POLICY "Actualizar mensaje con match aceptado" ON public.messages
-    FOR UPDATE TO authenticated USING (
-        EXISTS (
-            SELECT 1 FROM public.matches m
-            WHERE m.id = messages.match_id
-              AND m.status = 'accepted'
-              AND (m.requester_id = auth.uid() OR m.receiver_id = auth.uid())
-        )
-    );
+
+CREATE OR REPLACE FUNCTION public.enforce_message_immutable_columns()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  IF NEW.id              IS DISTINCT FROM OLD.id
+     OR NEW.match_id     IS DISTINCT FROM OLD.match_id
+     OR NEW.sender_id    IS DISTINCT FROM OLD.sender_id
+     OR NEW.encrypted_content IS DISTINCT FROM OLD.encrypted_content
+     OR NEW.nonce        IS DISTINCT FROM OLD.nonce
+     OR NEW.mac          IS DISTINCT FROM OLD.mac
+     OR NEW.created_at   IS DISTINCT FROM OLD.created_at THEN
+    RAISE EXCEPTION 'messages: identidad y contenido son inmutables (Z-212)';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_messages_immutable ON public.messages;
+CREATE TRIGGER trg_messages_immutable
+    BEFORE UPDATE ON public.messages
+    FOR EACH ROW EXECUTE FUNCTION public.enforce_message_immutable_columns();
 
 DROP POLICY IF EXISTS "Eliminar mensaje con match aceptado" ON public.messages;
 CREATE POLICY "Eliminar mensaje con match aceptado" ON public.messages
@@ -700,6 +738,10 @@ CREATE INDEX IF NOT EXISTS idx_users_zone_id ON public.users(zone_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_encounter_hourly
     ON public.encounters(user_id, other_zone_id, (date_trunc('hour', seen_at AT TIME ZONE 'UTC')));
+
+-- Z-210 (PHASE 2.2.3): idempotencia canónica por dispositivo (NULLs no colisionan).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_encounter_key
+    ON public.encounters(user_id, encounter_key);
 
 -- =============================================================================
 -- STORAGE (avatars)

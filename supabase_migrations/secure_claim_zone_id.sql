@@ -13,6 +13,10 @@
 --
 -- Fase B (PUERTA CTO, posterior): identidad de firma Ed25519 + códigos de
 -- recuperación + update_public_key firmado + transfer firmado.
+--
+-- Z-212 (2026-10-23) — SUPERSEDED: el claim queda en cuarentena fail-closed.
+-- Este archivo se conserva por historia, pero si se re-aplica instala la
+-- cuarentena (NO el UPDATE users SET id) para no reintroducir account takeover.
 -- ⚠️ No usar supabase_emergency_recovery.sql ni supabase_migration_fix.sql
 --    (mantienen GRANT anon; migration_fix contiene un DELETE destructivo).
 --
@@ -40,6 +44,7 @@ ALTER TABLE public.zone_claim_attempts ENABLE ROW LEVEL SECURITY;
 
 -- ----------------------------------------------------------------------------
 -- 2. claim_zone_id endurecido (solo authenticated, con rate-limit, sin public_key)
+--    Z-212: cuerpo en cuarentena fail-closed (ver bloque e).
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.claim_zone_id(p_zone_id text)
 RETURNS void
@@ -80,12 +85,11 @@ BEGIN
     RAISE EXCEPTION 'ZONE-ID no encontrado';
   END IF;
 
-  -- e) Reclamo de propiedad (idempotente). NO toca public_key.
-  UPDATE public.users SET id = v_uid WHERE zone_id = p_zone_id;
-
-  -- f) Auditoría (éxito)
-  INSERT INTO public.zone_claim_attempts (zone_id, uid, success)
-  VALUES (p_zone_id, v_uid, TRUE);
+  -- e) Z-212 (2026-10-23): cuarentena fail-closed. El UPDATE users SET id = v_uid
+  --    permitía account takeover sin prueba de posesión. No se re-habilita hasta
+  --    implementar un challenge firmado verificado server-side.
+  RAISE EXCEPTION
+    'Reclamo de ZONE-ID deshabilitado temporalmente por seguridad (Z-212).';
 END;
 $$;
 
@@ -161,10 +165,9 @@ GRANT EXECUTE ON FUNCTION public.verify_zone_id(text) TO authenticated;
 --    select public.claim_zone_id('nope');   → 'Formato de ZONE-ID inválido'
 -- 3. authenticated con ZONE-ID inexistente → 'ZONE-ID no encontrado' (y genera intento fallido)
 -- 4. Rate-limit: tras 5 formatos/existentes fallidos en 15 min → 'Demasiados intentos...'
--- 5. claim legítimo NO altera public_key:
---    select public_key from public.users where zone_id='ZONE-XXXXXXXX';
---    (el claim no cambia la fila) → el sistema de clave vieja queda intacto
--- 6. claim legítimo mueve id al uid actual y es idempotente (repetir 2× ok)
+-- 5. Z-212: claim queda en cuarentena; CUALQUIER llamada autenticada falla
+--    con 'Reclamo de ZONE-ID deshabilitado temporalmente por seguridad (Z-212).'
+--    (el comportamiento histórico de mover id ya NO aplica).
 -- 7. verify_zone_id NO devuelve 'id'/'zone_id':
 --    select public.verify_zone_id('ZONE-XXXXXXXX'); → {exists, display_name, avatar_url}
 -- ============================================================================

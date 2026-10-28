@@ -55,6 +55,15 @@ class _RadarScreenState extends State<RadarScreen> with TickerProviderStateMixin
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _lastLifecycleState = state;
+    // Rediseño §4.B: al volver a primer plano con el radar GPS activo y
+    // visible, refresca de inmediato (fix fresco + ping + búsqueda) en lugar
+    // de esperar el siguiente tick (≤ 10 s). El fix vencido ya se rechaza
+    // por antigüedad (≤ 2 min); esto solo acorta la espera del usuario.
+    if (state == AppLifecycleState.resumed &&
+        _mode == DiscoveryMode.gps &&
+        _geoCoordinator.isIntendedVisible) {
+      unawaited(_geoCoordinator.manualRefresh());
+    }
   }
 
   @override
